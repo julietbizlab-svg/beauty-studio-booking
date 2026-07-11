@@ -2,14 +2,26 @@
 
 這個資料夾用來放「販售這套美業預約系統」需要的標準文件。
 
-## 文件用途
+## 文件清單
 
 | 文件 | 用途 |
 |---|---|
-| CLIENT-SETUP-GUIDE.md | 說明這套系統怎麼設定 |
-| COPY-FOR-NEW-CLIENT.md | 複製給新客戶時的操作流程 |
-| product-docs/README.md | 商品化文件總目錄 |
+| CLIENT-INFO-CHECKLIST.md | 接新客戶前，蒐集店名、服務、價格、營業時間、品牌色等資料 |
+| PRICING-DRAFT.md | 報價方案草稿，協助判斷建置費與月維護費 |
+| CLIENT-DELIVERY-CHECKLIST.md | 系統完成後，交付給客戶前逐項確認 |
+| README.md | 商品化文件總索引 |
 
-## 注意
+## 使用順序
 
-這裡只放商品化說明文件，不放密碼、不放 Token、不放客戶個資。
+1. 先填 `CLIENT-INFO-CHECKLIST.md`
+2. 再依需求評估 `PRICING-DRAFT.md`
+3. 建置完成後使用 `CLIENT-DELIVERY-CHECKLIST.md`
+4. 所有文件不得放入 Token、密碼、客戶個資或機密資料
+
+## 重要原則
+
+- 不把 `.dev.vars` 上傳 GitHub
+- 不把 Notion Token 寫進前端
+- 不把 Cloudflare API Token 交給客戶
+- 客戶可自行改的項目，要寫清楚
+- 需要我維護的項目，要列入維護費
