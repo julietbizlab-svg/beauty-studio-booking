@@ -53,6 +53,7 @@
 |---|---|
 | CLIENT-SETUP-GUIDE.md | 系統設定說明 |
 | COPY-FOR-NEW-CLIENT.md | 複製給新客戶流程 |
+| PROJECT-FOLDER-MAP.md | 專案資料夾用途說明 |
 | product-docs/CLIENT-INFO-CHECKLIST.md | 客戶資料蒐集表 |
 | product-docs/PRICING-DRAFT.md | 報價方案草稿 |
 | product-docs/CLIENT-DELIVERY-CHECKLIST.md | 客戶交付清單 |
