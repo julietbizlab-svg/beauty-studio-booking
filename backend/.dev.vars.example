@@ -1,0 +1,15 @@
+# 複製此檔為 .dev.vars 並填入真實值（.dev.vars 不會上傳 GitHub）
+#
+# Notion Integration：https://www.notion.so/my-integrations
+# 建立四個資料庫並連接 Integration，欄位名稱見 backend/src/notion.js 頂部註解
+# Database ID = 資料庫網址最後 32 字元
+
+NOTION_TOKEN=secret_xxxxxxxx
+
+NOTION_DATABASE_SERVICES=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+NOTION_DATABASE_SLOTS=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+NOTION_DATABASE_BOOKINGS=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+NOTION_DATABASE_SETTINGS=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# 業主 LINE userId（逗號或空白分隔，僅這些帳號可進入 owner-admin）
+OWNER_LINE_USER_IDS=Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx

@@ -1,0 +1,5 @@
+backend/.dev.vars
+backend/.env
+backend/node_modules/
+*.pem
+.DS_Store

@@ -1,0 +1,6 @@
+name = "beauty-studio-api"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+[vars]
+STUDIO_NAME = "美業工作室"
