@@ -1,6 +1,10 @@
 /**
  * 業主權限驗證
  */
+import {
+  extractIdTokenFromRequest,
+  verifyLineIdToken
+} from "./liff-verify.js";
 
 export function parseOwnerUserIds(raw) {
   if (!raw || typeof raw !== "string") {
@@ -26,6 +30,23 @@ export function requireOwner(env, userId) {
     error.status = 403;
     throw error;
   }
+}
+
+/**
+ * 從 request 驗證業主身分（fail closed）
+ * @returns {Promise<string>} 已驗證的 owner userId
+ */
+export async function requireOwnerFromRequest(request, env) {
+  var idToken = extractIdTokenFromRequest(request);
+  var verified = await verifyLineIdToken(idToken, env);
+
+  if (!isOwnerUser(env, verified.userId)) {
+    var forbidden = new Error("無業主管理權限");
+    forbidden.status = 403;
+    throw forbidden;
+  }
+
+  return verified.userId;
 }
 
 export function getTaipeiDateString(date) {

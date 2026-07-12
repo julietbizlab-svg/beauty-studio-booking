@@ -13,3 +13,6 @@ NOTION_DATABASE_SETTINGS=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 # 業主 LINE userId（逗號或空白分隔，僅這些帳號可進入 owner-admin）
 OWNER_LINE_USER_IDS=Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# LINE Login Channel ID（驗證 LIFF ID Token，在 LINE Developers → Basic settings 可見）
+LIFF_CHANNEL_ID=1234567890

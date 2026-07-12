@@ -13,14 +13,33 @@
     return url.replace(/\/$/, "");
   }
 
+  function getIdToken() {
+    if (typeof window.getBeautyIdToken === "function") {
+      return window.getBeautyIdToken();
+    }
+    return window.beautyIdToken || null;
+  }
+
   async function apiFetch(path, options) {
     var baseUrl = getApiBaseUrl();
     if (!baseUrl) {
       throw new Error("API 尚未設定");
     }
-    var response = await fetch(baseUrl + path, Object.assign({
-      headers: { "Content-Type": "application/json" }
-    }, options || {}));
+
+    var idToken = getIdToken();
+    if (!idToken) {
+      throw new Error("尚未完成 LINE 登入，無法呼叫管理 API");
+    }
+
+    var opts = options || {};
+    var headers = Object.assign({
+      "Content-Type": "application/json",
+      "Authorization": "Bearer " + idToken
+    }, opts.headers || {});
+
+    var response = await fetch(baseUrl + path, Object.assign({}, opts, {
+      headers: headers
+    }));
 
     var body = null;
     try {
@@ -29,6 +48,11 @@
 
     if (!response.ok) {
       var message = (body && body.message) ? body.message : "伺服器回應錯誤（" + response.status + "）";
+      if (response.status === 401) {
+        message = "登入已過期，請完全關閉 LINE 後重新開啟此頁";
+      } else if (response.status === 403 && (!body || !body.message)) {
+        message = "無業主管理權限";
+      }
       var error = new Error(message);
       error.status = response.status;
       throw error;
@@ -38,48 +62,48 @@
 
   window.ownerApi = {
     getToday: function (userId, date) {
-      var query = "/api/owner/today?userId=" + encodeURIComponent(userId);
-      if (date) query += "&date=" + encodeURIComponent(date);
+      var query = "/api/owner/today";
+      if (date) query += "?date=" + encodeURIComponent(date);
       return apiFetch(query);
     },
 
     getServices: function (userId) {
-      return apiFetch("/api/owner/services?userId=" + encodeURIComponent(userId));
+      return apiFetch("/api/owner/services");
     },
 
     createService: function (userId, data) {
       return apiFetch("/api/owner/services", {
         method: "POST",
-        body: JSON.stringify(Object.assign({ userId: userId }, data))
+        body: JSON.stringify(data || {})
       });
     },
 
     updateService: function (userId, serviceId, data) {
       return apiFetch("/api/owner/services/" + encodeURIComponent(serviceId), {
         method: "PATCH",
-        body: JSON.stringify(Object.assign({ userId: userId }, data))
+        body: JSON.stringify(data || {})
       });
     },
 
     getSlots: function (userId) {
-      return apiFetch("/api/owner/slots?userId=" + encodeURIComponent(userId));
+      return apiFetch("/api/owner/slots");
     },
 
     saveSlots: function (userId, slots) {
       return apiFetch("/api/owner/slots", {
         method: "POST",
-        body: JSON.stringify({ userId: userId, slots: slots })
+        body: JSON.stringify({ slots: slots || [] })
       });
     },
 
     getSettings: function (userId) {
-      return apiFetch("/api/owner/settings?userId=" + encodeURIComponent(userId));
+      return apiFetch("/api/owner/settings");
     },
 
     updateSettings: function (userId, data) {
       return apiFetch("/api/owner/settings", {
         method: "PATCH",
-        body: JSON.stringify(Object.assign({ userId: userId }, data))
+        body: JSON.stringify(data || {})
       });
     },
 
