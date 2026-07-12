@@ -28,3 +28,7 @@
 - 不把 Cloudflare API Token 交給客戶
 - 客戶可自行改的項目，要寫清楚
 - 需要我維護的項目，要列入維護費
+
+## AI 使用規則
+
+- [AI-USAGE-RULES.md](AI-USAGE-RULES.md)：AI 使用規則與省額度操作守則
