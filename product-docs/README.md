@@ -32,3 +32,7 @@
 ## AI 使用規則
 
 - [AI-USAGE-RULES.md](AI-USAGE-RULES.md)：AI 使用規則與省額度操作守則
+
+## 客戶溝通話術
+
+- [CLIENT-MESSAGE-TEMPLATES.md](CLIENT-MESSAGE-TEMPLATES.md)：新業主資料蒐集與溝通話術模板
