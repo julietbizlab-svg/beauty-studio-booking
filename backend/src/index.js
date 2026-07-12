@@ -17,7 +17,7 @@ import {
   updateSettings,
   getServiceById
 } from "./notion.js";
-import { requireOwner } from "./owner-auth.js";
+import { requireOwnerFromRequest } from "./owner-auth.js";
 import {
   weekdayLabelFromIndex,
   buildSlotTimes,
@@ -131,8 +131,7 @@ export default {
 
       if (url.pathname === "/api/owner/today" && request.method === "GET") {
         ensureNotionEnv(env);
-        var ownerUserId = url.searchParams.get("userId");
-        requireOwner(env, ownerUserId);
+        await requireOwnerFromRequest(request, env);
 
         var targetDate = url.searchParams.get("date") || getTaipeiDateString();
         var todayList = await getTodayBookingsForOwner(env, targetDate);
@@ -144,8 +143,7 @@ export default {
 
       if (url.pathname === "/api/owner/services" && request.method === "GET") {
         ensureNotionEnv(env);
-        var ownerIdForList = url.searchParams.get("userId");
-        requireOwner(env, ownerIdForList);
+        await requireOwnerFromRequest(request, env);
         var allServices = await listServices(env, false);
         return jsonResponse(allServices, corsHeaders);
       }
@@ -153,7 +151,7 @@ export default {
       if (url.pathname === "/api/owner/services" && request.method === "POST") {
         ensureNotionEnv(env);
         var ownerCreateBody = await readJson(request);
-        requireOwner(env, ownerCreateBody.userId);
+        await requireOwnerFromRequest(request, env);
         var newService = await createService(env, ownerCreateBody);
         return jsonResponse({ ok: true, service: newService }, corsHeaders);
       }
@@ -162,15 +160,14 @@ export default {
       if (servicePatchMatch && request.method === "PATCH") {
         ensureNotionEnv(env);
         var ownerPatchBody = await readJson(request);
-        requireOwner(env, ownerPatchBody.userId);
+        await requireOwnerFromRequest(request, env);
         var patched = await updateService(env, servicePatchMatch[1], ownerPatchBody);
         return jsonResponse({ ok: true, service: patched }, corsHeaders);
       }
 
       if (url.pathname === "/api/owner/slots" && request.method === "GET") {
         ensureNotionEnv(env);
-        var ownerSlotsUserId = url.searchParams.get("userId");
-        requireOwner(env, ownerSlotsUserId);
+        await requireOwnerFromRequest(request, env);
         var currentSlots = await listWeeklySlots(env);
         return jsonResponse(currentSlots, corsHeaders);
       }
@@ -178,15 +175,14 @@ export default {
       if (url.pathname === "/api/owner/slots" && request.method === "POST") {
         ensureNotionEnv(env);
         var slotsBody = await readJson(request);
-        requireOwner(env, slotsBody.userId);
+        await requireOwnerFromRequest(request, env);
         var savedSlots = await replaceWeeklySlots(env, slotsBody.slots || []);
         return jsonResponse({ ok: true, slots: savedSlots }, corsHeaders);
       }
 
       if (url.pathname === "/api/owner/settings" && request.method === "GET") {
         ensureNotionEnv(env);
-        var ownerSettingsUserId = url.searchParams.get("userId");
-        requireOwner(env, ownerSettingsUserId);
+        await requireOwnerFromRequest(request, env);
         var ownerSettings = await getSettings(env);
         return jsonResponse(ownerSettings, corsHeaders);
       }
@@ -194,7 +190,7 @@ export default {
       if (url.pathname === "/api/owner/settings" && request.method === "PATCH") {
         ensureNotionEnv(env);
         var settingsBody = await readJson(request);
-        requireOwner(env, settingsBody.userId);
+        await requireOwnerFromRequest(request, env);
         var updatedSettings = await updateSettings(env, settingsBody);
         return jsonResponse({ ok: true, settings: updatedSettings }, corsHeaders);
       }

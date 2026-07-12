@@ -93,6 +93,14 @@
     }
     clearLoginAttempt();
     var profile = await liff.getProfile();
+    var idToken = liff.getIDToken();
+    if (!idToken) {
+      throw new Error("無法取得 LINE 登入憑證，請完全關閉 LINE 後重新開啟此頁");
+    }
+    window.beautyIdToken = idToken;
+    window.getBeautyIdToken = function () {
+      return window.beautyIdToken || null;
+    };
     window.beautyUser = {
       userId: profile.userId,
       displayName: profile.displayName || "業主",
