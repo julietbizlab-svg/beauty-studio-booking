@@ -8,8 +8,9 @@
 
   var state = {
     user: null,
-    todayBookings: [],
-    bookingQueryDate: "",
+    calendarMonth: "",
+    selectedDate: "",
+    monthDays: {},
     services: [],
     slots: [],
     settings: null,
@@ -61,28 +62,120 @@
     return "週" + WEEKDAYS[date.getDay()];
   }
 
-  function getSelectedBookingDate() {
-    return els.todayDate.value || getTodayIso();
+  function pad2(num) {
+    return String(num).padStart(2, "0");
+  }
+
+  function getCurrentMonthIso() {
+    return getTodayIso().slice(0, 7);
+  }
+
+  function formatMonthTitle(month) {
+    var parts = month.split("-");
+    return parts[0] + "年" + Number(parts[1]) + "月";
+  }
+
+  function addMonths(month, delta) {
+    var parts = month.split("-");
+    var date = new Date(Number(parts[0]), Number(parts[1]) - 1 + delta, 1);
+    return date.getFullYear() + "-" + pad2(date.getMonth() + 1);
+  }
+
+  function buildCalendarCells(month) {
+    var parts = month.split("-");
+    var year = Number(parts[0]);
+    var mon = Number(parts[1]);
+    var firstDow = new Date(year, mon - 1, 1).getDay();
+    var daysInMonth = new Date(year, mon, 0).getDate();
+    var cells = [];
+
+    for (var i = 0; i < firstDow; i++) {
+      cells.push({ empty: true });
+    }
+    for (var day = 1; day <= daysInMonth; day++) {
+      cells.push({
+        empty: false,
+        date: year + "-" + pad2(mon) + "-" + pad2(day)
+      });
+    }
+    return cells;
+  }
+
+  function getDayData(date) {
+    return state.monthDays[date] || { confirmedCount: 0, canceledCount: 0, bookings: [] };
   }
 
   function updateBookingDateSummary() {
-    var date = state.bookingQueryDate || getSelectedBookingDate();
-    if (els.bookingDateSummary) {
-      els.bookingDateSummary.textContent = "目前查詢：" + formatDateZh(date) + "（" + getWeekdayLabel(date) + "）";
+    var date = state.selectedDate;
+    if (!els.bookingDateSummary || !date) {
+      return;
     }
+    var dayData = getDayData(date);
+    var total = dayData.bookings.length;
+    els.bookingDateSummary.textContent =
+      formatDateZh(date) + "（" + getWeekdayLabel(date) + "）預約 — 共 " + total + " 筆";
   }
 
-  function renderToday() {
+  function renderCalendar() {
+    if (!els.calendarGrid) {
+      return;
+    }
+    var month = state.calendarMonth;
+    var today = getTodayIso();
+    if (els.calendarMonthLabel) {
+      els.calendarMonthLabel.textContent = formatMonthTitle(month);
+    }
+
+    var cells = buildCalendarCells(month);
+    els.calendarGrid.innerHTML = cells.map(function (cell) {
+      if (cell.empty) {
+        return '<div class="calendar-cell calendar-cell--empty"></div>';
+      }
+      var dayData = getDayData(cell.date);
+      var classes = ["calendar-day"];
+      if (cell.date === state.selectedDate) {
+        classes.push("calendar-day--selected");
+      }
+      if (cell.date === today) {
+        classes.push("calendar-day--today");
+      }
+      if (dayData.confirmedCount > 0) {
+        classes.push("calendar-day--has-confirmed");
+      }
+      var dayNum = Number(cell.date.split("-")[2]);
+      var dot = dayData.confirmedCount > 0 ? '<span class="calendar-dot"></span>' : "";
+      return (
+        '<button type="button" class="' + classes.join(" ") + '" data-date="' + cell.date + '">' +
+          '<span class="calendar-day-num">' + dayNum + "</span>" +
+          dot +
+        "</button>"
+      );
+    }).join("");
+
+    els.calendarGrid.querySelectorAll(".calendar-day").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        selectBookingDate(btn.getAttribute("data-date"));
+      });
+    });
+  }
+
+  function renderDayBookings() {
     var container = els.todayList;
-    var date = state.bookingQueryDate || getSelectedBookingDate();
+    var date = state.selectedDate;
     updateBookingDateSummary();
 
-    if (!state.todayBookings.length) {
+    if (!date) {
+      container.innerHTML = '<div class="empty">請選擇日期</div>';
+      return;
+    }
+
+    var bookings = getDayData(date).bookings;
+    if (!bookings.length) {
       container.innerHTML = '<div class="empty">' + formatDateZh(date) + " 尚無預約</div>";
       return;
     }
 
-    container.innerHTML = state.todayBookings.map(function (b) {
+    container.innerHTML = bookings.map(function (b) {
       var isCancelled = b.status === "已取消";
       var cardClass = "card booking-card" + (isCancelled ? " booking-card--cancelled" : "");
       var statusClass = isCancelled ? "booking-status cancelled" : "booking-status confirmed";
@@ -94,9 +187,54 @@
           '</div>' +
           '<h3 class="booking-service">' + escapeHtml(b.serviceName || "服務") + '</h3>' +
           '<p class="booking-customer">' + escapeHtml(b.customerName || "客人") + '</p>' +
+          '<p class="booking-date-line">' + formatDateZh(b.date || date) + '</p>' +
         '</div>'
       );
     }).join("");
+  }
+
+  function selectBookingDate(date) {
+    state.selectedDate = date;
+    renderCalendar();
+    renderDayBookings();
+  }
+
+  function getDefaultDateForMonth(month) {
+    if (month === getCurrentMonthIso()) {
+      return getTodayIso();
+    }
+    return month + "-01";
+  }
+
+  async function loadMonthBookings(month, selectDate) {
+    setStatus("info", "載入月曆中…");
+    try {
+      var result = await window.ownerApi.getBookingsForMonth(month);
+      state.calendarMonth = result.month || month;
+      state.monthDays = result.days || {};
+      state.selectedDate = selectDate || getDefaultDateForMonth(state.calendarMonth);
+      setStatus("");
+      renderCalendar();
+      renderDayBookings();
+    } catch (error) {
+      setStatus("error", error.message);
+    }
+  }
+
+  function shiftCalendarMonth(delta) {
+    var newMonth = addMonths(state.calendarMonth, delta);
+    loadMonthBookings(newMonth, getDefaultDateForMonth(newMonth))
+      .catch(function (e) { setStatus("error", e.message); });
+  }
+
+  function goToTodayOnCalendar() {
+    var today = getTodayIso();
+    loadMonthBookings(getCurrentMonthIso(), today)
+      .catch(function (e) { setStatus("error", e.message); });
+  }
+
+  async function refreshCalendarBookings() {
+    await loadMonthBookings(state.calendarMonth, state.selectedDate);
   }
 
   function renderServices() {
@@ -213,17 +351,9 @@
   }
 
   async function loadToday() {
-    var date = getSelectedBookingDate();
-    state.bookingQueryDate = date;
-    setStatus("info", "載入預約中…");
-    try {
-      var result = await window.ownerApi.getToday(state.user.userId, date);
-      state.todayBookings = result.bookings || [];
-      setStatus("");
-      renderToday();
-    } catch (error) {
-      setStatus("error", error.message);
-    }
+    var month = state.calendarMonth || getCurrentMonthIso();
+    var date = state.selectedDate || getTodayIso();
+    await loadMonthBookings(month, date);
   }
 
   async function loadServices() {
@@ -326,7 +456,8 @@
     els.status = $("status");
     els.brand = $("brand");
     els.todayList = $("today-list");
-    els.todayDate = $("today-date");
+    els.calendarGrid = $("calendar-grid");
+    els.calendarMonthLabel = $("calendar-month-label");
     els.bookingDateSummary = $("booking-date-summary");
     els.serviceList = $("service-list");
     els.slotEditor = $("slot-editor");
@@ -348,17 +479,17 @@
         switchTab(tab.getAttribute("data-tab"));
       });
     });
-    els.todayDate.value = getTodayIso();
-    state.bookingQueryDate = els.todayDate.value;
-    els.todayDate.addEventListener("change", function () {
-      loadToday().catch(function (e) { setStatus("error", e.message); });
+    $("calendar-prev").addEventListener("click", function () {
+      shiftCalendarMonth(-1);
+    });
+    $("calendar-next").addEventListener("click", function () {
+      shiftCalendarMonth(1);
     });
     $("booking-today-btn").addEventListener("click", function () {
-      els.todayDate.value = getTodayIso();
-      loadToday().catch(function (e) { setStatus("error", e.message); });
+      goToTodayOnCalendar();
     });
     $("refresh-today").addEventListener("click", function () {
-      loadToday().catch(function (e) { setStatus("error", e.message); });
+      refreshCalendarBookings().catch(function (e) { setStatus("error", e.message); });
     });
     els.svcSubmit.addEventListener("click", handleServiceSubmit);
     $("cancel-edit").addEventListener("click", clearServiceForm);
@@ -382,7 +513,8 @@
       }
 
       await loadSettings();
-      await loadToday();
+      var today = getTodayIso();
+      await loadMonthBookings(getCurrentMonthIso(), today);
       await loadServices();
       await loadSlots();
       setStatus("");

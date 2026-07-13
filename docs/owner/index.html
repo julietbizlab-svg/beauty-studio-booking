@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
   <title>工作室管理</title>
-  <link rel="stylesheet" href="css/style.css?v=20260714001">
+  <link rel="stylesheet" href="css/style.css?v=20260714002">
 </head>
 <body>
   <div class="app">
@@ -21,16 +21,19 @@
       <button type="button" class="tab" data-tab="settings">店面設定</button>
     </div>
 
-    <!-- 預約查詢（依日期） -->
+    <!-- 預約查詢（月曆） -->
     <section class="panel active" data-panel="today">
-      <p class="panel-hint">選擇日期查看當日預約，不限今天。</p>
-      <div class="booking-query-bar">
-        <div class="form-group inline-date">
-          <label for="today-date">查詢日期</label>
-          <input type="date" id="today-date">
-        </div>
+      <p class="panel-hint">點選日期查看當日預約；有已確認預約的日期會顯示標記。</p>
+      <div class="calendar-toolbar">
+        <button type="button" class="btn btn-small" id="calendar-prev" aria-label="上個月">◀</button>
+        <span class="calendar-month-label" id="calendar-month-label"></span>
+        <button type="button" class="btn btn-small" id="calendar-next" aria-label="下個月">▶</button>
         <button type="button" class="btn btn-small" id="booking-today-btn">今天</button>
       </div>
+      <div class="calendar-weekdays" aria-hidden="true">
+        <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
+      </div>
+      <div class="calendar-grid" id="calendar-grid"></div>
       <p class="booking-date-summary" id="booking-date-summary"></p>
       <button type="button" class="btn btn-small" id="refresh-today" style="margin-bottom:12px">重新整理</button>
       <div id="today-list"></div>
@@ -97,9 +100,9 @@
     </section>
   </div>
 
-  <script src="js/config.js?v=20260714001"></script>
-  <script src="js/liff-init.js?v=20260714001"></script>
-  <script src="js/api.js?v=20260714001"></script>
-  <script src="js/app.js?v=20260714001"></script>
+  <script src="js/config.js?v=20260714002"></script>
+  <script src="js/liff-init.js?v=20260714002"></script>
+  <script src="js/api.js?v=20260714002"></script>
+  <script src="js/app.js?v=20260714002"></script>
 </body>
 </html>

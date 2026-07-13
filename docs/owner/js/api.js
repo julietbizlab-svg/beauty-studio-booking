@@ -61,6 +61,10 @@
   }
 
   window.ownerApi = {
+    getBookingsForMonth: function (month) {
+      return apiFetch("/api/owner/bookings/month?month=" + encodeURIComponent(month));
+    },
+
     getToday: function (userId, date) {
       var query = "/api/owner/today";
       if (date) query += "?date=" + encodeURIComponent(date);

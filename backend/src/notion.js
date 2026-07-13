@@ -493,3 +493,78 @@ export async function getTodayBookingsForOwner(env, date) {
       return a.time.localeCompare(b.time);
     });
 }
+
+function parseMonthParam(month) {
+  if (!month || !/^\d{4}-\d{2}$/.test(month)) {
+    throw makeError("month 格式錯誤，請使用 YYYY-MM", 400);
+  }
+  var parts = month.split("-");
+  var year = Number(parts[0]);
+  var monthNum = Number(parts[1]);
+  if (monthNum < 1 || monthNum > 12) {
+    throw makeError("month 格式錯誤，請使用 YYYY-MM", 400);
+  }
+  var start = month + "-01";
+  var lastDay = new Date(year, monthNum, 0).getDate();
+  var end = month + "-" + String(lastDay).padStart(2, "0");
+  return { month: month, start: start, end: end };
+}
+
+function bookingToOwnerDto(booking) {
+  return {
+    id: booking.id,
+    customerName: booking.customerName,
+    serviceName: booking.serviceName,
+    date: booking.date,
+    time: booking.time,
+    status: booking.status
+  };
+}
+
+export async function getOwnerBookingsForMonth(env, month) {
+  var range = parseMonthParam(month);
+  var pages = await queryDatabase(env, env.NOTION_DATABASE_BOOKINGS, {
+    and: [
+      { property: "預約日期", date: { on_or_after: range.start } },
+      { property: "預約日期", date: { on_or_before: range.end } }
+    ]
+  });
+
+  var bookings = pages
+    .map(parseBookingPage)
+    .filter(function (b) {
+      return b.status === "已確認" || b.status === "已取消";
+    });
+
+  var days = {};
+  bookings.forEach(function (b) {
+    if (!b.date) {
+      return;
+    }
+    if (!days[b.date]) {
+      days[b.date] = {
+        confirmedCount: 0,
+        canceledCount: 0,
+        bookings: []
+      };
+    }
+    if (b.status === "已確認") {
+      days[b.date].confirmedCount += 1;
+    } else if (b.status === "已取消") {
+      days[b.date].canceledCount += 1;
+    }
+    days[b.date].bookings.push(bookingToOwnerDto(b));
+  });
+
+  Object.keys(days).forEach(function (dateKey) {
+    days[dateKey].bookings.sort(function (a, b) {
+      return a.time.localeCompare(b.time);
+    });
+  });
+
+  return {
+    ok: true,
+    month: range.month,
+    days: days
+  };
+}

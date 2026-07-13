@@ -13,6 +13,7 @@ import {
   createBooking,
   cancelBooking,
   getTodayBookingsForOwner,
+  getOwnerBookingsForMonth,
   getSettings,
   updateSettings,
   getServiceById
@@ -127,6 +128,18 @@ export default {
         var cancelBody = await readJson(request);
         var cancelResult = await cancelBooking(env, cancelBody.userId, cancelBody.bookingId);
         return jsonResponse(cancelResult, corsHeaders);
+      }
+
+      if (url.pathname === "/api/owner/bookings/month" && request.method === "GET") {
+        ensureNotionEnv(env);
+        await requireOwnerFromRequest(request, env);
+
+        var month = url.searchParams.get("month");
+        if (!month) {
+          return jsonResponse({ ok: false, message: "缺少 month 參數（YYYY-MM）" }, corsHeaders, 400);
+        }
+        var monthBookings = await getOwnerBookingsForMonth(env, month);
+        return jsonResponse(monthBookings, corsHeaders);
       }
 
       if (url.pathname === "/api/owner/today" && request.method === "GET") {
