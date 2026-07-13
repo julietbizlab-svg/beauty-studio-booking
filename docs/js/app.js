@@ -87,7 +87,11 @@
         state.selectedTime = "";
         state.slots = [];
         renderServices();
-        renderSlots();
+        if (state.selectedDate) {
+          loadSlots();
+        } else {
+          renderSlots();
+        }
         updateBookButton();
       });
     });
