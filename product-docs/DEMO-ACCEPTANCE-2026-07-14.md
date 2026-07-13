@@ -2,7 +2,7 @@
 
 > **驗收日期**：2026-07-14  
 > **用途**：記錄 Demo 系統上線驗收結果，供未來交付客戶時複用為 SOP 參考。  
-> **狀態**：主要功能驗收通過 ✅
+> **狀態**：主要功能驗收通過 ✅（含客人端／業主端月曆，2026-07-14 更新）
 
 ---
 
@@ -28,8 +28,10 @@
 | 項目 | 說明 |
 |------|------|
 | Cloudflare Secrets | 7 個 Secrets 已上傳（`NOTION_TOKEN`、四表 ID、`OWNER_LINE_USER_IDS`、`LIFF_CHANNEL_ID`） |
-| Worker 部署 | `wrangler deploy` 完成，`/api/health` → `notion: true` |
+| Worker 部署（業主月曆） | Version `1edcca3b-1978-4064-bb8d-fcef81ad3545` |
+| Worker 部署（客人月曆 API） | Version `600d6dd4-6fe8-40ac-9dc7-4182cf66baa4` |
 | 前端 API | `API_BASE_URL` 指向正式 Worker |
+| Git commit（客人月曆） | `843fa9a` — `feat: add customer calendar date picker for booking` |
 
 ---
 
@@ -39,11 +41,24 @@
 |------|------|------|
 | LINE LIFF 登入 | ✅ 通過 | 可取得 userId、顯示名稱 |
 | 服務列表 | ✅ 通過 | 顯示上架服務與價格、時長 |
-| 日期選擇 | ✅ 通過 | `YYYY-MM-DD` 格式 |
-| 時段選擇 | ✅ 通過 | 先選服務再選日期、或先選日期再選服務皆可載入時段 |
+| **月曆選日期（基礎款）** | ✅ 通過 | 選服務後顯示當月月曆；可切換上／下月 |
+| **可約日可點、不可約灰色** | ✅ 通過 | 僅「有開放營業且仍有空位」可點；未開放／已過期／已額滿／今日時段已過皆灰色不可點 |
+| **點日期載入時段** | ✅ 通過 | 點可約日後下方顯示時段按鈕 |
+| 時段選擇 | ✅ 通過 | 換服務會重載月曆；換月不自動選第一個可約日 |
 | 建立預約 | ✅ 通過 | 寫入 Notion bookings |
 | 我的預約 | ✅ 通過 | 顯示本人預約紀錄 |
 | 取消預約 | ✅ 通過 | 狀態更新為已取消 |
+
+### 客人端月曆 API 驗收（2026-07-14）
+
+| 項目 | 結果 |
+|------|------|
+| `GET /api/health` | ✅ `ok: true`，`notion: true` |
+| `GET /api/slots/month?month=2026-07&serviceId=…` | ✅ 回傳整月每日 `bookable` / `slotCount` / `reason` |
+| `GET /api/slots?date=2026-07-20&serviceId=…` | ✅ 與 month API 一致（例：8 個時段 `10:00`～`17:00`） |
+| Demo 2026-07 可約日 | 週一 `2026-07-20`、`2026-07-27` 各 8 空檔（依當時 slots 僅週一開放） |
+
+**產品定位**：客人端月曆選日期屬**基礎款**，不是加購。
 
 ---
 
@@ -52,12 +67,15 @@
 | 項目 | 結果 | 備註 |
 |------|------|------|
 | Owner 驗證 | ✅ 通過 | Bearer LINE ID Token + 後端 `OWNER_LINE_USER_IDS` |
-| 今日預約 | ✅ 通過 | 依日期列出預約 |
+| **月曆預約查詢（基礎款）** | ✅ 通過 | `GET /api/owner/bookings/month`；月曆顯示有已確認預約的日期 |
+| **點日期看當日清單** | ✅ 通過 | 點日期顯示當日預約；已取消淡化、不標記日期 |
 | 服務列表 | ✅ 通過 | 含上架與下架 |
 | 新增服務 | ✅ 通過 | 寫入 Notion services |
 | 下架服務 | ✅ 通過 | 狀態更新，客人端不再顯示 |
 | 營業時段 | ✅ 通過 | 週期性時段寫入 Notion slots |
 | 店面設定 | ✅ 通過 | 品牌名稱、主色、公告等 |
+
+**產品定位**：業主端月曆預約查詢屬**基礎款**，不是加購。
 
 ---
 
@@ -72,8 +90,8 @@
 3. **測試服務為 Demo 資料**  
    Notion 內可能有空白名稱或測試用服務，交付前可下架或刪除。
 
-4. **前端操作順序**  
-   已修正「先選日期再選服務」時段不載入問題（`customer-ui/js/app.js`）；部署時需 sync `docs/` 並 bump `?v=`。
+4. **前端快取**  
+   月曆功能上線後需 sync `docs/` 並 bump `?v=`，避免 LINE WebView 載入舊 JS。
 
 5. **`.cursor/` 協作規則**  
    若尚未 commit，可另行納入版本庫，不影響 Demo 運作。
@@ -93,8 +111,9 @@
 
 ## 7. 下一步建議
 
-1. **補齊週二～週日營業時段**（業主端或 Notion 直接維護）
-2. **做客戶交付版 SOP**  
+1. **補齊週二～週日營業時段**（業主端或 Notion 直接維護）— 客人月曆會依此顯示更多可約日
+2. **push 客人端月曆前端**（`docs/` 已含月曆 UI，待 Codex 審查後 push GitHub Pages）
+3. **做客戶交付版 SOP**  
    整合 `CLIENT-DELIVERY-CHECKLIST.md`、`CLIENT-NOTION-SETUP-FLOW.md`、`CLIENT-LINE-SETUP-FLOW.md` 為單一交付流程
 3. **做每位新客戶複製流程**  
    參考 `COPY-FOR-NEW-CLIENT.md`：複製 repo → 新 Notion → 新 LINE Channel → 新 Cloudflare Worker → 新 GitHub Pages
@@ -114,4 +133,4 @@
 
 ---
 
-*文件版本：1.0｜beauty-studio-booking Demo｜不含任何 Token 或密碼*
+*文件版本：1.1｜beauty-studio-booking Demo｜不含任何 Token 或密碼*

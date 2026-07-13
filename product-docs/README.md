@@ -15,7 +15,8 @@
 | CLIENT-LINE-SETUP-FLOW.md | 新客戶 LINE / LIFF 逐步設定與驗收紀錄（含 Channel ID、LIFF ID、Endpoint） |
 | PRICING-DRAFT.md | 報價方案草稿，協助判斷建置費與月維護費 |
 | CLIENT-DELIVERY-CHECKLIST.md | 系統完成後，交付給客戶前逐項確認 |
-| DEMO-ACCEPTANCE-2026-07-14.md | Demo 上線驗收紀錄（2026-07-14），供交付 SOP 參考 |
+| DEMO-ACCEPTANCE-2026-07-14.md | Demo 上線驗收紀錄（含客人端／業主端月曆），供交付 SOP 參考 |
+| PRODUCT-TEMPLATE-MASTER.md | 商品母版總文件（基礎款功能清單含月曆） |
 | README.md | 商品化文件總索引 |
 
 ## 使用順序
@@ -25,7 +26,16 @@
 3. 依 `CLIENT-LINE-SETUP-FLOW.md` 完成 LINE / LIFF 設定
 4. 再依需求評估 `PRICING-DRAFT.md`
 5. 建置完成後使用 `CLIENT-DELIVERY-CHECKLIST.md`
-6. Demo 或正式上線後，可參考 `DEMO-ACCEPTANCE-2026-07-14.md` 作為驗收紀錄範本
+6. Demo 或正式上線後，可參考 `DEMO-ACCEPTANCE-2026-07-14.md` 作為驗收紀錄範本（含月曆選日期、月曆預約查詢）
+
+## 基礎款月曆功能（交付新客戶必知）
+
+| 端 | 功能 | 方案 |
+|----|------|------|
+| 客人端 | 月曆選日期 → 點可約日 → 選時段 | **基礎款**（非加購） |
+| 業主端 | 月曆查詢各日預約 | **基礎款**（非加購） |
+
+詳見 [PRODUCT-TEMPLATE-MASTER.md](PRODUCT-TEMPLATE-MASTER.md) 第 4 節、[DEMO-ACCEPTANCE-2026-07-14.md](DEMO-ACCEPTANCE-2026-07-14.md)。
 
 所有文件不得放入 Token、密碼、客戶個資或機密資料。
 
