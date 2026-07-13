@@ -1,15 +1,17 @@
 /**
  * LINE LIFF 登入模組（業主端）
+ * idToken 僅存記憶體；過期時自動導向 LINE 重新登入。
  */
 (function () {
   "use strict";
 
   var LIFF_SDK_URL = "https://static.line-scdn.net/liff/edge/2/sdk.js";
-  var LOGIN_COOLDOWN_KEY = "beauty-liff-login-at";
-  var LOGIN_COOLDOWN_MS = 90000;
+  var LOGIN_COOLDOWN_MS = 15000;
+  var lastLoginAttemptAt = 0;
   var loginRequested = false;
 
   window.beautyUser = null;
+  window.beautyIdToken = null;
 
   window.beautyLiffReady = new Promise(function (resolve, reject) {
     window.__resolveBeautyLiff = resolve;
@@ -40,42 +42,73 @@
     return liffId;
   }
 
-  function getStableRedirectUri() {
-    return window.location.origin + window.location.pathname;
+  function getRedirectUri() {
+    return window.location.href;
   }
 
-  function getLastLoginAttempt() {
-    try {
-      return parseInt(localStorage.getItem(LOGIN_COOLDOWN_KEY) || "0", 10);
-    } catch (ignore) {
-      return 0;
+  function clearBeautyToken() {
+    window.beautyIdToken = null;
+  }
+
+  function canRequestLoginNow() {
+    if (loginRequested) {
+      return false;
     }
-  }
-
-  function recordLoginAttempt() {
-    try {
-      localStorage.setItem(LOGIN_COOLDOWN_KEY, String(Date.now()));
-    } catch (ignore) {}
-  }
-
-  function clearLoginAttempt() {
-    try {
-      localStorage.removeItem(LOGIN_COOLDOWN_KEY);
-    } catch (ignore) {}
-  }
-
-  function shouldBlockLoginRetry() {
-    return Date.now() - getLastLoginAttempt() < LOGIN_COOLDOWN_MS;
+    if (lastLoginAttemptAt && Date.now() - lastLoginAttemptAt < LOGIN_COOLDOWN_MS) {
+      return false;
+    }
+    return true;
   }
 
   function requestLogin() {
-    if (loginRequested) return;
-    if (shouldBlockLoginRetry()) {
-      throw new Error("LINE 登入重試過於頻繁，請完全關閉 LINE 後再開");
+    if (typeof liff === "undefined") {
+      return false;
+    }
+    if (!canRequestLoginNow()) {
+      return false;
     }
     loginRequested = true;
-    recordLoginAttempt();
-    liff.login({ redirectUri: getStableRedirectUri() });
+    lastLoginAttemptAt = Date.now();
+    clearBeautyToken();
+    try {
+      if (liff.isLoggedIn()) {
+        liff.logout();
+      }
+    } catch (ignore) {}
+    liff.login({ redirectUri: getRedirectUri() });
+    return true;
+  }
+
+  window.beautyOwnerRequestReLogin = function () {
+    return requestLogin();
+  };
+
+  window.getBeautyIdToken = function () {
+    if (window.beautyIdToken) {
+      return window.beautyIdToken;
+    }
+    if (typeof liff !== "undefined" && liff.isLoggedIn()) {
+      var freshToken = liff.getIDToken();
+      if (freshToken) {
+        window.beautyIdToken = freshToken;
+        return freshToken;
+      }
+    }
+    return null;
+  };
+
+  function completeLogin(profile, idToken) {
+    window.beautyIdToken = idToken;
+    window.beautyUser = {
+      userId: profile.userId,
+      displayName: profile.displayName || "業主",
+      pictureUrl: profile.pictureUrl || ""
+    };
+    loginRequested = false;
+    lastLoginAttemptAt = 0;
+    if (window.__resolveBeautyLiff) {
+      window.__resolveBeautyLiff();
+    }
   }
 
   async function initLiff() {
@@ -87,32 +120,27 @@
       liffId: getLiffId(),
       withLoginOnExternalBrowser: true
     });
+
     if (!liff.isLoggedIn()) {
       requestLogin();
       return;
     }
-    clearLoginAttempt();
+
     var profile = await liff.getProfile();
     var idToken = liff.getIDToken();
     if (!idToken) {
-      throw new Error("無法取得 LINE 登入憑證，請完全關閉 LINE 後重新開啟此頁");
+      requestLogin();
+      return;
     }
-    window.beautyIdToken = idToken;
-    window.getBeautyIdToken = function () {
-      return window.beautyIdToken || null;
-    };
-    window.beautyUser = {
-      userId: profile.userId,
-      displayName: profile.displayName || "業主",
-      pictureUrl: profile.pictureUrl || ""
-    };
-    if (window.__resolveBeautyLiff) {
-      window.__resolveBeautyLiff();
-    }
+
+    completeLogin(profile, idToken);
   }
 
   initLiff().catch(function (error) {
     console.error("[LIFF]", error);
+    if (loginRequested) {
+      return;
+    }
     if (window.__rejectBeautyLiff) {
       window.__rejectBeautyLiff(error);
     }

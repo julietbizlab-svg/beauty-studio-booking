@@ -20,6 +20,20 @@
     return window.beautyIdToken || null;
   }
 
+  function triggerOwnerReLogin() {
+    if (typeof window.beautyOwnerRequestReLogin === "function") {
+      return window.beautyOwnerRequestReLogin();
+    }
+    return false;
+  }
+
+  function makeAuthError(message) {
+    var error = new Error(message);
+    error.status = 401;
+    error.reloginTriggered = true;
+    return error;
+  }
+
   async function apiFetch(path, options) {
     var baseUrl = getApiBaseUrl();
     if (!baseUrl) {
@@ -28,6 +42,9 @@
 
     var idToken = getIdToken();
     if (!idToken) {
+      if (triggerOwnerReLogin()) {
+        throw makeAuthError("登入已過期，正在重新導向 LINE 登入…");
+      }
       throw new Error("尚未完成 LINE 登入，無法呼叫管理 API");
     }
 
@@ -49,7 +66,10 @@
     if (!response.ok) {
       var message = (body && body.message) ? body.message : "伺服器回應錯誤（" + response.status + "）";
       if (response.status === 401) {
-        message = "登入已過期，請完全關閉 LINE 後重新開啟此頁";
+        if (triggerOwnerReLogin()) {
+          throw makeAuthError("登入已過期，正在重新導向 LINE 登入…");
+        }
+        message = "登入已過期，請重新開啟此頁";
       } else if (response.status === 403 && (!body || !body.message)) {
         message = "無業主管理權限";
       }
