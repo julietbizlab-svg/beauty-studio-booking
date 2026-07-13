@@ -1,0 +1,36 @@
+---
+description: beauty-studio-booking 合作規則：自動執行 vs 需 Codex 審查
+alwaysApply: true
+---
+
+# 合作規則：主動執行 vs 需審查
+
+使用者是接案者／客戶窗口，**不是工程師**。不要把工程判斷丟給使用者；安全、可逆、低風險的動作請**主動執行**，不要反覆要求使用者確認。
+
+## 可以自動做（不需先問）
+
+- 讀檔
+- `git status` / `git diff` / `git log`
+- `node --check`
+- `npm test` 或專案既有檢查指令
+- `scripts/check-*.mjs` 等只讀檢查
+- 建立或修改文件
+- 建立 Cursor 任務包
+- 不含 token、不影響部署的一般 commit
+
+## 必須先停下來（交 Codex 審查或請使用者確認）
+
+- 任何 token / secret / API key 操作
+- 修改 `backend/.dev.vars`
+- Cloudflare Secrets 上傳
+- `wrangler deploy`
+- GitHub Pages 正式前端更新
+- LINE / LIFF 正式 URL 修改
+- 刪除資料
+- 會影響客戶正式環境的動作
+- 推送到 `main`
+- 任何可能造成資料遺失或服務中斷的操作
+
+## 有風險時的回報方式
+
+用 **🟨 Cursor 回報請貼給 Codex** 精簡回報（見 `codex-report-format.mdc`），由 Codex 判斷下一步。不要求使用者貼完整 diff 或長 log。

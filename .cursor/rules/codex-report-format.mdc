@@ -1,0 +1,32 @@
+---
+description: 完成工作後的 Codex 精簡回報格式（beauty-studio-booking）
+alwaysApply: true
+---
+
+# Codex 精簡回報格式
+
+使用者不用把 Cursor 所有輸出都貼給 Codex。每次完成工作後，只整理一段精簡回報，並用以下標題標示：
+
+**🟨 Cursor 回報請貼給 Codex**
+
+這個區塊最多 30 行，內容只包含：
+
+1. 這次目標
+2. 修改檔案
+3. 是否修改 .dev.vars
+4. git status --short
+5. 測試指令與結果
+6. 是否有安全風險
+7. 是否可以 commit / 是否已 commit
+8. 需要 Codex 審查的問題
+
+## 禁止事項
+
+- 不要要求使用者貼整份 diff
+- 不要要求使用者貼完整終端機長輸出
+- 不要把 token、secret、金鑰印在回報裡
+- 如果有錯誤，只貼錯誤重點，不貼大量 log
+
+## Diff 與詳細輸出
+
+若有需要看完整 diff，請先摘要，等 Codex 明確要求再提供。
