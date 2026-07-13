@@ -352,6 +352,21 @@ export async function replaceWeeklySlots(env, slots) {
   return created;
 }
 
+export async function getActiveBookingsForMonth(env, month) {
+  var range = parseMonthParam(month);
+  var pages = await queryDatabase(env, env.NOTION_DATABASE_BOOKINGS, {
+    and: [
+      { property: "預約日期", date: { on_or_after: range.start } },
+      { property: "預約日期", date: { on_or_before: range.end } },
+      { property: "狀態", select: { equals: "已確認" } }
+    ]
+  });
+  return {
+    range: range,
+    bookings: pages.map(parseBookingPage)
+  };
+}
+
 export async function getActiveBookingsByDate(env, date) {
   var pages = await queryDatabase(env, env.NOTION_DATABASE_BOOKINGS, {
     and: [
@@ -494,7 +509,7 @@ export async function getTodayBookingsForOwner(env, date) {
     });
 }
 
-function parseMonthParam(month) {
+export function parseMonthParam(month) {
   if (!month || !/^\d{4}-\d{2}$/.test(month)) {
     throw makeError("month 格式錯誤，請使用 YYYY-MM", 400);
   }

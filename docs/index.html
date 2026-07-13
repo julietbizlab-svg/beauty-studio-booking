@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
   <title>線上預約</title>
-  <link rel="stylesheet" href="css/style.css?v=20260713001">
+  <link rel="stylesheet" href="css/style.css?v=20260714001">
 </head>
 <body>
   <div class="app">
@@ -32,8 +32,20 @@
       <div id="service-list"></div>
 
       <p class="step-hint">步驟 2：選擇日期</p>
-      <label for="date-input">預約日期</label>
-      <input type="date" id="date-input">
+      <div id="calendar-section" class="calendar-section" hidden>
+        <div class="calendar-toolbar">
+          <button type="button" class="btn btn-small" id="calendar-prev" aria-label="上個月">◀</button>
+          <span class="calendar-month-label" id="calendar-month-label"></span>
+          <button type="button" class="btn btn-small" id="calendar-next" aria-label="下個月">▶</button>
+          <button type="button" class="btn btn-small" id="calendar-today-btn">今天</button>
+        </div>
+        <div class="calendar-weekdays" aria-hidden="true">
+          <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
+        </div>
+        <div class="calendar-grid" id="calendar-grid"></div>
+        <p class="selected-date-summary" id="selected-date-summary"></p>
+      </div>
+      <div id="calendar-placeholder" class="empty">請先選擇服務</div>
 
       <p class="step-hint">步驟 3：選擇時段</p>
       <div class="slot-grid" id="slot-grid">
@@ -48,9 +60,9 @@
     </section>
   </div>
 
-  <script src="js/config.js?v=20260713001"></script>
-  <script src="js/liff-init.js?v=20260713001"></script>
-  <script src="js/api.js?v=20260713001"></script>
-  <script src="js/app.js?v=20260713001"></script>
+  <script src="js/config.js?v=20260714001"></script>
+  <script src="js/liff-init.js?v=20260714001"></script>
+  <script src="js/api.js?v=20260714001"></script>
+  <script src="js/app.js?v=20260714001"></script>
 </body>
 </html>

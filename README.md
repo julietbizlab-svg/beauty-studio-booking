@@ -46,7 +46,8 @@ beauty-studio-booking/
 |------|------|------|
 | GET | `/api/settings` | 店面公開設定 |
 | GET | `/api/services` | 上架中的服務項目 |
-| GET | `/api/slots?date=&serviceId=` | 可預約時段 |
+| GET | `/api/slots?date=&serviceId=` | 可預約時段（單日） |
+| GET | `/api/slots/month?month=&serviceId=` | 月份可預約摘要（客人月曆） |
 | POST | `/api/bookings` | 建立預約 |
 | GET | `/api/bookings/me?userId=` | 我的預約 |
 | POST | `/api/bookings/cancel` | 取消預約 |

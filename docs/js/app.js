@@ -4,6 +4,8 @@
 (function () {
   "use strict";
 
+  var WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"];
+
   var state = {
     user: null,
     settings: null,
@@ -12,7 +14,9 @@
     selectedDate: "",
     selectedTime: "",
     slots: [],
-    bookings: []
+    bookings: [],
+    calendarMonth: "",
+    monthDays: {}
   };
 
   var els = {};
@@ -50,13 +54,220 @@
     return parts[0] + "/" + parts[1] + "/" + parts[2];
   }
 
-  function getMinDate() {
+  function getTodayIso() {
     return new Intl.DateTimeFormat("en-CA", {
       timeZone: "Asia/Taipei",
       year: "numeric",
       month: "2-digit",
       day: "2-digit"
     }).format(new Date());
+  }
+
+  function getCurrentMonthIso() {
+    return getTodayIso().slice(0, 7);
+  }
+
+  function pad2(num) {
+    return String(num).padStart(2, "0");
+  }
+
+  function formatMonthTitle(month) {
+    var parts = month.split("-");
+    return parts[0] + "年" + Number(parts[1]) + "月";
+  }
+
+  function addMonths(month, delta) {
+    var parts = month.split("-");
+    var date = new Date(Number(parts[0]), Number(parts[1]) - 1 + delta, 1);
+    return date.getFullYear() + "-" + pad2(date.getMonth() + 1);
+  }
+
+  function getWeekdayLabel(iso) {
+    if (!iso) return "";
+    var parts = iso.split("-");
+    var date = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+    return "週" + WEEKDAYS[date.getDay()];
+  }
+
+  function buildCalendarCells(month) {
+    var parts = month.split("-");
+    var year = Number(parts[0]);
+    var mon = Number(parts[1]);
+    var firstDow = new Date(year, mon - 1, 1).getDay();
+    var daysInMonth = new Date(year, mon, 0).getDate();
+    var cells = [];
+
+    for (var i = 0; i < firstDow; i++) {
+      cells.push({ empty: true });
+    }
+    for (var day = 1; day <= daysInMonth; day++) {
+      cells.push({
+        empty: false,
+        date: year + "-" + pad2(mon) + "-" + pad2(day)
+      });
+    }
+    return cells;
+  }
+
+  function getDaySummary(date) {
+    return state.monthDays[date] || { bookable: false, slotCount: 0, reason: "closed" };
+  }
+
+  function updateCalendarVisibility() {
+    var hasService = Boolean(state.selectedService);
+    if (els.calendarSection) {
+      els.calendarSection.hidden = !hasService;
+    }
+    if (els.calendarPlaceholder) {
+      els.calendarPlaceholder.style.display = hasService ? "none" : "block";
+    }
+  }
+
+  function updateSelectedDateSummary() {
+    if (!els.selectedDateSummary) {
+      return;
+    }
+    if (!state.selectedDate) {
+      els.selectedDateSummary.textContent = "";
+      return;
+    }
+    els.selectedDateSummary.textContent =
+      "已選：" + formatDateZh(state.selectedDate) + "（" + getWeekdayLabel(state.selectedDate) + "）";
+  }
+
+  function renderCalendar() {
+    if (!els.calendarGrid) {
+      return;
+    }
+
+    if (!state.selectedService) {
+      els.calendarGrid.innerHTML = "";
+      updateSelectedDateSummary();
+      return;
+    }
+
+    var month = state.calendarMonth || getCurrentMonthIso();
+    var today = getTodayIso();
+    if (els.calendarMonthLabel) {
+      els.calendarMonthLabel.textContent = formatMonthTitle(month);
+    }
+
+    var cells = buildCalendarCells(month);
+    els.calendarGrid.innerHTML = cells.map(function (cell) {
+      if (cell.empty) {
+        return '<div class="calendar-cell calendar-cell--empty"></div>';
+      }
+
+      var summary = getDaySummary(cell.date);
+      var classes = ["calendar-day"];
+      var disabled = !summary.bookable;
+
+      if (disabled) {
+        classes.push("calendar-day--disabled");
+      } else {
+        classes.push("calendar-day--bookable");
+      }
+      if (cell.date === state.selectedDate) {
+        classes.push("calendar-day--selected");
+      }
+      if (cell.date === today) {
+        classes.push("calendar-day--today");
+      }
+
+      var dayNum = Number(cell.date.split("-")[2]);
+      var attrs = disabled
+        ? ' disabled aria-disabled="true"'
+        : ' data-date="' + cell.date + '"';
+
+      return (
+        '<button type="button" class="' + classes.join(" ") + '"' + attrs + ">" +
+          '<span class="calendar-day-num">' + dayNum + "</span>" +
+        "</button>"
+      );
+    }).join("");
+
+    els.calendarGrid.querySelectorAll(".calendar-day:not([disabled])").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        selectDate(btn.getAttribute("data-date"));
+      });
+    });
+
+    updateSelectedDateSummary();
+  }
+
+  function clearDateAndSlots() {
+    state.selectedDate = "";
+    state.selectedTime = "";
+    state.slots = [];
+    renderSlots();
+    updateBookButton();
+    updateSelectedDateSummary();
+    renderCalendar();
+  }
+
+  function selectDate(date, options) {
+    var opts = options || {};
+    if (!date || !state.selectedService) {
+      return;
+    }
+    var summary = getDaySummary(date);
+    if (!summary.bookable && !opts.force) {
+      return;
+    }
+
+    state.selectedDate = date;
+    state.selectedTime = "";
+    renderCalendar();
+    loadSlots();
+  }
+
+  async function loadMonthCalendar(month) {
+    if (!state.selectedService) {
+      return;
+    }
+
+    setStatus("", "載入月曆中…");
+    try {
+      var result = await window.beautyApi.getSlotsForMonth(month, state.selectedService.id);
+      state.calendarMonth = result.month || month;
+      state.monthDays = result.days || {};
+      setStatus("");
+      renderCalendar();
+    } catch (error) {
+      setStatus("error", error.message);
+    }
+  }
+
+  function shiftCalendarMonth(delta) {
+    if (!state.selectedService) {
+      return;
+    }
+    var newMonth = addMonths(state.calendarMonth || getCurrentMonthIso(), delta);
+    clearDateAndSlots();
+    loadMonthCalendar(newMonth).catch(function (e) { setStatus("error", e.message); });
+  }
+
+  function goToTodayOnCalendar() {
+    if (!state.selectedService) {
+      return;
+    }
+    var today = getTodayIso();
+    var currentMonth = getCurrentMonthIso();
+
+    function afterMonthLoaded() {
+      selectDate(today, { force: true });
+    }
+
+    if (state.calendarMonth === currentMonth && Object.keys(state.monthDays).length) {
+      afterMonthLoaded();
+      return;
+    }
+
+    state.calendarMonth = currentMonth;
+    clearDateAndSlots();
+    loadMonthCalendar(currentMonth)
+      .then(afterMonthLoaded)
+      .catch(function (e) { setStatus("error", e.message); });
   }
 
   function renderServices() {
@@ -84,15 +295,11 @@
       el.addEventListener("click", function () {
         var id = el.getAttribute("data-id");
         state.selectedService = state.services.find(function (s) { return s.id === id; });
-        state.selectedTime = "";
-        state.slots = [];
+        clearDateAndSlots();
+        updateCalendarVisibility();
+        state.calendarMonth = getCurrentMonthIso();
+        loadMonthCalendar(state.calendarMonth).catch(function (e) { setStatus("error", e.message); });
         renderServices();
-        if (state.selectedDate) {
-          loadSlots();
-        } else {
-          renderSlots();
-        }
-        updateBookButton();
       });
     });
   }
@@ -174,6 +381,7 @@
   async function loadServices() {
     state.services = await window.beautyApi.getServices();
     renderServices();
+    updateCalendarVisibility();
   }
 
   async function loadSlots() {
@@ -210,6 +418,7 @@
       });
       setStatus("success", "預約成功！");
       state.selectedTime = "";
+      await loadMonthCalendar(state.calendarMonth || getCurrentMonthIso());
       await loadSlots();
       await loadBookings();
       switchTab("bookings");
@@ -227,6 +436,9 @@
       await window.beautyApi.cancelBooking(state.user.userId, bookingId);
       setStatus("success", "已取消預約");
       await loadBookings();
+      if (state.selectedService) {
+        await loadMonthCalendar(state.calendarMonth || getCurrentMonthIso());
+      }
       if (state.selectedDate && state.selectedService) {
         await loadSlots();
       }
@@ -254,10 +466,14 @@
       });
     });
 
-    els.dateInput.min = getMinDate();
-    els.dateInput.addEventListener("change", function () {
-      state.selectedDate = els.dateInput.value;
-      loadSlots();
+    els.calendarPrev.addEventListener("click", function () {
+      shiftCalendarMonth(-1);
+    });
+    els.calendarNext.addEventListener("click", function () {
+      shiftCalendarMonth(1);
+    });
+    els.calendarTodayBtn.addEventListener("click", function () {
+      goToTodayOnCalendar();
     });
 
     els.bookBtn.addEventListener("click", handleBook);
@@ -268,7 +484,14 @@
     els.brand = $("brand");
     els.announcement = $("announcement");
     els.serviceList = $("service-list");
-    els.dateInput = $("date-input");
+    els.calendarSection = $("calendar-section");
+    els.calendarPlaceholder = $("calendar-placeholder");
+    els.calendarGrid = $("calendar-grid");
+    els.calendarMonthLabel = $("calendar-month-label");
+    els.calendarPrev = $("calendar-prev");
+    els.calendarNext = $("calendar-next");
+    els.calendarTodayBtn = $("calendar-today-btn");
+    els.selectedDateSummary = $("selected-date-summary");
     els.slotGrid = $("slot-grid");
     els.bookBtn = $("book-btn");
     els.bookingList = $("booking-list");

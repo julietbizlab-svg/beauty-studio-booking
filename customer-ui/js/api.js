@@ -51,6 +51,12 @@
       return apiFetch(query);
     },
 
+    getSlotsForMonth: function (month, serviceId) {
+      var query = "/api/slots/month?month=" + encodeURIComponent(month) +
+        "&serviceId=" + encodeURIComponent(serviceId);
+      return apiFetch(query);
+    },
+
     createBooking: function (payload) {
       return apiFetch("/api/bookings", {
         method: "POST",

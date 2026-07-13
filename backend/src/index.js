@@ -9,6 +9,7 @@ import {
   listWeeklySlots,
   replaceWeeklySlots,
   getActiveBookingsByDate,
+  getActiveBookingsForMonth,
   getUserBookings,
   createBooking,
   cancelBooking,
@@ -21,7 +22,9 @@ import {
 import { requireOwnerFromRequest } from "./owner-auth.js";
 import {
   weekdayLabelFromIndex,
-  buildSlotTimes,
+  buildAllSlotTimesForDay,
+  computeDayAvailability,
+  buildMonthAvailability,
   filterAvailableSlots,
   getNowMinutesInTaipei
 } from "./slots.js";
@@ -61,6 +64,54 @@ export default {
         return jsonResponse(services, corsHeaders);
       }
 
+      if (url.pathname === "/api/slots/month" && request.method === "GET") {
+        ensureNotionEnv(env);
+        var monthParam = url.searchParams.get("month");
+        var monthServiceId = url.searchParams.get("serviceId");
+
+        if (!monthParam) {
+          return jsonResponse({ ok: false, message: "缺少 month 參數（YYYY-MM）" }, corsHeaders, 400);
+        }
+        if (!monthServiceId) {
+          return jsonResponse({ ok: false, message: "缺少 serviceId 參數" }, corsHeaders, 400);
+        }
+
+        var monthService = await getServiceById(env, monthServiceId);
+        if (monthService.status !== "上架") {
+          return jsonResponse({ ok: false, message: "服務不存在或已下架" }, corsHeaders, 404);
+        }
+
+        var monthWeeklySlots = await listWeeklySlots(env);
+        var monthBookingsResult = await getActiveBookingsForMonth(env, monthParam);
+        var bookingsByDate = {};
+        monthBookingsResult.bookings.forEach(function (b) {
+          if (!bookingsByDate[b.date]) {
+            bookingsByDate[b.date] = [];
+          }
+          bookingsByDate[b.date].push(b);
+        });
+
+        var monthTodayStr = getTaipeiDateString();
+        var monthNowMinutes = getNowMinutesInTaipei();
+        var monthDays = buildMonthAvailability(
+          monthParam,
+          monthWeeklySlots,
+          monthService.durationMinutes,
+          bookingsByDate,
+          monthTodayStr,
+          monthNowMinutes,
+          function (d) { return weekdayLabelFromIndex(getTaipeiWeekdayIndex(d)); }
+        );
+
+        return jsonResponse({
+          ok: true,
+          month: monthBookingsResult.range.month,
+          serviceId: monthServiceId,
+          durationMinutes: monthService.durationMinutes,
+          days: monthDays
+        }, corsHeaders);
+      }
+
       if (url.pathname === "/api/slots" && request.method === "GET") {
         ensureNotionEnv(env);
         var date = url.searchParams.get("date");
@@ -79,30 +130,39 @@ export default {
         var weeklySlots = await listWeeklySlots(env);
         var daySlots = weeklySlots.filter(function (s) { return s.weekday === weekdayLabel; });
 
-        if (!daySlots.length) {
-          return jsonResponse({ date: date, slots: [], message: "此日期未開放預約" }, corsHeaders);
-        }
-
-        var allTimes = [];
-        daySlots.forEach(function (slot) {
-          var times = buildSlotTimes(slot.startTime, slot.endTime, service.durationMinutes);
-          allTimes = allTimes.concat(times);
-        });
-        allTimes = Array.from(new Set(allTimes)).sort();
-
         var bookings = await getActiveBookingsByDate(env, date);
         var bookedTimes = bookings.map(function (b) { return b.time; });
 
         var todayStr = getTaipeiDateString();
-        var nowMinutes = date === todayStr ? getNowMinutesInTaipei() : null;
+        var nowMinutes = getNowMinutesInTaipei();
+        var daySummary = computeDayAvailability({
+          date: date,
+          todayStr: todayStr,
+          nowMinutes: nowMinutes,
+          daySlots: daySlots,
+          durationMinutes: service.durationMinutes,
+          bookedTimes: bookedTimes
+        });
 
-        var available = filterAvailableSlots(allTimes, bookedTimes, date === todayStr ? todayStr : null, nowMinutes);
+        if (!daySlots.length) {
+          return jsonResponse({ date: date, slots: [], message: "此日期未開放預約" }, corsHeaders);
+        }
+
+        var allTimes = buildAllSlotTimesForDay(daySlots, service.durationMinutes);
+        var available = filterAvailableSlots(
+          allTimes,
+          bookedTimes,
+          date === todayStr ? todayStr : null,
+          date === todayStr ? nowMinutes : null
+        );
 
         return jsonResponse({
           date: date,
           serviceId: serviceId,
           durationMinutes: service.durationMinutes,
-          slots: available
+          slots: available,
+          bookable: daySummary.bookable,
+          reason: daySummary.reason
         }, corsHeaders);
       }
 

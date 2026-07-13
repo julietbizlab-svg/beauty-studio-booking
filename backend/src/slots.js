@@ -58,6 +58,83 @@ export function filterAvailableSlots(allSlots, bookedTimes, nowDateStr, nowMinut
   });
 }
 
+export function buildAllSlotTimesForDay(daySlots, durationMinutes) {
+  var allTimes = [];
+  (daySlots || []).forEach(function (slot) {
+    var times = buildSlotTimes(slot.startTime, slot.endTime, durationMinutes);
+    allTimes = allTimes.concat(times);
+  });
+  return Array.from(new Set(allTimes)).sort();
+}
+
+/**
+ * 單日可預約摘要（與 GET /api/slots 計算邏輯一致）
+ */
+export function computeDayAvailability(params) {
+  var date = params.date;
+  var todayStr = params.todayStr;
+  var nowMinutes = params.nowMinutes;
+  var daySlots = params.daySlots || [];
+  var durationMinutes = params.durationMinutes;
+  var bookedTimes = params.bookedTimes || [];
+
+  if (date < todayStr) {
+    return { bookable: false, slotCount: 0, reason: "past" };
+  }
+
+  if (!daySlots.length) {
+    return { bookable: false, slotCount: 0, reason: "closed" };
+  }
+
+  var allTimes = buildAllSlotTimesForDay(daySlots, durationMinutes);
+  var available = filterAvailableSlots(
+    allTimes,
+    bookedTimes,
+    date === todayStr ? todayStr : null,
+    date === todayStr ? nowMinutes : null
+  );
+
+  if (available.length > 0) {
+    return { bookable: true, slotCount: available.length, reason: null };
+  }
+
+  if (date === todayStr) {
+    var withoutTimeFilter = filterAvailableSlots(allTimes, bookedTimes, null, null);
+    if (withoutTimeFilter.length > 0) {
+      return { bookable: false, slotCount: 0, reason: "today_past" };
+    }
+  }
+
+  return { bookable: false, slotCount: 0, reason: "full" };
+}
+
+export function buildMonthAvailability(month, weeklySlots, durationMinutes, bookingsByDate, todayStr, nowMinutes, getWeekdayLabelForDate) {
+  var parts = month.split("-");
+  var year = Number(parts[0]);
+  var mon = Number(parts[1]);
+  var daysInMonth = new Date(year, mon, 0).getDate();
+  var days = {};
+
+  for (var day = 1; day <= daysInMonth; day++) {
+    var date = year + "-" + String(mon).padStart(2, "0") + "-" + String(day).padStart(2, "0");
+    var weekdayLabel = getWeekdayLabelForDate(date);
+    var daySlots = weeklySlots.filter(function (s) { return s.weekday === weekdayLabel; });
+    var dayBookings = bookingsByDate[date] || [];
+    var bookedTimes = dayBookings.map(function (b) { return b.time; });
+
+    days[date] = computeDayAvailability({
+      date: date,
+      todayStr: todayStr,
+      nowMinutes: nowMinutes,
+      daySlots: daySlots,
+      durationMinutes: durationMinutes,
+      bookedTimes: bookedTimes
+    });
+  }
+
+  return days;
+}
+
 export function getNowMinutesInTaipei() {
   var parts = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Asia/Taipei",
