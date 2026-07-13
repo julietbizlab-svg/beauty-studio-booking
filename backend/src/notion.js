@@ -480,14 +480,15 @@ export async function cancelBooking(env, userId, bookingId) {
 
 export async function getTodayBookingsForOwner(env, date) {
   var pages = await queryDatabase(env, env.NOTION_DATABASE_BOOKINGS, {
-    and: [
-      { property: "預約日期", date: { equals: date } },
-      { property: "狀態", select: { equals: "已確認" } }
-    ]
+    property: "預約日期",
+    date: { equals: date }
   });
 
   return pages
     .map(parseBookingPage)
+    .filter(function (b) {
+      return b.status === "已確認" || b.status === "已取消";
+    })
     .sort(function (a, b) {
       return a.time.localeCompare(b.time);
     });

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
   <title>工作室管理</title>
-  <link rel="stylesheet" href="css/style.css?v=20260712002">
+  <link rel="stylesheet" href="css/style.css?v=20260714001">
 </head>
 <body>
   <div class="app">
@@ -15,18 +15,23 @@
     <div id="status" class="status hidden"></div>
 
     <div class="tabs">
-      <button type="button" class="tab active" data-tab="today">今日預約</button>
+      <button type="button" class="tab active" data-tab="today">預約查詢</button>
       <button type="button" class="tab" data-tab="services">服務項目</button>
       <button type="button" class="tab" data-tab="slots">營業時段</button>
       <button type="button" class="tab" data-tab="settings">店面設定</button>
     </div>
 
-    <!-- 今日預約 -->
+    <!-- 預約查詢（依日期） -->
     <section class="panel active" data-panel="today">
-      <div class="form-group inline-date">
-        <label for="today-date">查詢日期</label>
-        <input type="date" id="today-date">
+      <p class="panel-hint">選擇日期查看當日預約，不限今天。</p>
+      <div class="booking-query-bar">
+        <div class="form-group inline-date">
+          <label for="today-date">查詢日期</label>
+          <input type="date" id="today-date">
+        </div>
+        <button type="button" class="btn btn-small" id="booking-today-btn">今天</button>
       </div>
+      <p class="booking-date-summary" id="booking-date-summary"></p>
       <button type="button" class="btn btn-small" id="refresh-today" style="margin-bottom:12px">重新整理</button>
       <div id="today-list"></div>
     </section>
@@ -92,9 +97,9 @@
     </section>
   </div>
 
-  <script src="js/config.js?v=20260712002"></script>
-  <script src="js/liff-init.js?v=20260712002"></script>
-  <script src="js/api.js?v=20260712002"></script>
-  <script src="js/app.js?v=20260712002"></script>
+  <script src="js/config.js?v=20260714001"></script>
+  <script src="js/liff-init.js?v=20260714001"></script>
+  <script src="js/api.js?v=20260714001"></script>
+  <script src="js/app.js?v=20260714001"></script>
 </body>
 </html>

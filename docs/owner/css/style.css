@@ -173,6 +173,96 @@ textarea { min-height: 72px; resize: vertical; }
 .badge.on { background: #E8F5EC; color: var(--success); }
 .badge.off { background: #F0F0F0; color: var(--muted); }
 
+.panel-hint {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+
+.booking-query-bar {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  margin-bottom: 4px;
+}
+
+.booking-query-bar .inline-date {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.booking-query-bar .btn-small {
+  flex-shrink: 0;
+  margin-bottom: 2px;
+  min-height: 40px;
+}
+
+.booking-date-summary {
+  font-size: 0.9rem;
+  color: var(--text);
+  font-weight: 600;
+  margin: 8px 0 4px;
+}
+
+.booking-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.booking-time {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.booking-service {
+  margin: 0 0 4px;
+  font-size: 1rem;
+}
+
+.booking-customer {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.booking-status {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.booking-status.confirmed {
+  background: #E8F5EC;
+  color: var(--success);
+}
+
+.booking-status.cancelled {
+  background: #F0F0F0;
+  color: var(--muted);
+}
+
+.booking-card--cancelled {
+  opacity: 0.72;
+  background: #FAFAFA;
+}
+
+.booking-card--cancelled .booking-time,
+.booking-card--cancelled .booking-service,
+.booking-card--cancelled .booking-customer {
+  color: var(--muted);
+}
+
+.booking-card--cancelled .booking-time {
+  font-weight: 600;
+}
+
 .inline-date {
   margin-bottom: 12px;
 }

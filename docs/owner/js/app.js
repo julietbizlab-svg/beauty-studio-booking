@@ -9,6 +9,7 @@
   var state = {
     user: null,
     todayBookings: [],
+    bookingQueryDate: "",
     services: [],
     slots: [],
     settings: null,
@@ -53,17 +54,46 @@
     }).format(new Date());
   }
 
+  function getWeekdayLabel(iso) {
+    if (!iso) return "";
+    var parts = iso.split("-");
+    var date = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+    return "週" + WEEKDAYS[date.getDay()];
+  }
+
+  function getSelectedBookingDate() {
+    return els.todayDate.value || getTodayIso();
+  }
+
+  function updateBookingDateSummary() {
+    var date = state.bookingQueryDate || getSelectedBookingDate();
+    if (els.bookingDateSummary) {
+      els.bookingDateSummary.textContent = "目前查詢：" + formatDateZh(date) + "（" + getWeekdayLabel(date) + "）";
+    }
+  }
+
   function renderToday() {
     var container = els.todayList;
+    var date = state.bookingQueryDate || getSelectedBookingDate();
+    updateBookingDateSummary();
+
     if (!state.todayBookings.length) {
-      container.innerHTML = '<div class="empty">今日尚無預約</div>';
+      container.innerHTML = '<div class="empty">' + formatDateZh(date) + " 尚無預約</div>";
       return;
     }
+
     container.innerHTML = state.todayBookings.map(function (b) {
+      var isCancelled = b.status === "已取消";
+      var cardClass = "card booking-card" + (isCancelled ? " booking-card--cancelled" : "");
+      var statusClass = isCancelled ? "booking-status cancelled" : "booking-status confirmed";
       return (
-        '<div class="card">' +
-          '<h3>' + escapeHtml(b.time) + ' — ' + escapeHtml(b.serviceName) + '</h3>' +
-          '<p>' + escapeHtml(b.customerName || "客人") + '</p>' +
+        '<div class="' + cardClass + '">' +
+          '<div class="booking-card-head">' +
+            '<span class="booking-time">' + escapeHtml(b.time) + '</span>' +
+            '<span class="' + statusClass + '">' + escapeHtml(b.status || "已確認") + '</span>' +
+          '</div>' +
+          '<h3 class="booking-service">' + escapeHtml(b.serviceName || "服務") + '</h3>' +
+          '<p class="booking-customer">' + escapeHtml(b.customerName || "客人") + '</p>' +
         '</div>'
       );
     }).join("");
@@ -183,10 +213,17 @@
   }
 
   async function loadToday() {
-    var date = els.todayDate.value || getTodayIso();
-    var result = await window.ownerApi.getToday(state.user.userId, date);
-    state.todayBookings = result.bookings || [];
-    renderToday();
+    var date = getSelectedBookingDate();
+    state.bookingQueryDate = date;
+    setStatus("info", "載入預約中…");
+    try {
+      var result = await window.ownerApi.getToday(state.user.userId, date);
+      state.todayBookings = result.bookings || [];
+      setStatus("");
+      renderToday();
+    } catch (error) {
+      setStatus("error", error.message);
+    }
   }
 
   async function loadServices() {
@@ -290,6 +327,7 @@
     els.brand = $("brand");
     els.todayList = $("today-list");
     els.todayDate = $("today-date");
+    els.bookingDateSummary = $("booking-date-summary");
     els.serviceList = $("service-list");
     els.slotEditor = $("slot-editor");
     els.brandName = $("brand-name");
@@ -311,7 +349,12 @@
       });
     });
     els.todayDate.value = getTodayIso();
+    state.bookingQueryDate = els.todayDate.value;
     els.todayDate.addEventListener("change", function () {
+      loadToday().catch(function (e) { setStatus("error", e.message); });
+    });
+    $("booking-today-btn").addEventListener("click", function () {
+      els.todayDate.value = getTodayIso();
       loadToday().catch(function (e) { setStatus("error", e.message); });
     });
     $("refresh-today").addEventListener("click", function () {
