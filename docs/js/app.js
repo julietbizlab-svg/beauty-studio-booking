@@ -390,13 +390,9 @@
     els.depositTransferBox.innerHTML = "";
   }
 
-  function renderDepositTransferBox(settings) {
-    if (!els.depositTransferBox) return;
-    var s = settings || state.settings || {};
-    if (!s.depositEnabled) {
-      hideDepositTransferBox();
-      return;
-    }
+  function buildDepositTransferHtml(settings, ids) {
+    var s = settings || {};
+    if (!s.depositEnabled) return "";
 
     var amount = s.depositAmount != null ? s.depositAmount : "";
     var bankLine = escapeHtml(s.bankName || "");
@@ -404,33 +400,76 @@
       bankLine += (bankLine ? "（" : "") + escapeHtml(s.bankCode) + (s.bankName ? "）" : "");
     }
 
-    els.depositTransferBox.innerHTML =
+    return (
       "<h3>訂金轉帳資訊</h3>" +
       "<p>若需支付訂金，請轉帳至以下帳戶：</p>" +
       (amount !== "" ? "<p>金額：NT$ " + escapeHtml(String(amount)) + "</p>" : "") +
       (bankLine ? "<p>銀行：" + bankLine + "</p>" : "") +
-      "<p>帳號：<span class=\"deposit-account\" id=\"deposit-account-text\">" +
+      "<p>帳號：<span class=\"deposit-account\" id=\"" + ids.accountTextId + "\">" +
         escapeHtml(s.bankAccount || "") + "</span></p>" +
       "<p>戶名：" + escapeHtml(s.bankAccountName || "") + "</p>" +
       (s.depositNote
         ? "<p class=\"deposit-note\">" + escapeHtml(s.depositNote) + "</p>"
         : "") +
       (s.bankAccount
-        ? "<button type=\"button\" class=\"btn btn-small btn-copy\" id=\"copy-deposit-account\">複製帳號</button>"
-        : "");
+        ? "<button type=\"button\" class=\"btn btn-small btn-copy\" id=\"" + ids.copyBtnId + "\">複製帳號</button>"
+        : "")
+    );
+  }
 
-    els.depositTransferBox.hidden = false;
-
-    var copyBtn = $("copy-deposit-account");
-    if (copyBtn && s.bankAccount && navigator.clipboard && navigator.clipboard.writeText) {
-      copyBtn.addEventListener("click", function () {
-        navigator.clipboard.writeText(String(s.bankAccount)).then(function () {
-          copyBtn.textContent = "已複製";
-        }).catch(function () {
-          copyBtn.textContent = "請手動複製";
-        });
-      });
+  function wireDepositCopyButton(copyBtnId, bankAccount) {
+    var copyBtn = $(copyBtnId);
+    if (!copyBtn || !bankAccount || !navigator.clipboard || !navigator.clipboard.writeText) {
+      return;
     }
+    copyBtn.addEventListener("click", function () {
+      navigator.clipboard.writeText(String(bankAccount)).then(function () {
+        copyBtn.textContent = "已複製";
+      }).catch(function () {
+        copyBtn.textContent = "請手動複製";
+      });
+    });
+  }
+
+  function fillDepositContainer(container, settings, ids) {
+    if (!container) return;
+    var s = settings || state.settings || {};
+    var html = buildDepositTransferHtml(s, ids);
+    if (!html) {
+      container.hidden = true;
+      container.innerHTML = "";
+      return;
+    }
+    container.innerHTML = html;
+    container.hidden = false;
+    wireDepositCopyButton(ids.copyBtnId, s.bankAccount);
+  }
+
+  function renderDepositTransferBox(settings) {
+    fillDepositContainer(els.depositTransferBox, settings, {
+      accountTextId: "deposit-account-text",
+      copyBtnId: "copy-deposit-account"
+    });
+  }
+
+  function hideBookingSuccessModal() {
+    if (!els.bookingSuccessModal) return;
+    els.bookingSuccessModal.classList.add("hidden");
+  }
+
+  function showBookingSuccessModal(details) {
+    if (!els.bookingSuccessModal) return;
+    els.bookingSuccessName.textContent = details.guestName || "";
+    els.bookingSuccessService.textContent = details.serviceName || "";
+    els.bookingSuccessDate.textContent =
+      formatDateZh(details.date) +
+      (details.date ? "（" + getWeekdayLabel(details.date) + "）" : "");
+    els.bookingSuccessTime.textContent = details.time || "";
+    fillDepositContainer(els.bookingSuccessDeposit, state.settings, {
+      accountTextId: "success-deposit-account-text",
+      copyBtnId: "copy-success-deposit-account"
+    });
+    els.bookingSuccessModal.classList.remove("hidden");
   }
 
   async function loadServices() {
@@ -463,30 +502,49 @@
     if (!state.selectedService || !state.selectedDate || !state.selectedTime) return;
     els.bookBtn.disabled = true;
     setStatus("", "送出預約中…");
+    var bookedServiceName = state.selectedService.name || "";
+    var bookedDate = state.selectedDate;
+    var bookedTime = state.selectedTime;
     try {
       await window.beautyApi.createBooking({
         userId: state.user.userId,
         displayName: state.user.displayName,
         serviceId: state.selectedService.id,
-        date: state.selectedDate,
-        time: state.selectedTime
+        date: bookedDate,
+        time: bookedTime
       });
-      setStatus("success", "預約成功！");
+      setStatus("");
       state.selectedTime = "";
       try {
         state.settings = await window.beautyApi.getSettings();
         applyTheme(state.settings);
       } catch (ignore) {}
       renderDepositTransferBox(state.settings);
+      showBookingSuccessModal({
+        guestName: (state.user && state.user.displayName) || "",
+        serviceName: bookedServiceName,
+        date: bookedDate,
+        time: bookedTime
+      });
       await loadMonthCalendar(state.calendarMonth || getCurrentMonthIso());
       await loadSlots();
       await loadBookings();
-      switchTab("bookings");
     } catch (error) {
       setStatus("error", error.message);
     } finally {
       updateBookButton();
     }
+  }
+
+  function handleBookingSuccessView() {
+    hideBookingSuccessModal();
+    switchTab("bookings");
+  }
+
+  function handleBookingSuccessAgain() {
+    hideBookingSuccessModal();
+    switchTab("book");
+    setStatus("");
   }
 
   async function handleCancel(bookingId) {
@@ -537,6 +595,12 @@
     });
 
     els.bookBtn.addEventListener("click", handleBook);
+    if (els.bookingSuccessView) {
+      els.bookingSuccessView.addEventListener("click", handleBookingSuccessView);
+    }
+    if (els.bookingSuccessAgain) {
+      els.bookingSuccessAgain.addEventListener("click", handleBookingSuccessAgain);
+    }
   }
 
   function cacheElements() {
@@ -556,6 +620,14 @@
     els.bookBtn = $("book-btn");
     els.bookingList = $("booking-list");
     els.depositTransferBox = $("deposit-transfer-box");
+    els.bookingSuccessModal = $("booking-success-modal");
+    els.bookingSuccessName = $("booking-success-name");
+    els.bookingSuccessService = $("booking-success-service");
+    els.bookingSuccessDate = $("booking-success-date");
+    els.bookingSuccessTime = $("booking-success-time");
+    els.bookingSuccessDeposit = $("booking-success-deposit");
+    els.bookingSuccessView = $("booking-success-view");
+    els.bookingSuccessAgain = $("booking-success-again");
     els.userName = $("user-name");
     els.userAvatar = $("user-avatar");
   }

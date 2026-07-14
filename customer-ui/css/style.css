@@ -419,3 +419,126 @@ input[type="date"] {
   font-size: 0.85rem;
   color: var(--muted);
 }
+
+.btn-secondary {
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(40, 30, 32, 0.45);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 20px 16px 24px;
+  z-index: 1000;
+}
+
+.modal-overlay.hidden {
+  display: none !important;
+}
+
+.modal-card {
+  width: 100%;
+  max-width: 480px;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  background: var(--card);
+  border-radius: 16px 16px 12px 12px;
+  padding: 24px 18px 20px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+}
+
+.booking-success-card {
+  text-align: center;
+}
+
+.booking-success-badge {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 14px;
+  border-radius: 50%;
+  background: #E8F5EC;
+  color: var(--success);
+  font-size: 1.8rem;
+  font-weight: 700;
+  line-height: 64px;
+}
+
+.booking-success-card h2 {
+  margin: 0 0 8px;
+  font-size: 1.45rem;
+  color: var(--success);
+}
+
+.booking-success-lead {
+  margin: 0 0 18px;
+  font-size: 0.95rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.booking-success-details {
+  margin: 0 0 18px;
+  text-align: left;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+.booking-success-details > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.booking-success-details > div:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.booking-success-details > div:first-child {
+  padding-top: 0;
+}
+
+.booking-success-details dt {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  flex-shrink: 0;
+  line-height: 1.5;
+}
+
+.booking-success-details dd {
+  margin: 0;
+  font-weight: 600;
+  font-size: 1rem;
+  text-align: right;
+  word-break: break-word;
+  line-height: 1.5;
+}
+
+.booking-success-deposit {
+  text-align: left;
+  margin-bottom: 16px;
+}
+
+.modal-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.modal-actions .btn {
+  width: 100%;
+  min-height: 46px;
+}

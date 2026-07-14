@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
   <title>線上預約</title>
-  <link rel="stylesheet" href="css/style.css?v=20260715003">
+  <link rel="stylesheet" href="css/style.css?v=20260715005">
 </head>
 <body>
   <div class="app">
@@ -61,9 +61,40 @@
     </section>
   </div>
 
-  <script src="js/config.js?v=20260715003"></script>
-  <script src="js/liff-init.js?v=20260715003"></script>
-  <script src="js/api.js?v=20260715003"></script>
-  <script src="js/app.js?v=20260715003"></script>
+  <div id="booking-success-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="booking-success-title">
+    <div class="modal-card booking-success-card">
+      <p class="booking-success-badge" aria-hidden="true">✓</p>
+      <h2 id="booking-success-title">預約成功</h2>
+      <p class="booking-success-lead">您的預約已完成，請確認以下資訊。</p>
+      <dl class="booking-success-details">
+        <div>
+          <dt>客人姓名</dt>
+          <dd id="booking-success-name"></dd>
+        </div>
+        <div>
+          <dt>服務名稱</dt>
+          <dd id="booking-success-service"></dd>
+        </div>
+        <div>
+          <dt>預約日期</dt>
+          <dd id="booking-success-date"></dd>
+        </div>
+        <div>
+          <dt>預約時段</dt>
+          <dd id="booking-success-time"></dd>
+        </div>
+      </dl>
+      <div id="booking-success-deposit" class="deposit-transfer-box booking-success-deposit" hidden></div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-primary" id="booking-success-view">查看我的預約</button>
+        <button type="button" class="btn btn-secondary" id="booking-success-again">再預約一筆</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/config.js?v=20260715005"></script>
+  <script src="js/liff-init.js?v=20260715005"></script>
+  <script src="js/api.js?v=20260715005"></script>
+  <script src="js/app.js?v=20260715005"></script>
 </body>
 </html>
