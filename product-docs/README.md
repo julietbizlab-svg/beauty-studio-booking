@@ -10,6 +10,8 @@
 
 | 文件 | 用途 |
 |---|---|
+| **PRODUCT-LINE-COMPARISON.md** | **美業工作室版 vs 小型教室版**比較（接案第一問） |
+| **BASELINE-V1-SNAPSHOT.md** | **基礎款 v1.0 母版斷點**：已含功能、不含項目、正式網址與 commit |
 | **TEMPLATE-CLONE-GUIDE.md** | **套版母版指南**：接新客戶時複製 repo、換帳號、換設定的總流程與驗收清單（老闆必讀） |
 | CLIENT-INFO-CHECKLIST.md | 接新客戶前，蒐集店名、服務、價格、營業時間、品牌色等資料 |
 | CLIENT-NOTION-SETUP-FLOW.md | 在 Notion 建立四個資料庫、連接 Integration、填入 Database ID |
@@ -22,13 +24,14 @@
 
 ## 使用順序
 
-1. **新客戶套版**：先讀 [TEMPLATE-CLONE-GUIDE.md](TEMPLATE-CLONE-GUIDE.md)（複製什麼、換什麼、怎麼驗收）
-2. 先填 `CLIENT-INFO-CHECKLIST.md`
-3. 依 `CLIENT-NOTION-SETUP-FLOW.md` 建立 Notion 四個資料庫
-4. 依 `CLIENT-LINE-SETUP-FLOW.md` 完成 LINE / LIFF 設定
-5. 再依需求評估 `PRICING-DRAFT.md`
-6. 建置完成後使用 `CLIENT-DELIVERY-CHECKLIST.md`
-7. Demo 或正式上線後，可參考 `DEMO-ACCEPTANCE-2026-07-14.md` 作為驗收紀錄範本（含月曆選日期、月曆預約查詢）
+1. **母版斷點**：先看 [BASELINE-V1-SNAPSHOT.md](BASELINE-V1-SNAPSHOT.md)（基礎款 v1.0 賣什麼、不賣什麼）
+2. **新客戶套版**：再讀 [TEMPLATE-CLONE-GUIDE.md](TEMPLATE-CLONE-GUIDE.md)（複製什麼、換什麼、怎麼驗收）
+3. 先填 `CLIENT-INFO-CHECKLIST.md`
+4. 依 `CLIENT-NOTION-SETUP-FLOW.md` 建立 Notion 四個資料庫
+5. 依 `CLIENT-LINE-SETUP-FLOW.md` 完成 LINE / LIFF 設定
+6. 再依需求評估 `PRICING-DRAFT.md`
+7. 建置完成後使用 `CLIENT-DELIVERY-CHECKLIST.md`
+8. Demo 或正式上線後，可參考 `DEMO-ACCEPTANCE-2026-07-14.md` 作為驗收紀錄範本（含月曆選日期、月曆預約查詢）
 
 ## 基礎款月曆功能（交付新客戶必知）
 
