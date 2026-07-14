@@ -1,8 +1,12 @@
 /**
- * 時段計算：依每週營業時段與服務時長，產生可預約時間點
+ * 時段計算：依每週營業時段與服務時長，產生可預約時間點；
+ * 並以時間區間排除與現有預約重疊的開始時間（長時服務連續空檔）。
  */
 
 var WEEKDAY_LABELS = ["日", "一", "二", "三", "四", "五", "六"];
+
+/** 既有預約查不到服務時長時的保守占用（分鐘） */
+export var CONSERVATIVE_BUSY_DURATION_MINUTES = 180;
 
 export function weekdayLabelFromIndex(index) {
   return WEEKDAY_LABELS[index] || "";
@@ -41,18 +45,101 @@ export function buildSlotTimes(startTime, endTime, durationMinutes) {
   return slots;
 }
 
-export function filterAvailableSlots(allSlots, bookedTimes, nowDateStr, nowMinutes) {
-  var bookedSet = new Set(bookedTimes || []);
+/**
+ * 半開區間 [start, end) 是否重疊。
+ * 首尾相接不算重疊（例如 10:00–11:00 與 11:00–12:00）。
+ */
+export function rangesOverlap(startA, endA, startB, endB) {
+  return startA < endB && startB < endA;
+}
+
+/**
+ * 解析查不到時長時的保守占用長度。
+ */
+export function resolveBusyDurationMinutes(knownDuration, fallbackDurationMinutes) {
+  var known = Number(knownDuration);
+  if (known > 0) {
+    return known;
+  }
+  var fallback = Number(fallbackDurationMinutes);
+  if (fallback > 0) {
+    return Math.max(fallback, CONSERVATIVE_BUSY_DURATION_MINUTES);
+  }
+  return CONSERVATIVE_BUSY_DURATION_MINUTES;
+}
+
+/**
+ * 由開始時間與時長建立 { start, end }（分鐘）；無效則回 null。
+ */
+export function toBusyInterval(startTime, durationMinutes) {
+  var start = parseTimeToMinutes(startTime);
+  var duration = Number(durationMinutes);
+  if (isNaN(start) || !(duration > 0)) {
+    return null;
+  }
+  return { start: start, end: start + duration };
+}
+
+/**
+ * 同日已確認預約 → busy intervals。
+ * durationByServiceId: { [serviceId]: minutes }
+ * 查不到時長 → 用 resolveBusyDurationMinutes 保守處理。
+ */
+export function buildBusyIntervalsFromBookings(bookings, durationByServiceId, fallbackDurationMinutes) {
+  var map = durationByServiceId || {};
+  var intervals = [];
+
+  (bookings || []).forEach(function (booking) {
+    if (!booking || !booking.time) {
+      return;
+    }
+    var known = booking.serviceId ? map[booking.serviceId] : null;
+    var duration = resolveBusyDurationMinutes(known, fallbackDurationMinutes);
+    var interval = toBusyInterval(booking.time, duration);
+    if (interval) {
+      intervals.push(interval);
+    }
+  });
+
+  return intervals;
+}
+
+/**
+ * 候選開始時刻 + 服務時長，是否與任一 busy 區間重疊。
+ */
+export function candidateOverlapsBusy(startTime, durationMinutes, busyIntervals) {
+  var candidate = toBusyInterval(startTime, durationMinutes);
+  if (!candidate) {
+    return true;
+  }
+  var list = busyIntervals || [];
+  for (var i = 0; i < list.length; i++) {
+    var busy = list[i];
+    if (!busy) {
+      continue;
+    }
+    if (rangesOverlap(candidate.start, candidate.end, busy.start, busy.end)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * 過濾可預約開始時間：排除已過時刻、與 busy 區間重疊者。
+ */
+export function filterAvailableSlots(allSlots, durationMinutes, busyIntervals, nowDateStr, nowMinutes) {
+  var duration = Number(durationMinutes) || 60;
 
   return (allSlots || []).filter(function (slot) {
-    if (bookedSet.has(slot)) {
-      return false;
-    }
     if (nowDateStr) {
       var slotMinutes = parseTimeToMinutes(slot);
       if (!isNaN(slotMinutes) && slotMinutes <= nowMinutes) {
         return false;
       }
+    }
+    if (candidateOverlapsBusy(slot, duration, busyIntervals)) {
+      return false;
     }
     return true;
   });
@@ -69,6 +156,7 @@ export function buildAllSlotTimesForDay(daySlots, durationMinutes) {
 
 /**
  * 單日可預約摘要（與 GET /api/slots 計算邏輯一致）
+ * params.busyIntervals: [{ start, end }, ...]
  */
 export function computeDayAvailability(params) {
   var date = params.date;
@@ -76,7 +164,7 @@ export function computeDayAvailability(params) {
   var nowMinutes = params.nowMinutes;
   var daySlots = params.daySlots || [];
   var durationMinutes = params.durationMinutes;
-  var bookedTimes = params.bookedTimes || [];
+  var busyIntervals = params.busyIntervals || [];
 
   if (date < todayStr) {
     return { bookable: false, slotCount: 0, reason: "past" };
@@ -89,7 +177,8 @@ export function computeDayAvailability(params) {
   var allTimes = buildAllSlotTimesForDay(daySlots, durationMinutes);
   var available = filterAvailableSlots(
     allTimes,
-    bookedTimes,
+    durationMinutes,
+    busyIntervals,
     date === todayStr ? todayStr : null,
     date === todayStr ? nowMinutes : null
   );
@@ -99,7 +188,13 @@ export function computeDayAvailability(params) {
   }
 
   if (date === todayStr) {
-    var withoutTimeFilter = filterAvailableSlots(allTimes, bookedTimes, null, null);
+    var withoutTimeFilter = filterAvailableSlots(
+      allTimes,
+      durationMinutes,
+      busyIntervals,
+      null,
+      null
+    );
     if (withoutTimeFilter.length > 0) {
       return { bookable: false, slotCount: 0, reason: "today_past" };
     }
@@ -108,19 +203,39 @@ export function computeDayAvailability(params) {
   return { bookable: false, slotCount: 0, reason: "full" };
 }
 
-export function buildMonthAvailability(month, weeklySlots, durationMinutes, bookingsByDate, todayStr, nowMinutes, getWeekdayLabelForDate) {
+/**
+ * durationByServiceId / fallbackBusyDuration：供同日已確認預約建立 busy intervals。
+ */
+export function buildMonthAvailability(
+  month,
+  weeklySlots,
+  durationMinutes,
+  bookingsByDate,
+  todayStr,
+  nowMinutes,
+  getWeekdayLabelForDate,
+  durationByServiceId,
+  fallbackBusyDuration
+) {
   var parts = month.split("-");
   var year = Number(parts[0]);
   var mon = Number(parts[1]);
   var daysInMonth = new Date(year, mon, 0).getDate();
   var days = {};
+  var fallback = fallbackBusyDuration != null
+    ? fallbackBusyDuration
+    : Math.max(Number(durationMinutes) || 60, CONSERVATIVE_BUSY_DURATION_MINUTES);
 
   for (var day = 1; day <= daysInMonth; day++) {
     var date = year + "-" + String(mon).padStart(2, "0") + "-" + String(day).padStart(2, "0");
     var weekdayLabel = getWeekdayLabelForDate(date);
     var daySlots = weeklySlots.filter(function (s) { return s.weekday === weekdayLabel; });
     var dayBookings = bookingsByDate[date] || [];
-    var bookedTimes = dayBookings.map(function (b) { return b.time; });
+    var busyIntervals = buildBusyIntervalsFromBookings(
+      dayBookings,
+      durationByServiceId,
+      fallback
+    );
 
     days[date] = computeDayAvailability({
       date: date,
@@ -128,7 +243,7 @@ export function buildMonthAvailability(month, weeklySlots, durationMinutes, book
       nowMinutes: nowMinutes,
       daySlots: daySlots,
       durationMinutes: durationMinutes,
-      bookedTimes: bookedTimes
+      busyIntervals: busyIntervals
     });
   }
 

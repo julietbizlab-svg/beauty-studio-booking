@@ -39,6 +39,12 @@
  * | 取消規則 | 文字   |                |
  */
 
+import {
+  buildBusyIntervalsFromBookings,
+  candidateOverlapsBusy,
+  CONSERVATIVE_BUSY_DURATION_MINUTES
+} from "./slots.js";
+
 var NOTION_VERSION = "2022-06-28";
 
 export function ensureNotionEnv(env) {
@@ -257,6 +263,35 @@ export async function getServiceById(env, serviceId) {
   return parseServicePage(page);
 }
 
+/**
+ * 依預約上的服務 ID 查時長對照表；查不到則略過（呼叫端用保守時長）。
+ * 不變更 Notion schema。
+ */
+export async function getServiceDurationMap(env, serviceIds) {
+  var map = {};
+  var seen = {};
+  var ids = serviceIds || [];
+
+  for (var i = 0; i < ids.length; i++) {
+    var id = ids[i];
+    if (!id || seen[id]) {
+      continue;
+    }
+    seen[id] = true;
+    try {
+      var service = await getServiceById(env, id);
+      var duration = Number(service.durationMinutes) || 0;
+      if (duration > 0) {
+        map[id] = duration;
+      }
+    } catch (ignore) {
+      // 服務已刪或無法讀取：不寫入 map，由 resolveBusyDurationMinutes 保守處理
+    }
+  }
+
+  return map;
+}
+
 export async function createService(env, data) {
   if (!data.name) {
     throw makeError("請填寫服務名稱");
@@ -422,21 +457,27 @@ export async function createBooking(env, payload) {
 
   var dateBookings = await getActiveBookingsByDate(env, date);
 
-  var slotTaken = dateBookings.some(function (b) { return b.time === time; });
-  if (slotTaken) {
-    throw makeError("此時段已被預約，請選擇其他時間");
-  }
-
-  var userDuplicate = dateBookings.some(function (b) {
-    return b.userId === userId && b.time === time;
-  });
-  if (userDuplicate) {
-    throw makeError("您已預約此時段，請勿重複預約");
-  }
-
   var userSameDay = dateBookings.some(function (b) { return b.userId === userId; });
   if (userSameDay) {
     throw makeError("同一天僅能預約一個時段");
+  }
+
+  var durationMap = await getServiceDurationMap(
+    env,
+    dateBookings.map(function (b) { return b.serviceId; })
+  );
+  var fallbackBusy = Math.max(
+    Number(service.durationMinutes) || 60,
+    CONSERVATIVE_BUSY_DURATION_MINUTES
+  );
+  var busyIntervals = buildBusyIntervalsFromBookings(
+    dateBookings,
+    durationMap,
+    fallbackBusy
+  );
+
+  if (candidateOverlapsBusy(time, service.durationMinutes, busyIntervals)) {
+    throw makeError("此時段與現有預約重疊，請選擇其他時間");
   }
 
   var page = await notionFetch("/pages", env.NOTION_TOKEN, {

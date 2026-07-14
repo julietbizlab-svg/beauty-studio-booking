@@ -17,7 +17,8 @@ import {
   getOwnerBookingsForMonth,
   getSettings,
   updateSettings,
-  getServiceById
+  getServiceById,
+  getServiceDurationMap
 } from "./notion.js";
 import { requireOwnerFromRequest } from "./owner-auth.js";
 import {
@@ -26,6 +27,8 @@ import {
   computeDayAvailability,
   buildMonthAvailability,
   filterAvailableSlots,
+  buildBusyIntervalsFromBookings,
+  CONSERVATIVE_BUSY_DURATION_MINUTES,
   getNowMinutesInTaipei
 } from "./slots.js";
 import { getTaipeiDateString, getTaipeiWeekdayIndex } from "./owner-auth.js";
@@ -91,6 +94,15 @@ export default {
           bookingsByDate[b.date].push(b);
         });
 
+        var monthDurationMap = await getServiceDurationMap(
+          env,
+          monthBookingsResult.bookings.map(function (b) { return b.serviceId; })
+        );
+        var monthFallbackBusy = Math.max(
+          Number(monthService.durationMinutes) || 60,
+          CONSERVATIVE_BUSY_DURATION_MINUTES
+        );
+
         var monthTodayStr = getTaipeiDateString();
         var monthNowMinutes = getNowMinutesInTaipei();
         var monthDays = buildMonthAvailability(
@@ -100,7 +112,9 @@ export default {
           bookingsByDate,
           monthTodayStr,
           monthNowMinutes,
-          function (d) { return weekdayLabelFromIndex(getTaipeiWeekdayIndex(d)); }
+          function (d) { return weekdayLabelFromIndex(getTaipeiWeekdayIndex(d)); },
+          monthDurationMap,
+          monthFallbackBusy
         );
 
         return jsonResponse({
@@ -131,7 +145,19 @@ export default {
         var daySlots = weeklySlots.filter(function (s) { return s.weekday === weekdayLabel; });
 
         var bookings = await getActiveBookingsByDate(env, date);
-        var bookedTimes = bookings.map(function (b) { return b.time; });
+        var durationMap = await getServiceDurationMap(
+          env,
+          bookings.map(function (b) { return b.serviceId; })
+        );
+        var fallbackBusy = Math.max(
+          Number(service.durationMinutes) || 60,
+          CONSERVATIVE_BUSY_DURATION_MINUTES
+        );
+        var busyIntervals = buildBusyIntervalsFromBookings(
+          bookings,
+          durationMap,
+          fallbackBusy
+        );
 
         var todayStr = getTaipeiDateString();
         var nowMinutes = getNowMinutesInTaipei();
@@ -141,7 +167,7 @@ export default {
           nowMinutes: nowMinutes,
           daySlots: daySlots,
           durationMinutes: service.durationMinutes,
-          bookedTimes: bookedTimes
+          busyIntervals: busyIntervals
         });
 
         if (!daySlots.length) {
@@ -151,7 +177,8 @@ export default {
         var allTimes = buildAllSlotTimesForDay(daySlots, service.durationMinutes);
         var available = filterAvailableSlots(
           allTimes,
-          bookedTimes,
+          service.durationMinutes,
+          busyIntervals,
           date === todayStr ? todayStr : null,
           date === todayStr ? nowMinutes : null
         );

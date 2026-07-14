@@ -29,9 +29,10 @@ beauty-studio-booking/
 **包含：**
 - LINE LIFF 登入
 - 服務項目瀏覽與預約
-- 時段選擇與衝突防護
+- 時段選擇與**時間區間重疊防呆**（長時服務須整段連續空檔；首尾相接可預約）
 - 我的預約查詢與取消
 - 業主今日預約、服務管理、營業時段、店面設定
+- 客人端月曆選日期、業主端月曆預約查詢（基礎款）
 
 **不包含：**
 - 金流
@@ -46,8 +47,8 @@ beauty-studio-booking/
 |------|------|------|
 | GET | `/api/settings` | 店面公開設定 |
 | GET | `/api/services` | 上架中的服務項目 |
-| GET | `/api/slots?date=&serviceId=` | 可預約時段（單日） |
-| GET | `/api/slots/month?month=&serviceId=` | 月份可預約摘要（客人月曆） |
+| GET | `/api/slots?date=&serviceId=` | 可預約開始時段（單日；依服務時長排除重疊區間） |
+| GET | `/api/slots/month?month=&serviceId=` | 月份可預約摘要（客人月曆；同一套重疊邏輯） |
 | POST | `/api/bookings` | 建立預約 |
 | GET | `/api/bookings/me?userId=` | 我的預約 |
 | POST | `/api/bookings/cancel` | 取消預約 |
@@ -164,7 +165,7 @@ GitHub Pages 設定：Branch `main`，資料夾 `/docs`。
 - Notion Token 僅存於 Cloudflare Workers secrets，不暴露於前端
 - 業主 API 由後端驗證 `OWNER_LINE_USER_IDS`
 - 防止同一客人同一天重複預約
-- 防止同一時段被多人預約（一人工作室）
+- **時間區間重疊防呆**（基礎款）：依「開始時間 + 該服務時長」占用區間；與現有已確認預約重疊的開始時間不可顯示、亦不可建立；首尾相接（例：10:00–11:00 與 11:00–12:00）可預約
 - 所有 API 錯誤回傳 `{ ok: false, message: "..." }`
 
 ## 授權
