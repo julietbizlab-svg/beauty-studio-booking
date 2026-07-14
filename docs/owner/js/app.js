@@ -324,6 +324,31 @@
     els.primaryColor.value = s.primaryColor || "#E8B4B8";
     els.announcement.value = s.announcement || "";
     els.cancelPolicy.value = s.cancelPolicy || "";
+    els.depositEnabled.checked = Boolean(s.depositEnabled);
+    els.depositAmount.value = s.depositAmount != null && s.depositAmount !== "" ? s.depositAmount : "";
+    els.bankName.value = s.bankName || "";
+    els.bankCode.value = s.bankCode || "";
+    els.bankAccount.value = s.bankAccount || "";
+    els.bankAccountName.value = s.bankAccountName || "";
+    els.depositNote.value = s.depositNote || "";
+    updateDepositFieldsState();
+  }
+
+  function updateDepositFieldsState() {
+    var on = els.depositEnabled.checked;
+    if (els.depositFields) {
+      els.depositFields.style.opacity = on ? "1" : "0.55";
+    }
+    [
+      els.depositAmount,
+      els.bankName,
+      els.bankCode,
+      els.bankAccount,
+      els.bankAccountName,
+      els.depositNote
+    ].forEach(function (input) {
+      if (input) input.disabled = !on;
+    });
   }
 
   function clearServiceForm() {
@@ -428,14 +453,35 @@
   }
 
   async function handleSaveSettings() {
+    var depositEnabled = els.depositEnabled.checked;
+    var payload = {
+      brandName: els.brandName.value.trim(),
+      primaryColor: els.primaryColor.value.trim(),
+      announcement: els.announcement.value.trim(),
+      cancelPolicy: els.cancelPolicy.value.trim(),
+      depositEnabled: depositEnabled,
+      depositAmount: els.depositAmount.value === "" ? null : Number(els.depositAmount.value),
+      bankName: els.bankName.value.trim(),
+      bankCode: els.bankCode.value.trim(),
+      bankAccount: els.bankAccount.value.trim(),
+      bankAccountName: els.bankAccountName.value.trim(),
+      depositNote: els.depositNote.value.trim()
+    };
+
+    if (depositEnabled) {
+      if (!payload.bankAccount || !payload.bankAccountName) {
+        setStatus("error", "開啟訂金時請填寫帳號與戶名");
+        return;
+      }
+      if (!(payload.depositAmount > 0)) {
+        setStatus("error", "開啟訂金時訂金金額須大於 0");
+        return;
+      }
+    }
+
     setStatus("info", "儲存設定中…");
     try {
-      await window.ownerApi.updateSettings(state.user.userId, {
-        brandName: els.brandName.value.trim(),
-        primaryColor: els.primaryColor.value.trim(),
-        announcement: els.announcement.value.trim(),
-        cancelPolicy: els.cancelPolicy.value.trim()
-      });
+      await window.ownerApi.updateSettings(state.user.userId, payload);
       await loadSettings();
       setStatus("success", "店面設定已更新");
     } catch (error) {
@@ -465,6 +511,14 @@
     els.primaryColor = $("primary-color");
     els.announcement = $("announcement");
     els.cancelPolicy = $("cancel-policy");
+    els.depositEnabled = $("deposit-enabled");
+    els.depositFields = $("deposit-fields");
+    els.depositAmount = $("deposit-amount");
+    els.bankName = $("bank-name");
+    els.bankCode = $("bank-code");
+    els.bankAccount = $("bank-account");
+    els.bankAccountName = $("bank-account-name");
+    els.depositNote = $("deposit-note");
     els.svcName = $("svc-name");
     els.svcDuration = $("svc-duration");
     els.svcPrice = $("svc-price");
@@ -495,6 +549,7 @@
     $("cancel-edit").addEventListener("click", clearServiceForm);
     $("save-slots").addEventListener("click", handleSaveSlots);
     $("save-settings").addEventListener("click", handleSaveSettings);
+    els.depositEnabled.addEventListener("change", updateDepositFieldsState);
   }
 
   async function boot() {

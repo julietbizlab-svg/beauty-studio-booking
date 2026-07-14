@@ -31,12 +31,19 @@
  *
  * ── 店面設定資料庫（NOTION_DATABASE_SETTINGS）──
  * 僅需一筆資料（第一筆為預設）
- * | 欄位     | 類型   | 說明           |
- * | 設定名稱 | Title  | 例：預設         |
- * | 品牌名稱 | 文字   |                |
- * | 主色     | 文字   | 例：#E8B4B8     |
- * | 公告文字 | 文字   |                |
- * | 取消規則 | 文字   |                |
+ * | 欄位         | 類型     | 說明                 |
+ * | 設定名稱     | Title    | 例：預設             |
+ * | 品牌名稱     | 文字     |                      |
+ * | 主色         | 文字     | 例：#E8B4B8          |
+ * | 公告文字     | 文字     |                      |
+ * | 取消規則     | 文字     |                      |
+ * | 是否收訂金   | Checkbox | 關閉則客人不顯示     |
+ * | 訂金金額     | 數字     | 例：500               |
+ * | 銀行名稱     | 文字     |                      |
+ * | 銀行代碼     | 文字     |                      |
+ * | 帳號         | 文字     | 匯款帳號（非 secret）|
+ * | 戶名         | 文字     |                      |
+ * | 轉帳提醒文字 | 文字     |                      |
  */
 
 import {
@@ -127,6 +134,29 @@ function getNumber(props, name) {
   return field.number;
 }
 
+function getNumberOrNull(props, name) {
+  var field = props[name];
+  if (!field || field.type !== "number" || field.number === null || field.number === undefined) {
+    return null;
+  }
+  return field.number;
+}
+
+function getDepositEnabled(props) {
+  var field = props["是否收訂金"];
+  if (!field) {
+    return false;
+  }
+  if (field.type === "checkbox") {
+    return Boolean(field.checkbox);
+  }
+  if (field.type === "select" && field.select) {
+    var name = field.select.name || "";
+    return name === "是" || name === "true" || name === "開啟";
+  }
+  return false;
+}
+
 function getSelect(props, name) {
   var field = props[name];
   if (!field || field.type !== "select" || !field.select) return "";
@@ -186,7 +216,14 @@ function parseSettingsPage(page) {
     brandName: getRichText(p, "品牌名稱") || "美業工作室",
     primaryColor: getRichText(p, "主色") || "#E8B4B8",
     announcement: getRichText(p, "公告文字"),
-    cancelPolicy: getRichText(p, "取消規則")
+    cancelPolicy: getRichText(p, "取消規則"),
+    depositEnabled: getDepositEnabled(p),
+    depositAmount: getNumberOrNull(p, "訂金金額"),
+    bankName: getRichText(p, "銀行名稱"),
+    bankCode: getRichText(p, "銀行代碼"),
+    bankAccount: getRichText(p, "帳號"),
+    bankAccountName: getRichText(p, "戶名"),
+    depositNote: getRichText(p, "轉帳提醒文字")
   };
 }
 
@@ -196,7 +233,14 @@ function defaultSettings() {
     brandName: "美業工作室",
     primaryColor: "#E8B4B8",
     announcement: "",
-    cancelPolicy: "預約日前 24 小時可免費取消。"
+    cancelPolicy: "預約日前 24 小時可免費取消。",
+    depositEnabled: false,
+    depositAmount: null,
+    bankName: "",
+    bankCode: "",
+    bankAccount: "",
+    bankAccountName: "",
+    depositNote: ""
   };
 }
 
@@ -224,6 +268,45 @@ export async function updateSettings(env, patch) {
   }
   if (patch.cancelPolicy !== undefined) {
     properties["取消規則"] = { rich_text: [{ text: { content: String(patch.cancelPolicy) } }] };
+  }
+  if (patch.depositEnabled !== undefined) {
+    properties["是否收訂金"] = { checkbox: Boolean(patch.depositEnabled) };
+  }
+  if (patch.depositAmount !== undefined) {
+    var amount = patch.depositAmount;
+    properties["訂金金額"] = {
+      number: amount === null || amount === "" ? null : Number(amount)
+    };
+  }
+  if (patch.bankName !== undefined) {
+    properties["銀行名稱"] = { rich_text: [{ text: { content: String(patch.bankName) } }] };
+  }
+  if (patch.bankCode !== undefined) {
+    properties["銀行代碼"] = { rich_text: [{ text: { content: String(patch.bankCode) } }] };
+  }
+  if (patch.bankAccount !== undefined) {
+    properties["帳號"] = { rich_text: [{ text: { content: String(patch.bankAccount) } }] };
+  }
+  if (patch.bankAccountName !== undefined) {
+    properties["戶名"] = { rich_text: [{ text: { content: String(patch.bankAccountName) } }] };
+  }
+  if (patch.depositNote !== undefined) {
+    properties["轉帳提醒文字"] = { rich_text: [{ text: { content: String(patch.depositNote) } }] };
+  }
+
+  // 開啟訂金時：帳號、戶名必填；金額須 > 0
+  if (patch.depositEnabled === true) {
+    var account = patch.bankAccount != null ? String(patch.bankAccount).trim() : "";
+    var accountName = patch.bankAccountName != null ? String(patch.bankAccountName).trim() : "";
+    var depositAmount = patch.depositAmount != null && patch.depositAmount !== ""
+      ? Number(patch.depositAmount)
+      : NaN;
+    if (!account || !accountName) {
+      throw makeError("開啟訂金時請填寫帳號與戶名", 400);
+    }
+    if (!(depositAmount > 0)) {
+      throw makeError("開啟訂金時訂金金額須大於 0", 400);
+    }
   }
 
   if (!pageId) {

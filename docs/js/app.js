@@ -378,6 +378,55 @@
     applyTheme(state.settings);
   }
 
+  function hideDepositTransferBox() {
+    if (!els.depositTransferBox) return;
+    els.depositTransferBox.hidden = true;
+    els.depositTransferBox.innerHTML = "";
+  }
+
+  function renderDepositTransferBox(settings) {
+    if (!els.depositTransferBox) return;
+    var s = settings || state.settings || {};
+    if (!s.depositEnabled) {
+      hideDepositTransferBox();
+      return;
+    }
+
+    var amount = s.depositAmount != null ? s.depositAmount : "";
+    var bankLine = escapeHtml(s.bankName || "");
+    if (s.bankCode) {
+      bankLine += (bankLine ? "（" : "") + escapeHtml(s.bankCode) + (s.bankName ? "）" : "");
+    }
+
+    els.depositTransferBox.innerHTML =
+      "<h3>訂金轉帳資訊</h3>" +
+      "<p>若需支付訂金，請轉帳至以下帳戶：</p>" +
+      (amount !== "" ? "<p>金額：NT$ " + escapeHtml(String(amount)) + "</p>" : "") +
+      (bankLine ? "<p>銀行：" + bankLine + "</p>" : "") +
+      "<p>帳號：<span class=\"deposit-account\" id=\"deposit-account-text\">" +
+        escapeHtml(s.bankAccount || "") + "</span></p>" +
+      "<p>戶名：" + escapeHtml(s.bankAccountName || "") + "</p>" +
+      (s.depositNote
+        ? "<p class=\"deposit-note\">" + escapeHtml(s.depositNote) + "</p>"
+        : "") +
+      (s.bankAccount
+        ? "<button type=\"button\" class=\"btn btn-small btn-copy\" id=\"copy-deposit-account\">複製帳號</button>"
+        : "");
+
+    els.depositTransferBox.hidden = false;
+
+    var copyBtn = $("copy-deposit-account");
+    if (copyBtn && s.bankAccount && navigator.clipboard && navigator.clipboard.writeText) {
+      copyBtn.addEventListener("click", function () {
+        navigator.clipboard.writeText(String(s.bankAccount)).then(function () {
+          copyBtn.textContent = "已複製";
+        }).catch(function () {
+          copyBtn.textContent = "請手動複製";
+        });
+      });
+    }
+  }
+
   async function loadServices() {
     state.services = await window.beautyApi.getServices();
     renderServices();
@@ -418,6 +467,11 @@
       });
       setStatus("success", "預約成功！");
       state.selectedTime = "";
+      try {
+        state.settings = await window.beautyApi.getSettings();
+        applyTheme(state.settings);
+      } catch (ignore) {}
+      renderDepositTransferBox(state.settings);
       await loadMonthCalendar(state.calendarMonth || getCurrentMonthIso());
       await loadSlots();
       await loadBookings();
@@ -495,6 +549,7 @@
     els.slotGrid = $("slot-grid");
     els.bookBtn = $("book-btn");
     els.bookingList = $("booking-list");
+    els.depositTransferBox = $("deposit-transfer-box");
     els.userName = $("user-name");
     els.userAvatar = $("user-avatar");
   }
