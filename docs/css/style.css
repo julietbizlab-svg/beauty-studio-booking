@@ -327,16 +327,55 @@ input[type="date"] {
 
 .status {
   text-align: center;
-  padding: 24px 16px;
+  padding: 14px 16px;
   color: var(--muted);
+  border-radius: 12px;
+  margin-bottom: 12px;
 }
 
 .status.error {
   color: var(--danger);
+  background: #F8EAEA;
+  border: 1px solid #E8C4C4;
+  font-weight: 600;
 }
 
 .status.success {
   color: var(--success);
+  background: #E8F5EC;
+  border: 1px solid #C5E2CD;
+  font-weight: 600;
+}
+
+.status-alert {
+  text-align: left;
+  padding: 16px 16px 14px;
+}
+
+.status-alert.error {
+  background: #FBEFEF;
+  border: 1.5px solid #E3A7A7;
+  color: var(--danger);
+}
+
+.status-alert-title {
+  margin: 0 0 10px;
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: var(--danger);
+  line-height: 1.4;
+}
+
+.status-alert-body {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: #8A3E3E;
+  line-height: 1.55;
+}
+
+.status-alert-body:last-child {
+  margin-bottom: 0;
 }
 
 .booking-status {

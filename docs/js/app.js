@@ -32,6 +32,23 @@
     el.style.display = message ? "block" : "none";
   }
 
+  function setStatusAlert(type, title, lines) {
+    var el = els.status;
+    var body = Array.isArray(lines) ? lines : [lines];
+    el.className = "status status-alert" + (type ? " " + type : "");
+    el.innerHTML =
+      '<p class="status-alert-title">' + escapeHtml(title) + "</p>" +
+      body.map(function (line) {
+        return '<p class="status-alert-body">' + escapeHtml(line) + "</p>";
+      }).join("");
+    el.style.display = "block";
+  }
+
+  function isSameDayBookingLimitError(message) {
+    var msg = String(message || "");
+    return msg.indexOf("同一天僅能預約") !== -1 || msg.indexOf("同一天只能預約") !== -1;
+  }
+
   function applyTheme(settings) {
     if (!settings) return;
     if (settings.primaryColor) {
@@ -536,7 +553,14 @@
       await loadSlots();
       await loadBookings();
     } catch (error) {
-      setStatus("error", error.message);
+      if (isSameDayBookingLimitError(error && error.message)) {
+        setStatusAlert("error", "今天已經有一筆預約", [
+          "為了避免時間衝突，同一天目前只能預約一個項目。",
+          "如果想做多個項目，請聯絡店家協助安排。"
+        ]);
+      } else {
+        setStatus("error", error.message);
+      }
     } finally {
       updateBookButton();
     }
