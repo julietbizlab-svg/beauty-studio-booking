@@ -275,6 +275,68 @@ function defaultSettings() {
   };
 }
 
+/** settings 訂金相關欄位（缺欄時自動補 schema，不改既有列內容） */
+var SETTINGS_DEPOSIT_PROPERTY_SCHEMA = {
+  "是否收訂金": { checkbox: {} },
+  "訂金金額": { number: {} },
+  "銀行名稱": { rich_text: {} },
+  "銀行代碼": { rich_text: {} },
+  "帳號": { rich_text: {} },
+  "戶名": { rich_text: {} },
+  "轉帳提醒文字": { rich_text: {} }
+};
+
+function richTextProperty(value) {
+  return {
+    rich_text: [{ text: { content: String(value == null ? "" : value).slice(0, 2000) } }]
+  };
+}
+
+function buildDepositEnabledProperty(propertyType, enabled) {
+  if (propertyType === "select") {
+    return { select: { name: enabled ? "是" : "否" } };
+  }
+  return { checkbox: Boolean(enabled) };
+}
+
+function humanizeSettingsNotionError(message) {
+  var msg = String(message || "");
+  if (/轉帳提醒文字/i.test(msg) && /not a property|does not exist|找不到|is not/i.test(msg)) {
+    return "Notion「店面設定」缺少「轉帳提醒文字」欄位（文字／rich_text），請新增後再儲存。";
+  }
+  if (/是否收訂金|訂金金額|銀行名稱|銀行代碼|帳號|戶名/.test(msg) &&
+      /not a property|does not exist|找不到|is not/i.test(msg)) {
+    return "Notion「店面設定」訂金欄位不完整或名稱不符，請依手冊補齊後再儲存。";
+  }
+  if (/validation|invalid.*(number|checkbox|rich_text)|type mismatch/i.test(msg)) {
+    return "訂金設定欄位格式不符 Notion 類型，請確認「是否收訂金」為勾選、「訂金金額」為數字、其餘為文字。";
+  }
+  return msg;
+}
+
+async function ensureSettingsDepositProperties(env) {
+  var databaseId = env.NOTION_DATABASE_SETTINGS;
+  var db = await notionFetch("/databases/" + databaseId, env.NOTION_TOKEN);
+  var existing = db.properties || {};
+  var toAdd = {};
+
+  Object.keys(SETTINGS_DEPOSIT_PROPERTY_SCHEMA).forEach(function (name) {
+    if (!existing[name]) {
+      toAdd[name] = SETTINGS_DEPOSIT_PROPERTY_SCHEMA[name];
+    }
+  });
+
+  if (!Object.keys(toAdd).length) {
+    return existing;
+  }
+
+  var updated = await notionFetch("/databases/" + databaseId, env.NOTION_TOKEN, {
+    method: "PATCH",
+    body: JSON.stringify({ properties: toAdd })
+  });
+  return updated.properties || existing;
+}
+
 export async function getSettings(env) {
   var pages = await queryDatabase(env, env.NOTION_DATABASE_SETTINGS);
   if (!pages.length) {
@@ -284,24 +346,27 @@ export async function getSettings(env) {
 }
 
 export async function updateSettings(env, patch) {
+  var dbProperties = await ensureSettingsDepositProperties(env);
   var pages = await queryDatabase(env, env.NOTION_DATABASE_SETTINGS);
   var pageId = pages.length ? pages[0].id : null;
 
   var properties = {};
   if (patch.brandName !== undefined) {
-    properties["品牌名稱"] = { rich_text: [{ text: { content: String(patch.brandName) } }] };
+    properties["品牌名稱"] = richTextProperty(patch.brandName);
   }
   if (patch.primaryColor !== undefined) {
-    properties["主色"] = { rich_text: [{ text: { content: String(patch.primaryColor) } }] };
+    properties["主色"] = richTextProperty(patch.primaryColor);
   }
   if (patch.announcement !== undefined) {
-    properties["公告文字"] = { rich_text: [{ text: { content: String(patch.announcement) } }] };
+    properties["公告文字"] = richTextProperty(patch.announcement);
   }
   if (patch.cancelPolicy !== undefined) {
-    properties["取消規則"] = { rich_text: [{ text: { content: String(patch.cancelPolicy) } }] };
+    properties["取消規則"] = richTextProperty(patch.cancelPolicy);
   }
   if (patch.depositEnabled !== undefined) {
-    properties["是否收訂金"] = { checkbox: Boolean(patch.depositEnabled) };
+    var depositField = dbProperties["是否收訂金"];
+    var depositType = depositField && depositField.type ? depositField.type : "checkbox";
+    properties["是否收訂金"] = buildDepositEnabledProperty(depositType, patch.depositEnabled);
   }
   if (patch.depositAmount !== undefined) {
     var amount = patch.depositAmount;
@@ -310,22 +375,22 @@ export async function updateSettings(env, patch) {
     };
   }
   if (patch.bankName !== undefined) {
-    properties["銀行名稱"] = { rich_text: [{ text: { content: String(patch.bankName) } }] };
+    properties["銀行名稱"] = richTextProperty(patch.bankName);
   }
   if (patch.bankCode !== undefined) {
-    properties["銀行代碼"] = { rich_text: [{ text: { content: String(patch.bankCode) } }] };
+    properties["銀行代碼"] = richTextProperty(patch.bankCode);
   }
   if (patch.bankAccount !== undefined) {
-    properties["帳號"] = { rich_text: [{ text: { content: String(patch.bankAccount) } }] };
+    properties["帳號"] = richTextProperty(patch.bankAccount);
   }
   if (patch.bankAccountName !== undefined) {
-    properties["戶名"] = { rich_text: [{ text: { content: String(patch.bankAccountName) } }] };
+    properties["戶名"] = richTextProperty(patch.bankAccountName);
   }
   if (patch.depositNote !== undefined) {
-    properties["轉帳提醒文字"] = { rich_text: [{ text: { content: String(patch.depositNote) } }] };
+    properties["轉帳提醒文字"] = richTextProperty(patch.depositNote);
   }
 
-  // 開啟訂金時：帳號、戶名必填；金額須 > 0
+  // 開啟訂金時：帳號、戶名必填；金額須 > 0（僅驗證有送出的欄位）
   if (patch.depositEnabled === true) {
     var account = patch.bankAccount != null ? String(patch.bankAccount).trim() : "";
     var accountName = patch.bankAccountName != null ? String(patch.bankAccountName).trim() : "";
@@ -340,24 +405,28 @@ export async function updateSettings(env, patch) {
     }
   }
 
-  if (!pageId) {
-    var created = await notionFetch("/pages", env.NOTION_TOKEN, {
-      method: "POST",
-      body: JSON.stringify({
-        parent: { database_id: env.NOTION_DATABASE_SETTINGS },
-        properties: Object.assign({
-          "設定名稱": { title: [{ text: { content: "預設" } }] }
-        }, properties)
-      })
-    });
-    return parseSettingsPage(created);
-  }
+  try {
+    if (!pageId) {
+      var created = await notionFetch("/pages", env.NOTION_TOKEN, {
+        method: "POST",
+        body: JSON.stringify({
+          parent: { database_id: env.NOTION_DATABASE_SETTINGS },
+          properties: Object.assign({
+            "設定名稱": { title: [{ text: { content: "預設" } }] }
+          }, properties)
+        })
+      });
+      return parseSettingsPage(created);
+    }
 
-  var updated = await notionFetch("/pages/" + pageId, env.NOTION_TOKEN, {
-    method: "PATCH",
-    body: JSON.stringify({ properties: properties })
-  });
-  return parseSettingsPage(updated);
+    var updated = await notionFetch("/pages/" + pageId, env.NOTION_TOKEN, {
+      method: "PATCH",
+      body: JSON.stringify({ properties: properties })
+    });
+    return parseSettingsPage(updated);
+  } catch (error) {
+    throw makeError(humanizeSettingsNotionError(error.message), error.status || 400);
+  }
 }
 
 export async function listServices(env, activeOnly) {

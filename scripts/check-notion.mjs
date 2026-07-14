@@ -77,7 +77,14 @@ var DATABASE_CHECKS = [
       "品牌名稱": "rich_text",
       "主色": "rich_text",
       "公告文字": "rich_text",
-      "取消規則": "rich_text"
+      "取消規則": "rich_text",
+      "是否收訂金": "checkbox",
+      "訂金金額": "number",
+      "銀行名稱": "rich_text",
+      "銀行代碼": "rich_text",
+      "帳號": "rich_text",
+      "戶名": "rich_text",
+      "轉帳提醒文字": "rich_text"
     }
   }
 ];

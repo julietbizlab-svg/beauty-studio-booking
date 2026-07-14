@@ -554,7 +554,11 @@
       await loadSettings();
       setStatus("success", "店面設定已更新");
     } catch (error) {
-      setStatus("error", error.message);
+      var message = (error && error.message) ? error.message : "儲存設定失敗，請稍後再試";
+      if (/儲存失敗|伺服器回應錯誤|Failed to fetch|NetworkError/i.test(message)) {
+        message = "儲存設定失敗：" + message + "。請確認已填寫必填訂金欄位（金額、帳號、戶名），或稍後再試。";
+      }
+      setStatus("error", message);
     }
   }
 
