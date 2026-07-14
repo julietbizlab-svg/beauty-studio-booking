@@ -490,7 +490,7 @@
   }
 
   async function handleCancel(bookingId) {
-    if (!confirm("確定要取消此預約嗎？")) return;
+    if (!confirm("確認要取消這筆預約嗎？取消後將無法恢復。")) return;
     setStatus("", "取消中…");
     try {
       await window.beautyApi.cancelBooking(state.user.userId, bookingId);
