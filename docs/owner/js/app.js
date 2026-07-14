@@ -179,6 +179,13 @@
       var isCancelled = b.status === "已取消";
       var cardClass = "card booking-card" + (isCancelled ? " booking-card--cancelled" : "");
       var statusClass = isCancelled ? "booking-status cancelled" : "booking-status confirmed";
+      var reasonLine = isCancelled && b.cancelReason
+        ? '<p class="booking-cancel-reason">取消原因：' + escapeHtml(b.cancelReason) + "</p>"
+        : "";
+      var cancelBtn = !isCancelled
+        ? '<button type="button" class="btn btn-danger btn-cancel-booking" data-cancel-id="' +
+          escapeHtml(b.id) + '">取消預約</button>'
+        : "";
       return (
         '<div class="' + cardClass + '">' +
           '<div class="booking-card-head">' +
@@ -188,9 +195,71 @@
           '<h3 class="booking-service">' + escapeHtml(b.serviceName || "服務") + '</h3>' +
           '<p class="booking-customer">' + escapeHtml(b.customerName || "客人") + '</p>' +
           '<p class="booking-date-line">' + formatDateZh(b.date || date) + '</p>' +
+          reasonLine +
+          cancelBtn +
         '</div>'
       );
     }).join("");
+
+    container.querySelectorAll("[data-cancel-id]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var id = btn.getAttribute("data-cancel-id");
+        var booking = bookings.find(function (b) { return b.id === id; });
+        openOwnerCancelModal(booking || { id: id, date: date });
+      });
+    });
+  }
+
+  var cancelModalState = { bookingId: "" };
+
+  function openOwnerCancelModal(booking) {
+    cancelModalState.bookingId = booking.id || "";
+    if (!cancelModalState.bookingId) return;
+    els.ownerCancelSummary.textContent =
+      (booking.customerName || "客人") + "｜" +
+      (booking.serviceName || "服務") + "｜" +
+      formatDateZh(booking.date || state.selectedDate) + " " +
+      (booking.time || "");
+    els.ownerCancelReasonPreset.value = "";
+    els.ownerCancelReasonOther.value = "";
+    els.ownerCancelOtherWrap.hidden = true;
+    els.ownerCancelModal.classList.remove("hidden");
+  }
+
+  function closeOwnerCancelModal() {
+    cancelModalState.bookingId = "";
+    els.ownerCancelModal.classList.add("hidden");
+  }
+
+  function getOwnerCancelReasonInput() {
+    var preset = els.ownerCancelReasonPreset.value;
+    if (!preset) return "";
+    if (preset === "其他原因") {
+      return els.ownerCancelReasonOther.value.trim();
+    }
+    return preset;
+  }
+
+  async function submitOwnerCancel() {
+    var bookingId = cancelModalState.bookingId;
+    var reason = getOwnerCancelReasonInput();
+    if (!bookingId) return;
+    if (!reason) {
+      setStatus("error", "請填寫取消原因");
+      return;
+    }
+    if (!confirm("確定要取消這筆預約嗎？取消後客人會看到原因。")) {
+      return;
+    }
+    setStatus("info", "取消預約中…");
+    try {
+      await window.ownerApi.cancelBooking(bookingId, reason);
+      closeOwnerCancelModal();
+      setStatus("success", "已取消預約");
+      await refreshCalendarBookings();
+    } catch (error) {
+      setStatus("error", error.message);
+    }
   }
 
   function selectBookingDate(date) {
@@ -525,6 +594,11 @@
     els.svcDesc = $("svc-desc");
     els.svcSort = $("svc-sort");
     els.svcSubmit = $("svc-submit");
+    els.ownerCancelModal = $("owner-cancel-modal");
+    els.ownerCancelSummary = $("owner-cancel-summary");
+    els.ownerCancelReasonPreset = $("owner-cancel-reason-preset");
+    els.ownerCancelReasonOther = $("owner-cancel-reason-other");
+    els.ownerCancelOtherWrap = $("owner-cancel-other-wrap");
   }
 
   function bindEvents() {
@@ -550,6 +624,18 @@
     $("save-slots").addEventListener("click", handleSaveSlots);
     $("save-settings").addEventListener("click", handleSaveSettings);
     els.depositEnabled.addEventListener("change", updateDepositFieldsState);
+    $("owner-cancel-dismiss").addEventListener("click", closeOwnerCancelModal);
+    $("owner-cancel-confirm").addEventListener("click", function () {
+      submitOwnerCancel().catch(function (e) { setStatus("error", e.message); });
+    });
+    els.ownerCancelReasonPreset.addEventListener("change", function () {
+      els.ownerCancelOtherWrap.hidden = els.ownerCancelReasonPreset.value !== "其他原因";
+    });
+    els.ownerCancelModal.addEventListener("click", function (event) {
+      if (event.target === els.ownerCancelModal) {
+        closeOwnerCancelModal();
+      }
+    });
   }
 
   async function boot() {

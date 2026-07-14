@@ -359,6 +359,73 @@ textarea { min-height: 72px; resize: vertical; }
   font-weight: 600;
 }
 
+.booking-cancel-reason {
+  margin: 8px 0 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.btn-cancel-booking {
+  margin-top: 10px;
+  width: 100%;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(40, 30, 32, 0.45);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 16px;
+  z-index: 1000;
+}
+
+.modal-overlay.hidden {
+  display: none !important;
+}
+
+.modal-card {
+  width: 100%;
+  max-width: 480px;
+  background: var(--card);
+  border-radius: 16px 16px 12px 12px;
+  padding: 18px 16px 16px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+}
+
+.modal-card h3 {
+  margin: 0 0 8px;
+  font-size: 1.05rem;
+}
+
+.modal-booking-summary {
+  margin: 0 0 12px;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.modal-actions .btn,
+.modal-actions .btn-small {
+  flex: 1;
+}
+
+.modal-card select,
+.modal-card textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 1rem;
+  font-family: inherit;
+}
+
 .inline-date {
   margin-bottom: 12px;
 }

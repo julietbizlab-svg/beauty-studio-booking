@@ -28,6 +28,9 @@
  * | 預約日期   | 日期   |                    |
  * | 預約時段   | 文字   | 例：14:00          |
  * | 狀態       | 選項   | 已確認、已取消     |
+ * | 取消原因   | 文字   | rich_text（可選）  |
+ * | 取消者     | 選項   | 客人、業主（可選） |
+ * | 取消時間   | 日期   | date（可選）       |
  *
  * ── 店面設定資料庫（NOTION_DATABASE_SETTINGS）──
  * 僅需一筆資料（第一筆為預設）
@@ -205,8 +208,36 @@ function parseBookingPage(page) {
     serviceName: getRichText(p, "服務名稱"),
     date: getDateStart(p, "預約日期"),
     time: getRichText(p, "預約時段"),
-    status: getSelect(p, "狀態") || "已確認"
+    status: getSelect(p, "狀態") || "已確認",
+    cancelReason: getRichText(p, "取消原因"),
+    canceledBy: getSelect(p, "取消者"),
+    canceledAt: getDateStart(p, "取消時間")
   };
+}
+
+function getTaipeiCancelDateString() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Taipei",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(new Date());
+}
+
+function buildCancelProperties(canceledBy, cancelReason) {
+  var properties = {
+    "狀態": { select: { name: "已取消" } }
+  };
+  if (canceledBy) {
+    properties["取消者"] = { select: { name: canceledBy } };
+  }
+  if (cancelReason) {
+    properties["取消原因"] = {
+      rich_text: [{ text: { content: String(cancelReason).slice(0, 2000) } }]
+    };
+  }
+  properties["取消時間"] = { date: { start: getTaipeiCancelDateString() } };
+  return properties;
 }
 
 function parseSettingsPage(page) {
@@ -604,9 +635,7 @@ export async function cancelBooking(env, userId, bookingId) {
   await notionFetch("/pages/" + bookingId, env.NOTION_TOKEN, {
     method: "PATCH",
     body: JSON.stringify({
-      properties: {
-        "狀態": { select: { name: "已取消" } }
-      }
+      properties: buildCancelProperties("客人", "客人自行取消")
     })
   });
 
@@ -614,6 +643,39 @@ export async function cancelBooking(env, userId, bookingId) {
     ok: true,
     message: "已取消預約",
     bookingId: bookingId
+  };
+}
+
+/**
+ * 業主取消客戶預約（須先經 requireOwnerFromRequest）
+ */
+export async function cancelBookingByOwner(env, bookingId, cancelReason) {
+  if (!bookingId) throw makeError("缺少預約編號");
+  var reason = String(cancelReason || "").trim();
+  if (!reason) {
+    throw makeError("請填寫取消原因", 400);
+  }
+
+  var page = await notionFetch("/pages/" + bookingId, env.NOTION_TOKEN);
+  var booking = parseBookingPage(page);
+
+  if (booking.status === "已取消") {
+    throw makeError("此預約已取消");
+  }
+
+  await notionFetch("/pages/" + bookingId, env.NOTION_TOKEN, {
+    method: "PATCH",
+    body: JSON.stringify({
+      properties: buildCancelProperties("業主", reason)
+    })
+  });
+
+  return {
+    ok: true,
+    message: "已取消預約",
+    bookingId: bookingId,
+    cancelReason: reason,
+    canceledBy: "業主"
   };
 }
 
@@ -656,7 +718,10 @@ function bookingToOwnerDto(booking) {
     serviceName: booking.serviceName,
     date: booking.date,
     time: booking.time,
-    status: booking.status
+    status: booking.status,
+    cancelReason: booking.cancelReason || "",
+    canceledBy: booking.canceledBy || "",
+    canceledAt: booking.canceledAt || ""
   };
 }
 

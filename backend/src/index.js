@@ -13,6 +13,7 @@ import {
   getUserBookings,
   createBooking,
   cancelBooking,
+  cancelBookingByOwner,
   getTodayBookingsForOwner,
   getOwnerBookingsForMonth,
   getSettings,
@@ -215,6 +216,18 @@ export default {
         var cancelBody = await readJson(request);
         var cancelResult = await cancelBooking(env, cancelBody.userId, cancelBody.bookingId);
         return jsonResponse(cancelResult, corsHeaders);
+      }
+
+      if (url.pathname === "/api/owner/bookings/cancel" && request.method === "POST") {
+        ensureNotionEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var ownerCancelBody = await readJson(request);
+        var ownerCancelResult = await cancelBookingByOwner(
+          env,
+          ownerCancelBody.bookingId,
+          ownerCancelBody.reason || ownerCancelBody.cancelReason
+        );
+        return jsonResponse(ownerCancelResult, corsHeaders);
       }
 
       if (url.pathname === "/api/owner/bookings/month" && request.method === "GET") {

@@ -131,6 +131,16 @@
       });
     },
 
+    cancelBooking: function (bookingId, reason) {
+      return apiFetch("/api/owner/bookings/cancel", {
+        method: "POST",
+        body: JSON.stringify({
+          bookingId: bookingId,
+          reason: reason
+        })
+      });
+    },
+
     isConfigured: function () {
       return Boolean(getApiBaseUrl());
     }

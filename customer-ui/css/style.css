@@ -413,3 +413,9 @@ input[type="date"] {
   padding: 8px 14px;
   font-size: 0.85rem;
 }
+
+.booking-cancel-reason {
+  margin: 8px 0 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}

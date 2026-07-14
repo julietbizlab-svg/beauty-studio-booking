@@ -343,11 +343,17 @@
       var cancelBtn = b.status === "已確認"
         ? '<button type="button" class="btn btn-danger" data-cancel="' + b.id + '">取消預約</button>'
         : "";
+      var reasonLine = b.status === "已取消" && b.cancelReason
+        ? '<p class="booking-cancel-reason">取消原因：' + escapeHtml(b.cancelReason) + "</p>"
+        : (b.status === "已取消" && b.canceledBy === "業主"
+          ? '<p class="booking-cancel-reason">此預約由業主取消</p>'
+          : "");
       return (
         '<div class="card">' +
           '<h3>' + escapeHtml(b.serviceName) + '</h3>' +
           '<p>' + formatDateZh(b.date) + ' ' + escapeHtml(b.time) + '</p>' +
           '<span class="booking-status ' + statusClass + '">' + escapeHtml(b.status) + '</span>' +
+          reasonLine +
           cancelBtn +
         '</div>'
       );

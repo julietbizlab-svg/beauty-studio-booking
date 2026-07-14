@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
   <title>工作室管理</title>
-  <link rel="stylesheet" href="css/style.css?v=20260715001">
+  <link rel="stylesheet" href="css/style.css?v=20260715002">
 </head>
 <body>
   <div class="app">
@@ -138,9 +138,35 @@
     </section>
   </div>
 
-  <script src="js/config.js?v=20260715001"></script>
-  <script src="js/liff-init.js?v=20260715001"></script>
-  <script src="js/api.js?v=20260715001"></script>
-  <script src="js/app.js?v=20260715001"></script>
+  <div id="owner-cancel-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="owner-cancel-title">
+    <div class="modal-card">
+      <h3 id="owner-cancel-title">取消客戶預約</h3>
+      <p class="modal-booking-summary" id="owner-cancel-summary"></p>
+      <p class="panel-hint">請選擇或填寫取消原因（必填）</p>
+      <div class="form-group">
+        <label for="owner-cancel-reason-preset">取消原因</label>
+        <select id="owner-cancel-reason-preset">
+          <option value="">請選擇</option>
+          <option value="臨時店休">臨時店休</option>
+          <option value="時段需調整">時段需調整</option>
+          <option value="服務項目異動">服務項目異動</option>
+          <option value="其他原因">其他原因</option>
+        </select>
+      </div>
+      <div class="form-group" id="owner-cancel-other-wrap" hidden>
+        <label for="owner-cancel-reason-other">請說明其他原因</label>
+        <textarea id="owner-cancel-reason-other" rows="3" placeholder="請輸入取消原因"></textarea>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-small" id="owner-cancel-dismiss">返回</button>
+        <button type="button" class="btn btn-danger" id="owner-cancel-confirm">確認取消</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/config.js?v=20260715002"></script>
+  <script src="js/liff-init.js?v=20260715002"></script>
+  <script src="js/api.js?v=20260715002"></script>
+  <script src="js/app.js?v=20260715002"></script>
 </body>
 </html>

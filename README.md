@@ -51,7 +51,8 @@ beauty-studio-booking/
 | GET | `/api/slots/month?month=&serviceId=` | 月份可預約摘要（客人月曆；同一套重疊邏輯） |
 | POST | `/api/bookings` | 建立預約 |
 | GET | `/api/bookings/me?userId=` | 我的預約 |
-| POST | `/api/bookings/cancel` | 取消預約 |
+| POST | `/api/bookings/cancel` | 客人取消自己的預約 |
+| POST | `/api/owner/bookings/cancel` | 業主取消預約（須填原因；Bearer） |
 
 ### 業主端（需 OWNER_LINE_USER_IDS 驗證）
 
@@ -102,6 +103,9 @@ beauty-studio-booking/
 | 預約日期 | 日期 |
 | 預約時段 | 文字 |
 | 狀態 | 選項（已確認、已取消） |
+| 取消原因 | 文字（rich_text） |
+| 取消者 | 選項（客人、業主） |
+| 取消時間 | 日期 |
 
 #### 店面設定
 

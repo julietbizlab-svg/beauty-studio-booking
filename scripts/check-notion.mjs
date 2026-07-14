@@ -62,7 +62,10 @@ var DATABASE_CHECKS = [
       "服務名稱": "rich_text",
       "預約日期": "date",
       "預約時段": "rich_text",
-      "狀態": "select"
+      "狀態": "select",
+      "取消原因": "rich_text",
+      "取消者": "select",
+      "取消時間": "date"
     }
   },
   {
