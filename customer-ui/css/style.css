@@ -1,11 +1,13 @@
 :root {
   --primary: #E8B4B8;
-  --primary-dark: #d49aa0;
+  --primary-dark: #B86B74;
+  --primary-btn: #A85A63;
   --bg: #FFF9F7;
   --text: #3D2C2E;
-  --muted: #8A7577;
+  --muted: #6F5C5E;
   --card: #ffffff;
   --border: #F0E4E5;
+  --border-strong: #C9B0B3;
   --danger: #C45C5C;
   --success: #5C9E6E;
 }
@@ -76,8 +78,9 @@ body {
 }
 
 .tab.active {
-  background: var(--primary);
-  border-color: var(--primary);
+  background: var(--primary-btn);
+  background: color-mix(in srgb, var(--primary) 40%, #4A2529 60%);
+  border-color: transparent;
   color: #fff;
   font-weight: 600;
 }
@@ -173,7 +176,7 @@ input[type="date"] {
   padding: 8px 12px;
   font-size: 0.85rem;
   font-weight: 600;
-  border: 1px solid var(--border);
+  border: 1.5px solid var(--border-strong);
   background: var(--card);
   color: var(--text);
 }
@@ -229,8 +232,9 @@ input[type="date"] {
 }
 
 .calendar-day--selected {
-  background: var(--primary);
-  border-color: var(--primary);
+  background: var(--primary-btn);
+  background: color-mix(in srgb, var(--primary) 40%, #4A2529 60%);
+  border-color: transparent;
   color: #fff;
 }
 
@@ -262,25 +266,31 @@ input[type="date"] {
 
 .slot-btn {
   padding: 10px 4px;
-  border: 1px solid var(--border);
+  border: 1.5px solid var(--border-strong);
   background: var(--card);
   border-radius: 8px;
   font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
   cursor: pointer;
 }
 
 .slot-btn:hover {
-  border-color: var(--primary);
+  border-color: var(--primary-dark);
 }
 
 .slot-btn.selected {
-  background: var(--primary);
-  border-color: var(--primary);
+  background: var(--primary-btn);
+  background: color-mix(in srgb, var(--primary) 40%, #4A2529 60%);
+  border-color: transparent;
   color: #fff;
 }
 
 .slot-btn:disabled {
-  opacity: 0.4;
+  background: #F3ECEC;
+  border-color: #E5DBDC;
+  color: #A8989A;
+  opacity: 1;
   cursor: not-allowed;
 }
 
@@ -296,18 +306,21 @@ input[type="date"] {
 }
 
 .btn-primary {
-  background: var(--primary);
+  background: var(--primary-btn);
+  background: color-mix(in srgb, var(--primary) 40%, #4A2529 60%);
   color: #fff;
 }
 
 .btn-primary:disabled {
-  opacity: 0.5;
+  background: #EDE6E7;
+  color: #9A8B8C;
+  opacity: 1;
   cursor: not-allowed;
 }
 
 .btn-danger {
   background: transparent;
-  border: 1px solid var(--danger);
+  border: 1.5px solid var(--danger);
   color: var(--danger);
   margin-top: 8px;
 }
@@ -421,19 +434,19 @@ input[type="date"] {
 }
 
 .btn-secondary {
-  background: var(--card);
+  background: #fff;
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1.5px solid var(--border-strong);
 }
 
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(40, 30, 32, 0.45);
+  background: rgba(40, 30, 32, 0.5);
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: center;
-  padding: 20px 16px 24px;
+  padding: 20px 16px 28px;
   z-index: 1000;
 }
 
@@ -443,43 +456,56 @@ input[type="date"] {
 
 .modal-card {
   width: 100%;
-  max-width: 480px;
+  max-width: 440px;
   max-height: calc(100vh - 48px);
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   background: var(--card);
-  border-radius: 16px 16px 12px 12px;
-  padding: 24px 18px 20px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  border-radius: 20px;
+  padding: 28px 20px 22px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.2);
+  animation: booking-success-pop 0.28s ease-out;
+}
+
+@keyframes booking-success-pop {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .booking-success-card {
   text-align: center;
 }
 
-.booking-success-badge {
-  width: 64px;
-  height: 64px;
-  margin: 0 auto 14px;
-  border-radius: 50%;
-  background: #E8F5EC;
-  color: var(--success);
-  font-size: 1.8rem;
-  font-weight: 700;
-  line-height: 64px;
+.booking-success-icon {
+  display: flex;
+  justify-content: center;
+  margin: 0 auto 16px;
+}
+
+.booking-success-icon svg {
+  display: block;
+  filter: drop-shadow(0 4px 10px rgba(92, 158, 110, 0.28));
 }
 
 .booking-success-card h2 {
-  margin: 0 0 8px;
-  font-size: 1.45rem;
+  margin: 0 0 10px;
+  font-size: 1.6rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
   color: var(--success);
 }
 
 .booking-success-lead {
-  margin: 0 0 18px;
-  font-size: 0.95rem;
+  margin: 0 0 20px;
+  font-size: 1rem;
   color: var(--muted);
-  line-height: 1.5;
+  line-height: 1.55;
 }
 
 .booking-success-details {
@@ -487,8 +513,8 @@ input[type="date"] {
   text-align: left;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 14px 16px;
+  border-radius: 14px;
+  padding: 16px 18px;
 }
 
 .booking-success-details > div {
@@ -496,7 +522,7 @@ input[type="date"] {
   justify-content: space-between;
   align-items: flex-start;
   gap: 16px;
-  padding: 12px 0;
+  padding: 14px 0;
   border-bottom: 1px solid var(--border);
 }
 
@@ -512,33 +538,49 @@ input[type="date"] {
 .booking-success-details dt {
   margin: 0;
   color: var(--muted);
-  font-size: 0.9rem;
+  font-size: 0.95rem;
   flex-shrink: 0;
-  line-height: 1.5;
+  line-height: 1.55;
 }
 
 .booking-success-details dd {
   margin: 0;
-  font-weight: 600;
-  font-size: 1rem;
+  font-weight: 700;
+  font-size: 1.05rem;
   text-align: right;
   word-break: break-word;
-  line-height: 1.5;
+  line-height: 1.55;
+  color: var(--text);
 }
 
 .booking-success-deposit {
   text-align: left;
-  margin-bottom: 16px;
+  margin-bottom: 18px;
 }
 
 .modal-actions {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-top: 4px;
+  gap: 12px;
+  margin-top: 6px;
 }
 
 .modal-actions .btn {
   width: 100%;
-  min-height: 46px;
+  min-height: 48px;
+  font-size: 1.05rem;
+}
+
+@media (max-width: 380px) {
+  .modal-card {
+    padding: 24px 16px 18px;
+  }
+
+  .booking-success-card h2 {
+    font-size: 1.45rem;
+  }
+
+  .booking-success-details dd {
+    font-size: 1rem;
+  }
 }

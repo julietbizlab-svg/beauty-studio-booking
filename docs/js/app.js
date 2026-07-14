@@ -470,6 +470,12 @@
       copyBtnId: "copy-success-deposit-account"
     });
     els.bookingSuccessModal.classList.remove("hidden");
+    var card = els.bookingSuccessModal.querySelector(".modal-card");
+    if (card) {
+      card.style.animation = "none";
+      void card.offsetWidth;
+      card.style.animation = "";
+    }
   }
 
   async function loadServices() {
