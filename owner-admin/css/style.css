@@ -477,3 +477,80 @@ textarea { min-height: 72px; resize: vertical; }
 }
 
 .hidden { display: none !important; }
+
+/* 客戶資料 */
+.customer-search-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.customer-search-row input[type="search"] {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 1rem;
+  font-family: inherit;
+}
+
+.customer-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  margin-bottom: 10px;
+  border: 1px solid var(--border);
+  background: var(--card-bg, #fff);
+  font: inherit;
+  color: inherit;
+  padding: 14px 16px;
+}
+
+.customer-card:active {
+  opacity: 0.92;
+}
+
+.customer-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.customer-name {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.customer-count {
+  font-size: 0.85rem;
+  color: var(--muted, #666);
+  white-space: nowrap;
+}
+
+.customer-meta {
+  margin: 2px 0;
+  font-size: 0.95rem;
+}
+
+.customer-meta.muted {
+  color: var(--muted, #888);
+}
+
+.customer-detail-header {
+  margin: 12px 0 8px;
+}
+
+.customer-history-title {
+  margin: 16px 0 8px;
+  font-size: 1rem;
+}
+
+#customer-back-btn {
+  margin-bottom: 4px;
+}
+

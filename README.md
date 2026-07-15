@@ -33,11 +33,13 @@ beauty-studio-booking/
 - 我的預約查詢與取消
 - 業主今日預約、服務管理、營業時段、店面設定
 - 客人端月曆選日期、業主端月曆預約查詢（基礎款）
+- 業主端客戶資料查詢（由 bookings 彙總，第一版不依賴 customers 表）
 
 **不包含：**
 - 金流
 - 多員工
 - 報表
+- 包卡／儲值（加購）
 
 ## API 一覽
 
@@ -59,6 +61,9 @@ beauty-studio-booking/
 | 方法 | 路徑 | 說明 |
 |------|------|------|
 | GET | `/api/owner/today?userId=&date=` | 今日預約 |
+| GET | `/api/owner/bookings/month?month=` | 月份預約彙總（月曆） |
+| GET | `/api/owner/customers?q=` | 客戶名單（由 bookings 彙總；可搜尋姓名／電話） |
+| GET | `/api/owner/customer-bookings?userId=` | 單一客戶歷史預約 |
 | GET/POST | `/api/owner/services` | 服務列表 / 新增 |
 | PATCH | `/api/owner/services/:id` | 修改服務 |
 | GET/POST | `/api/owner/slots` | 營業時段 |

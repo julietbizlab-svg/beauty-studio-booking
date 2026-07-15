@@ -970,6 +970,131 @@ function bookingToOwnerDto(booking) {
   };
 }
 
+function bookingDateTimeKey(booking) {
+  return String(booking.date || "") + "T" + String(booking.time || "00:00");
+}
+
+function compareBookingNewestFirst(a, b) {
+  var aKey = bookingDateTimeKey(a);
+  var bKey = bookingDateTimeKey(b);
+  if (aKey > bKey) return -1;
+  if (aKey < bKey) return 1;
+  return 0;
+}
+
+function sortBookingsConfirmedFirst(bookings) {
+  return (bookings || []).slice().sort(function (a, b) {
+    var aRank = a.status === "已確認" ? 0 : (a.status === "已取消" ? 1 : 2);
+    var bRank = b.status === "已確認" ? 0 : (b.status === "已取消" ? 1 : 2);
+    if (aRank !== bRank) return aRank - bRank;
+    return compareBookingNewestFirst(a, b);
+  });
+}
+
+async function listAllOwnerRelevantBookings(env) {
+  var pages = await queryDatabase(env, env.NOTION_DATABASE_BOOKINGS);
+  return pages
+    .map(parseBookingPage)
+    .filter(function (b) {
+      return b.status === "已確認" || b.status === "已取消";
+    });
+}
+
+function pickLatestNonEmpty(list, field) {
+  for (var i = 0; i < list.length; i++) {
+    var value = list[i][field];
+    if (value != null && String(value).trim() !== "") {
+      return String(value).trim();
+    }
+  }
+  return "";
+}
+
+/**
+ * 從 bookings 彙總業主客戶名單（不以 customers 表為必要）
+ */
+export async function getOwnerCustomersFromBookings(env, queryText) {
+  var q = String(queryText || "").trim().toLowerCase();
+  var bookings = await listAllOwnerRelevantBookings(env);
+  var byUser = {};
+
+  bookings.forEach(function (b) {
+    var userId = String(b.userId || "").trim();
+    if (!userId) return;
+    if (!byUser[userId]) byUser[userId] = [];
+    byUser[userId].push(b);
+  });
+
+  var customers = Object.keys(byUser).map(function (userId) {
+    var list = byUser[userId].slice().sort(compareBookingNewestFirst);
+    var last = list[0] || {};
+    return {
+      userId: userId,
+      customerName: pickLatestNonEmpty(list, "customerName") || last.customerName || "客人",
+      phone: pickLatestNonEmpty(list, "phone"),
+      birthday: pickLatestNonEmpty(list, "birthday"),
+      lastBookingDate: last.date || "",
+      bookingCount: list.length
+    };
+  });
+
+  if (q) {
+    customers = customers.filter(function (c) {
+      var name = String(c.customerName || "").toLowerCase();
+      var phone = String(c.phone || "").toLowerCase();
+      return name.indexOf(q) !== -1 || phone.indexOf(q) !== -1;
+    });
+  }
+
+  customers.sort(function (a, b) {
+    if (a.lastBookingDate > b.lastBookingDate) return -1;
+    if (a.lastBookingDate < b.lastBookingDate) return 1;
+    return String(a.customerName || "").localeCompare(String(b.customerName || ""), "zh-Hant");
+  });
+
+  return {
+    ok: true,
+    customers: customers
+  };
+}
+
+/**
+ * 依 LINE userId 取得該客戶歷史預約（已確認在上、已取消在下）
+ */
+export async function getOwnerCustomerBookings(env, userId) {
+  var id = String(userId || "").trim();
+  if (!id) {
+    throw makeError("缺少 userId", 400);
+  }
+
+  var bookings = (await listAllOwnerRelevantBookings(env)).filter(function (b) {
+    return String(b.userId || "").trim() === id;
+  });
+
+  if (!bookings.length) {
+    return {
+      ok: true,
+      userId: id,
+      customerName: "",
+      phone: "",
+      birthday: "",
+      bookings: []
+    };
+  }
+
+  var newest = bookings.slice().sort(compareBookingNewestFirst);
+  var sorted = sortBookingsConfirmedFirst(bookings);
+
+  return {
+    ok: true,
+    userId: id,
+    customerName: pickLatestNonEmpty(newest, "customerName") || "客人",
+    phone: pickLatestNonEmpty(newest, "phone"),
+    birthday: pickLatestNonEmpty(newest, "birthday"),
+    bookings: sorted.map(bookingToOwnerDto)
+  };
+}
+
 export async function getOwnerBookingsForMonth(env, month) {
   var range = parseMonthParam(month);
   var pages = await queryDatabase(env, env.NOTION_DATABASE_BOOKINGS, {

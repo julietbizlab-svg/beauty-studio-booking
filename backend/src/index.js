@@ -16,6 +16,8 @@ import {
   cancelBookingByOwner,
   getTodayBookingsForOwner,
   getOwnerBookingsForMonth,
+  getOwnerCustomersFromBookings,
+  getOwnerCustomerBookings,
   getSettings,
   updateSettings,
   getServiceById,
@@ -306,6 +308,25 @@ export default {
         await requireOwnerFromRequest(request, env);
         var updatedSettings = await updateSettings(env, settingsBody);
         return jsonResponse({ ok: true, settings: updatedSettings }, corsHeaders);
+      }
+
+      if (url.pathname === "/api/owner/customers" && request.method === "GET") {
+        ensureNotionEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var customerQuery = url.searchParams.get("q") || "";
+        var customerList = await getOwnerCustomersFromBookings(env, customerQuery);
+        return jsonResponse(customerList, corsHeaders);
+      }
+
+      if (url.pathname === "/api/owner/customer-bookings" && request.method === "GET") {
+        ensureNotionEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var customerUserId = url.searchParams.get("userId");
+        if (!customerUserId) {
+          return jsonResponse({ ok: false, message: "缺少 userId" }, corsHeaders, 400);
+        }
+        var customerBookings = await getOwnerCustomerBookings(env, customerUserId);
+        return jsonResponse(customerBookings, corsHeaders);
       }
 
       return jsonResponse({ ok: false, message: "找不到此 API 路徑" }, corsHeaders, 404);

@@ -14,7 +14,11 @@
     services: [],
     slots: [],
     settings: null,
-    editingServiceId: null
+    editingServiceId: null,
+    customers: [],
+    customerQuery: "",
+    selectedCustomer: null,
+    customerSearchTimer: null
   };
 
   var els = {};
@@ -588,6 +592,127 @@
     }
   }
 
+  function showCustomerListView() {
+    els.customerListView.classList.remove("hidden");
+    els.customerDetailView.classList.add("hidden");
+    state.selectedCustomer = null;
+  }
+
+  function showCustomerDetailView() {
+    els.customerListView.classList.add("hidden");
+    els.customerDetailView.classList.remove("hidden");
+  }
+
+  function renderCustomerList() {
+    var container = els.customerList;
+    var customers = state.customers || [];
+
+    if (!customers.length) {
+      container.innerHTML = state.customerQuery
+        ? '<div class="empty">找不到符合的客戶</div>'
+        : '<div class="empty">目前尚無客戶資料（需有預約紀錄）</div>';
+      return;
+    }
+
+    container.innerHTML = customers.map(function (c) {
+      return (
+        '<button type="button" class="card customer-card" data-user-id="' + escapeHtml(c.userId) + '">' +
+          '<div class="customer-card-head">' +
+            '<span class="customer-name">' + escapeHtml(c.customerName || "客人") + '</span>' +
+            '<span class="customer-count">預約 ' + Number(c.bookingCount || 0) + ' 次</span>' +
+          '</div>' +
+          (c.phone
+            ? '<p class="customer-meta">電話：' + escapeHtml(c.phone) + "</p>"
+            : '<p class="customer-meta muted">電話：未填寫</p>') +
+          (c.birthday
+            ? '<p class="customer-meta">生日：' + escapeHtml(formatDateZh(c.birthday)) + "</p>"
+            : "") +
+          (c.lastBookingDate
+            ? '<p class="customer-meta">最近預約：' + escapeHtml(formatDateZh(c.lastBookingDate)) + "</p>"
+            : "") +
+        "</button>"
+      );
+    }).join("");
+
+    container.querySelectorAll("[data-user-id]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        openCustomerDetail(btn.getAttribute("data-user-id")).catch(function (e) {
+          setStatus("error", e.message);
+        });
+      });
+    });
+  }
+
+  async function loadCustomers(query) {
+    var q = String(query == null ? state.customerQuery : query).trim();
+    state.customerQuery = q;
+    setStatus("info", "載入客戶名單…");
+    var data = await window.ownerApi.getCustomers(q);
+    state.customers = (data && data.customers) || [];
+    renderCustomerList();
+    setStatus("");
+  }
+
+  function renderCustomerDetailHeader(detail) {
+    els.customerDetailHeader.innerHTML =
+      '<h3 class="customer-name">' + escapeHtml(detail.customerName || "客人") + "</h3>" +
+      (detail.phone
+        ? '<p class="customer-meta">電話：' + escapeHtml(detail.phone) + "</p>"
+        : '<p class="customer-meta muted">電話：未填寫</p>') +
+      (detail.birthday
+        ? '<p class="customer-meta">生日：' + escapeHtml(formatDateZh(detail.birthday)) + "</p>"
+        : '<p class="customer-meta muted">生日：未填寫</p>');
+  }
+
+  function renderCustomerBookings(bookings) {
+    var container = els.customerBookingList;
+    if (!bookings || !bookings.length) {
+      container.innerHTML = '<div class="empty">此客戶尚無預約紀錄</div>';
+      return;
+    }
+
+    container.innerHTML = bookings.map(function (b) {
+      var isCancelled = b.status === "已取消";
+      var cardClass = "card booking-card" + (isCancelled ? " booking-card--cancelled" : " booking-card--confirmed");
+      var statusClass = isCancelled ? "booking-status cancelled" : "booking-status confirmed";
+      var reasonLine = isCancelled && b.cancelReason
+        ? '<p class="booking-cancel-reason">取消原因：' + escapeHtml(b.cancelReason) + "</p>"
+        : "";
+      return (
+        '<div class="' + cardClass + '">' +
+          '<div class="booking-card-head">' +
+            '<span class="booking-time">' + escapeHtml(formatDateZh(b.date)) + " " + escapeHtml(b.time || "") + "</span>" +
+            '<span class="' + statusClass + '">' + escapeHtml(b.status || "") + "</span>" +
+          "</div>" +
+          '<h3 class="booking-service">' + escapeHtml(b.serviceName || "服務") + "</h3>" +
+          reasonLine +
+        "</div>"
+      );
+    }).join("");
+  }
+
+  async function openCustomerDetail(userId) {
+    if (!userId) return;
+    setStatus("info", "載入客戶預約…");
+    var data = await window.ownerApi.getCustomerBookings(userId);
+    state.selectedCustomer = data;
+    renderCustomerDetailHeader(data || {});
+    renderCustomerBookings((data && data.bookings) || []);
+    showCustomerDetailView();
+    setStatus("");
+  }
+
+  function scheduleCustomerSearch() {
+    if (state.customerSearchTimer) {
+      clearTimeout(state.customerSearchTimer);
+    }
+    state.customerSearchTimer = setTimeout(function () {
+      loadCustomers(els.customerSearch.value).catch(function (e) {
+        setStatus("error", e.message);
+      });
+    }, 350);
+  }
+
   function switchTab(tabName) {
     document.querySelectorAll(".tab").forEach(function (t) {
       t.classList.toggle("active", t.getAttribute("data-tab") === tabName);
@@ -595,6 +720,13 @@
     document.querySelectorAll(".panel").forEach(function (p) {
       p.classList.toggle("active", p.getAttribute("data-panel") === tabName);
     });
+
+    if (tabName === "customers") {
+      showCustomerListView();
+      loadCustomers(els.customerSearch ? els.customerSearch.value : "").catch(function (e) {
+        setStatus("error", e.message);
+      });
+    }
   }
 
   function cacheElements() {
@@ -629,6 +761,12 @@
     els.ownerCancelReasonPreset = $("owner-cancel-reason-preset");
     els.ownerCancelReasonOther = $("owner-cancel-reason-other");
     els.ownerCancelOtherWrap = $("owner-cancel-other-wrap");
+    els.customerListView = $("customer-list-view");
+    els.customerDetailView = $("customer-detail-view");
+    els.customerSearch = $("customer-search");
+    els.customerList = $("customer-list");
+    els.customerDetailHeader = $("customer-detail-header");
+    els.customerBookingList = $("customer-booking-list");
   }
 
   function bindEvents() {
@@ -665,6 +803,24 @@
       if (event.target === els.ownerCancelModal) {
         closeOwnerCancelModal();
       }
+    });
+    $("customer-search-btn").addEventListener("click", function () {
+      loadCustomers(els.customerSearch.value).catch(function (e) {
+        setStatus("error", e.message);
+      });
+    });
+    els.customerSearch.addEventListener("input", scheduleCustomerSearch);
+    els.customerSearch.addEventListener("keydown", function (event) {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        if (state.customerSearchTimer) clearTimeout(state.customerSearchTimer);
+        loadCustomers(els.customerSearch.value).catch(function (e) {
+          setStatus("error", e.message);
+        });
+      }
+    });
+    $("customer-back-btn").addEventListener("click", function () {
+      showCustomerListView();
     });
   }
 

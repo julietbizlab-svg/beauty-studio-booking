@@ -141,6 +141,18 @@
       });
     },
 
+    getCustomers: function (q) {
+      var query = "/api/owner/customers";
+      if (q) query += "?q=" + encodeURIComponent(q);
+      return apiFetch(query);
+    },
+
+    getCustomerBookings: function (userId) {
+      return apiFetch(
+        "/api/owner/customer-bookings?userId=" + encodeURIComponent(userId || "")
+      );
+    },
+
     isConfigured: function () {
       return Boolean(getApiBaseUrl());
     }
