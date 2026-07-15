@@ -173,9 +173,10 @@ input[type="date"] {
 
 .btn-small {
   width: auto;
-  padding: 8px 12px;
-  font-size: 0.85rem;
-  font-weight: 600;
+  padding: 10px 14px;
+  min-height: 42px;
+  font-size: 15px;
+  font-weight: 500;
   border: 1.5px solid var(--border-strong);
   background: var(--card);
   color: var(--text);
@@ -297,11 +298,14 @@ input[type="date"] {
 .btn {
   display: block;
   width: 100%;
-  padding: 12px;
+  padding: 14px 16px;
+  min-height: 50px;
   border: none;
   border-radius: 8px;
-  font-size: 1rem;
-  font-weight: 600;
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
   cursor: pointer;
 }
 
@@ -311,11 +315,13 @@ input[type="date"] {
   color: #fff;
 }
 
+.btn:disabled,
 .btn-primary:disabled {
   background: #EDE6E7;
   color: #9A8B8C;
   opacity: 1;
   cursor: not-allowed;
+  box-shadow: none;
 }
 
 .btn-danger {
@@ -323,6 +329,13 @@ input[type="date"] {
   border: 1.5px solid var(--danger);
   color: var(--danger);
   margin-top: 8px;
+}
+
+.btn-danger:disabled {
+  border-color: #D9C4C4;
+  color: #B59A9A;
+  background: #F7F0F0;
+  cursor: not-allowed;
 }
 
 .status {
@@ -523,8 +536,10 @@ input[type="date"] {
   margin-top: 10px;
   width: auto;
   display: inline-block;
-  padding: 8px 14px;
-  font-size: 0.85rem;
+  padding: 10px 16px;
+  min-height: 42px;
+  font-size: 15px;
+  font-weight: 500;
 }
 
 .booking-cancel-reason {
@@ -667,8 +682,9 @@ input[type="date"] {
 
 .modal-actions .btn {
   width: 100%;
-  min-height: 48px;
-  font-size: 1.05rem;
+  min-height: 52px;
+  font-size: 18px;
+  font-weight: 500;
 }
 
 .booking-fail-card {
@@ -724,8 +740,9 @@ input[type="date"] {
 .btn-fail-ack {
   background: var(--danger);
   color: #fff;
-  min-height: 50px;
-  font-size: 1.08rem;
+  min-height: 52px;
+  font-size: 18px;
+  font-weight: 500;
 }
 
 .cancel-confirm-card {
@@ -769,12 +786,17 @@ input[type="date"] {
   background: var(--danger);
   color: #fff;
   border-color: var(--danger);
-  min-height: 50px;
-  font-size: 1.08rem;
+  min-height: 52px;
+  font-size: 18px;
+  font-weight: 500;
 }
 
 .btn-cancel-confirm:disabled {
-  opacity: 0.7;
+  background: #E8C8C8;
+  border-color: #E8C8C8;
+  color: #fff;
+  opacity: 1;
+  cursor: not-allowed;
 }
 
 @media (max-width: 380px) {
