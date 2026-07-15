@@ -19,6 +19,7 @@
 | PRICING-DRAFT.md | 報價方案草稿，協助判斷建置費與月維護費 |
 | CLIENT-DELIVERY-CHECKLIST.md | 系統完成後，交付給客戶前逐項確認 |
 | DEMO-ACCEPTANCE-2026-07-14.md | Demo 上線驗收紀錄（含客人端／業主端月曆），供交付 SOP 參考 |
+| ACCEPTANCE-customer-profile-2026-07-15.md | 客人基本資料（姓名／電話／生日）上線驗收紀錄與手機勾選清單 |
 | PRODUCT-TEMPLATE-MASTER.md | 商品母版總文件（基礎款功能清單含月曆） |
 | README.md | 商品化文件總索引 |
 
@@ -32,6 +33,7 @@
 6. 再依需求評估 `PRICING-DRAFT.md`
 7. 建置完成後使用 `CLIENT-DELIVERY-CHECKLIST.md`
 8. Demo 或正式上線後，可參考 `DEMO-ACCEPTANCE-2026-07-14.md` 作為驗收紀錄範本（含月曆選日期、月曆預約查詢）
+9. 客人基本資料功能上線後，用 `ACCEPTANCE-customer-profile-2026-07-15.md` 做手機勾選驗收
 
 ## 基礎款月曆功能（交付新客戶必知）
 
