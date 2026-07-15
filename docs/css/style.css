@@ -396,6 +396,30 @@ input[type="date"] {
   color: var(--danger);
 }
 
+.booking-card--confirmed {
+  border-color: #D7EBD9;
+  box-shadow: 0 1px 0 rgba(92, 158, 110, 0.08);
+}
+
+.booking-card--confirmed .booking-status.confirmed {
+  margin-top: 8px;
+}
+
+.booking-card--cancelled {
+  background: #F7F3F3;
+  border-color: #E8DFDF;
+  opacity: 0.72;
+}
+
+.booking-card--cancelled h3,
+.booking-card--cancelled > p {
+  color: var(--muted);
+}
+
+.booking-card--cancelled .booking-status.cancelled {
+  margin-top: 8px;
+}
+
 .user-bar {
   display: flex;
   align-items: center;

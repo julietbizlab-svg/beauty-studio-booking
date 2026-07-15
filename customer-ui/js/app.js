@@ -349,15 +349,67 @@
     });
   }
 
+  function bookingDateTimeKey(booking) {
+    var date = booking && booking.date ? String(booking.date) : "";
+    var time = booking && booking.time ? String(booking.time) : "00:00";
+    return date + "T" + time;
+  }
+
+  function getNowDateTimeKey() {
+    var now = new Date();
+    var parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Taipei",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    }).formatToParts(now);
+    var map = {};
+    parts.forEach(function (part) {
+      if (part.type !== "literal") map[part.type] = part.value;
+    });
+    return map.year + "-" + map.month + "-" + map.day + "T" + map.hour + ":" + map.minute;
+  }
+
+  function sortBookingsForDisplay(bookings) {
+    var nowKey = getNowDateTimeKey();
+    return (bookings || []).slice().sort(function (a, b) {
+      var aConfirmed = a.status === "已確認" ? 0 : 1;
+      var bConfirmed = b.status === "已確認" ? 0 : 1;
+      if (aConfirmed !== bConfirmed) return aConfirmed - bConfirmed;
+
+      var aKey = bookingDateTimeKey(a);
+      var bKey = bookingDateTimeKey(b);
+      var aPast = aKey < nowKey;
+      var bPast = bKey < nowKey;
+      if (aPast !== bPast) return aPast ? 1 : -1;
+
+      if (!aPast && !bPast) {
+        if (aKey < bKey) return -1;
+        if (aKey > bKey) return 1;
+        return 0;
+      }
+
+      if (aKey > bKey) return -1;
+      if (aKey < bKey) return 1;
+      return 0;
+    });
+  }
+
   function renderBookings() {
     var container = els.bookingList;
     if (!state.bookings.length) {
       container.innerHTML = '<div class="empty">尚無預約紀錄</div>';
       return;
     }
-    container.innerHTML = state.bookings.map(function (b) {
-      var statusClass = b.status === "已確認" ? "confirmed" : "cancelled";
-      var cancelBtn = b.status === "已確認"
+    var sorted = sortBookingsForDisplay(state.bookings);
+    container.innerHTML = sorted.map(function (b) {
+      var isConfirmed = b.status === "已確認";
+      var statusClass = isConfirmed ? "confirmed" : "cancelled";
+      var cardClass = isConfirmed ? "card booking-card booking-card--confirmed" : "card booking-card booking-card--cancelled";
+      var cancelBtn = isConfirmed
         ? '<button type="button" class="btn btn-danger" data-cancel="' + b.id + '">取消預約</button>'
         : "";
       var reasonLine = b.status === "已取消" && b.cancelReason
@@ -366,7 +418,7 @@
           ? '<p class="booking-cancel-reason">此預約由業主取消</p>'
           : "");
       return (
-        '<div class="card">' +
+        '<div class="' + cardClass + '">' +
           '<h3>' + escapeHtml(b.serviceName) + '</h3>' +
           '<p>' + formatDateZh(b.date) + ' ' + escapeHtml(b.time) + '</p>' +
           '<span class="booking-status ' + statusClass + '">' + escapeHtml(b.status) + '</span>' +
