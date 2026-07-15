@@ -199,22 +199,28 @@ input[type="date"] {
   grid-template-columns: repeat(7, 1fr);
   gap: 5px;
   margin-bottom: 10px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .calendar-cell--empty {
-  min-height: 58px;
+  min-height: 68px;
 }
 
 .calendar-day {
   position: relative;
-  min-height: 58px;
-  padding: 8px 3px;
+  min-height: 68px;
+  padding: 10px 3px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--card);
   color: var(--text);
   cursor: pointer;
   font-family: inherit;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .calendar-day-num {
