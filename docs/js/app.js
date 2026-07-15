@@ -665,17 +665,46 @@
       await loadSlots();
       await loadBookings();
     } catch (error) {
-      if (isSameDayBookingLimitError(error && error.message)) {
-        setStatusAlert("error", "今天已經有一筆預約", [
-          "為了避免時間衝突，同一天目前只能預約一個項目。",
-          "如果想做多個項目，請聯絡店家協助安排。"
-        ]);
-      } else {
-        setStatus("error", error.message);
-      }
+      setStatus("");
+      showBookingFailModal(error && error.message);
     } finally {
       updateBookButton();
     }
+  }
+
+  function hideBookingFailModal() {
+    if (!els.bookingFailModal) return;
+    els.bookingFailModal.classList.add("hidden");
+  }
+
+  function showBookingFailModal(message) {
+    if (!els.bookingFailModal || !els.bookingFailBody) return;
+    var lines;
+    if (isSameDayBookingLimitError(message)) {
+      lines = [
+        { text: "同一天僅能預約一個時段", primary: true },
+        { text: "如需安排多個項目，請聯絡店家協助處理。" }
+      ];
+    } else {
+      lines = [
+        { text: message || "預約失敗，請稍後再試。", primary: true }
+      ];
+    }
+    els.bookingFailBody.innerHTML = lines.map(function (line) {
+      var cls = line.primary ? "booking-fail-primary" : "";
+      return '<p class="' + cls + '">' + escapeHtml(line.text) + "</p>";
+    }).join("");
+    els.bookingFailModal.classList.remove("hidden");
+    var card = els.bookingFailModal.querySelector(".modal-card");
+    if (card) {
+      card.style.animation = "none";
+      void card.offsetWidth;
+      card.style.animation = "";
+    }
+  }
+
+  function handleBookingFailAck() {
+    hideBookingFailModal();
   }
 
   function handleBookingSuccessView() {
@@ -752,6 +781,9 @@
     if (els.bookingSuccessAgain) {
       els.bookingSuccessAgain.addEventListener("click", handleBookingSuccessAgain);
     }
+    if (els.bookingFailAck) {
+      els.bookingFailAck.addEventListener("click", handleBookingFailAck);
+    }
   }
 
   function cacheElements() {
@@ -782,6 +814,9 @@
     els.bookingSuccessDeposit = $("booking-success-deposit");
     els.bookingSuccessView = $("booking-success-view");
     els.bookingSuccessAgain = $("booking-success-again");
+    els.bookingFailModal = $("booking-fail-modal");
+    els.bookingFailBody = $("booking-fail-body");
+    els.bookingFailAck = $("booking-fail-ack");
     els.userName = $("user-name");
     els.userAvatar = $("user-avatar");
   }
