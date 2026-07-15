@@ -28,6 +28,7 @@
 | 2 | 營業時段 | `slots` | `NOTION_DATABASE_SLOTS` | ⬜ 待建立 |
 | 3 | 預約紀錄 | `bookings` | `NOTION_DATABASE_BOOKINGS` | ⬜ 待建立 |
 | 4 | 店面設定 | `settings` | `NOTION_DATABASE_SETTINGS` | ⬜ 待建立 |
+| 5 | 客人資料 | `customers` | `NOTION_DATABASE_CUSTOMERS` | ⬜ 建議建立 |
 
 完成一格後把 ⬜ 改成 ✅。
 
@@ -136,6 +137,8 @@ Beauty Studio Booking Demo
 | 預約編號 | **Title** | 系統自動產生 |
 | LINE userId | 文字 | |
 | 客人姓名 | 文字 | |
+| 客人電話 | 文字 | 預約當下電話（可首次寫入時自動補欄） |
+| 客人生日 | 日期 | 選填 |
 | 服務ID | 文字 | Notion 服務項目的 page ID |
 | 服務名稱 | 文字 | |
 | 預約日期 | 日期 | |
@@ -182,6 +185,27 @@ Beauty Studio Booking Demo
 
 ---
 
+## 八－B、資料庫 5：customers（客人資料，建議）
+
+### 欄位一覽
+
+| 欄位名稱 | Notion 類型 | 說明 |
+|----------|-------------|------|
+| 客人名稱 | **Title** | 真實姓名 |
+| LINE userId | 文字 | 以 userId 建立／更新 |
+| 電話 | 文字 | |
+| 生日 | 日期 | 選填 |
+| LINE 暱稱 | 文字 | |
+| 備註 | 文字 | |
+
+### 環境變數
+
+`NOTION_DATABASE_CUSTOMERS=...`（`.dev.vars`／Cloudflare Secret；**不要**寫進前端）
+
+> 未設定時仍可預約：姓名／電話會寫入 bookings。設定後可累積同一位客人資料。
+
+---
+
 ## 九、寫入 backend/.dev.vars
 
 ```bash
@@ -198,6 +222,8 @@ NOTION_DATABASE_SERVICES=服務項目DatabaseID
 NOTION_DATABASE_SLOTS=營業時段DatabaseID
 NOTION_DATABASE_BOOKINGS=預約紀錄DatabaseID
 NOTION_DATABASE_SETTINGS=店面設定DatabaseID
+# 建議：
+# NOTION_DATABASE_CUSTOMERS=客人資料DatabaseID
 
 OWNER_LINE_USER_IDS=U業主userId
 LIFF_CHANNEL_ID=你的ChannelID

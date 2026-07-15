@@ -24,6 +24,22 @@ var REQUIRED_VARS = [
   "NOTION_DATABASE_SETTINGS"
 ];
 
+var OPTIONAL_DATABASE_CHECKS = [
+  {
+    key: "NOTION_DATABASE_CUSTOMERS",
+    label: "customers",
+    displayName: "客人資料（NOTION_DATABASE_CUSTOMERS）",
+    fields: {
+      "LINE userId": "rich_text",
+      "電話": "rich_text",
+      "生日": "date",
+      "LINE 暱稱": "rich_text",
+      "備註": "rich_text"
+    },
+    requireTitle: true
+  }
+];
+
 var DATABASE_CHECKS = [
   {
     key: "NOTION_DATABASE_SERVICES",
@@ -136,9 +152,10 @@ async function notionGet(path, token) {
   return { response: response, body: body };
 }
 
-function validateFields(properties, expectedFields) {
+function validateFields(properties, expectedFields, options) {
   var missing = [];
   var wrongType = [];
+  options = options || {};
 
   Object.keys(expectedFields).forEach(function (name) {
     var expectedType = expectedFields[name];
@@ -151,6 +168,15 @@ function validateFields(properties, expectedFields) {
       wrongType.push(name + "（應為 " + expectedType + "，目前為 " + field.type + "）");
     }
   });
+
+  if (options.requireTitle) {
+    var hasTitle = Object.keys(properties).some(function (name) {
+      return properties[name] && properties[name].type === "title";
+    });
+    if (!hasTitle) {
+      missing.push("Title（建議命名：客人名稱）");
+    }
+  }
 
   if (missing.length) {
     return "缺少欄位：" + missing.join("、");
@@ -186,7 +212,9 @@ async function checkDatabase(token, config, databaseId) {
     return { ok: false, message: config.displayName + " 檢查失敗：" + apiMessage };
   }
 
-  var fieldError = validateFields(body.properties || {}, config.fields);
+  var fieldError = validateFields(body.properties || {}, config.fields, {
+    requireTitle: Boolean(config.requireTitle)
+  });
   if (fieldError) {
     return { ok: false, message: config.displayName + " " + fieldError };
   }
@@ -252,6 +280,25 @@ async function main() {
     }
   }
 
+  for (var j = 0; j < OPTIONAL_DATABASE_CHECKS.length; j++) {
+    var optional = OPTIONAL_DATABASE_CHECKS[j];
+    var optionalId = vars[optional.key];
+    if (!optionalId) {
+      console.log("- " + optional.label + ": 略過（未設定 " + optional.key + "）");
+      continue;
+    }
+    var optionalResult = await checkDatabase(vars.NOTION_TOKEN, optional, optionalId);
+    if (optionalResult.tokenInvalid) {
+      tokenInvalid = true;
+      printLine(optional.label, false, optionalResult.message);
+      break;
+    }
+    printLine(optional.label, optionalResult.ok, optionalResult.message);
+    if (!optionalResult.ok) {
+      allOk = false;
+    }
+  }
+
   console.log("");
 
   if (tokenInvalid) {
@@ -260,7 +307,7 @@ async function main() {
   }
 
   if (allOk) {
-    console.log("結果：全部通過，四個資料庫皆可正常讀取。");
+    console.log("結果：全部通過，必要資料庫皆可正常讀取。");
     process.exit(0);
   }
 

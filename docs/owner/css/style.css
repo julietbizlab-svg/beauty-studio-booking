@@ -325,6 +325,13 @@ textarea { min-height: 72px; resize: vertical; }
   font-size: 0.9rem;
 }
 
+.booking-phone,
+.booking-birthday {
+  margin: 4px 0 0;
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
 .booking-status {
   display: inline-block;
   padding: 3px 8px;
@@ -340,18 +347,32 @@ textarea { min-height: 72px; resize: vertical; }
 }
 
 .booking-status.cancelled {
-  background: #F0F0F0;
-  color: var(--muted);
+  background: #EDE7E7;
+  color: #9A7B7B;
+}
+
+.booking-card--confirmed {
+  border-color: #D7EBD9;
+  background: var(--card);
+}
+
+.booking-card--confirmed .booking-time {
+  color: var(--primary);
+  font-weight: 700;
 }
 
 .booking-card--cancelled {
-  opacity: 0.72;
-  background: #FAFAFA;
+  opacity: 0.65;
+  background: #F7F3F3;
+  border-color: #E8DFDF;
 }
 
 .booking-card--cancelled .booking-time,
 .booking-card--cancelled .booking-service,
-.booking-card--cancelled .booking-customer {
+.booking-card--cancelled .booking-customer,
+.booking-card--cancelled .booking-phone,
+.booking-card--cancelled .booking-birthday,
+.booking-card--cancelled .booking-date-line {
   color: var(--muted);
 }
 
@@ -362,7 +383,7 @@ textarea { min-height: 72px; resize: vertical; }
 .booking-cancel-reason {
   margin: 8px 0 0;
   font-size: 0.85rem;
-  color: var(--muted);
+  color: #8A6B6B;
 }
 
 .btn-cancel-booking {

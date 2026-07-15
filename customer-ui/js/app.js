@@ -436,8 +436,55 @@
   }
 
   function updateBookButton() {
-    var ready = state.selectedService && state.selectedDate && state.selectedTime;
+    var profile = getCustomerProfileFromForm();
+    var ready = state.selectedService && state.selectedDate && state.selectedTime &&
+      profile.customerName && profile.phone;
     els.bookBtn.disabled = !ready;
+  }
+
+  function getCustomerProfileStorageKey() {
+    var userId = state.user && state.user.userId ? state.user.userId : "";
+    return userId ? ("beauty_customer_profile_" + userId) : "";
+  }
+
+  function getCustomerProfileFromForm() {
+    return {
+      customerName: els.customerName ? String(els.customerName.value || "").trim() : "",
+      phone: els.customerPhone ? String(els.customerPhone.value || "").trim().replace(/\s+/g, "") : "",
+      birthday: els.customerBirthday ? String(els.customerBirthday.value || "").trim() : ""
+    };
+  }
+
+  function saveCustomerProfileLocal(profile) {
+    var key = getCustomerProfileStorageKey();
+    if (!key || !window.localStorage) return;
+    try {
+      window.localStorage.setItem(key, JSON.stringify({
+        customerName: profile.customerName || "",
+        phone: profile.phone || "",
+        birthday: profile.birthday || ""
+      }));
+    } catch (ignore) {}
+  }
+
+  function loadCustomerProfileLocal() {
+    var key = getCustomerProfileStorageKey();
+    if (!key || !window.localStorage) return null;
+    try {
+      var raw = window.localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : null;
+    } catch (ignore) {
+      return null;
+    }
+  }
+
+  function fillCustomerProfileForm() {
+    if (!els.customerName || !els.customerPhone || !els.customerBirthday) return;
+    var saved = loadCustomerProfileLocal() || {};
+    els.customerName.value = saved.customerName || (state.user && state.user.displayName) || "";
+    els.customerPhone.value = saved.phone || "";
+    els.customerBirthday.value = saved.birthday || "";
+    updateBookButton();
   }
 
   function escapeHtml(str) {
@@ -575,6 +622,15 @@
 
   async function handleBook() {
     if (!state.selectedService || !state.selectedDate || !state.selectedTime) return;
+    var profile = getCustomerProfileFromForm();
+    if (!profile.customerName) {
+      setStatus("error", "請填寫姓名");
+      return;
+    }
+    if (!profile.phone) {
+      setStatus("error", "請填寫電話");
+      return;
+    }
     els.bookBtn.disabled = true;
     setStatus("", "送出預約中…");
     var bookedServiceName = state.selectedService.name || "";
@@ -584,10 +640,14 @@
       await window.beautyApi.createBooking({
         userId: state.user.userId,
         displayName: state.user.displayName,
+        customerName: profile.customerName,
+        phone: profile.phone,
+        birthday: profile.birthday || "",
         serviceId: state.selectedService.id,
         date: bookedDate,
         time: bookedTime
       });
+      saveCustomerProfileLocal(profile);
       setStatus("");
       state.selectedTime = "";
       try {
@@ -596,7 +656,7 @@
       } catch (ignore) {}
       renderDepositTransferBox(state.settings);
       showBookingSuccessModal({
-        guestName: (state.user && state.user.displayName) || "",
+        guestName: profile.customerName,
         serviceName: bookedServiceName,
         date: bookedDate,
         time: bookedTime
@@ -677,6 +737,15 @@
     });
 
     els.bookBtn.addEventListener("click", handleBook);
+    if (els.customerName) {
+      els.customerName.addEventListener("input", updateBookButton);
+    }
+    if (els.customerPhone) {
+      els.customerPhone.addEventListener("input", updateBookButton);
+    }
+    if (els.customerBirthday) {
+      els.customerBirthday.addEventListener("change", updateBookButton);
+    }
     if (els.bookingSuccessView) {
       els.bookingSuccessView.addEventListener("click", handleBookingSuccessView);
     }
@@ -699,6 +768,9 @@
     els.calendarTodayBtn = $("calendar-today-btn");
     els.selectedDateSummary = $("selected-date-summary");
     els.slotGrid = $("slot-grid");
+    els.customerName = $("customer-name");
+    els.customerPhone = $("customer-phone");
+    els.customerBirthday = $("customer-birthday");
     els.bookBtn = $("book-btn");
     els.bookingList = $("booking-list");
     els.depositTransferBox = $("deposit-transfer-box");
@@ -731,6 +803,7 @@
         els.userAvatar.src = state.user.pictureUrl;
         els.userAvatar.style.display = "block";
       }
+      fillCustomerProfileForm();
 
       if (!window.beautyApi.isConfigured()) {
         throw new Error("API 尚未設定");

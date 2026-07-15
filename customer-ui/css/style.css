@@ -444,6 +444,43 @@ input[type="date"] {
   margin-bottom: 12px;
 }
 
+.customer-profile-form {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 16px;
+}
+
+.customer-profile-form .form-group {
+  margin-bottom: 12px;
+}
+
+.customer-profile-form .form-group:last-child {
+  margin-bottom: 0;
+}
+
+.customer-profile-form label {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+
+.customer-profile-form input[type="text"],
+.customer-profile-form input[type="tel"],
+.customer-profile-form input[type="date"] {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 8px;
+  font-size: 1rem;
+  font-family: inherit;
+  color: var(--text);
+  background: #fff;
+}
+
 .empty {
   text-align: center;
   color: var(--muted);

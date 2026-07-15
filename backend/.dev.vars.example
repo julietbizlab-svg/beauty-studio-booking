@@ -11,6 +11,9 @@ NOTION_DATABASE_SLOTS=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 NOTION_DATABASE_BOOKINGS=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 NOTION_DATABASE_SETTINGS=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
+# 客人資料（建議）：同一 LINE userId 會建立／更新一筆客人資料
+# NOTION_DATABASE_CUSTOMERS=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
 # 業主 LINE userId（逗號或空白分隔，僅這些帳號可進入 owner-admin）
 OWNER_LINE_USER_IDS=Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 

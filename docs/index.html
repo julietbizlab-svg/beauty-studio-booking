@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
   <title>線上預約</title>
-  <link rel="stylesheet" href="css/style.css?v=20260715009">
+  <link rel="stylesheet" href="css/style.css?v=20260715010">
 </head>
 <body>
   <div class="app">
@@ -52,6 +52,22 @@
         <div class="empty">請先選擇服務與日期</div>
       </div>
 
+      <p class="step-hint">步驟 4：填寫聯絡資料</p>
+      <div class="customer-profile-form" id="customer-profile-form">
+        <div class="form-group">
+          <label for="customer-name">姓名（必填）</label>
+          <input type="text" id="customer-name" name="customer-name" autocomplete="name" placeholder="請填真實姓名" maxlength="40">
+        </div>
+        <div class="form-group">
+          <label for="customer-phone">電話（必填）</label>
+          <input type="tel" id="customer-phone" name="customer-phone" autocomplete="tel" inputmode="tel" placeholder="例：0912345678" maxlength="20">
+        </div>
+        <div class="form-group">
+          <label for="customer-birthday">生日（選填）</label>
+          <input type="date" id="customer-birthday" name="customer-birthday">
+        </div>
+      </div>
+
       <button type="button" class="btn btn-primary" id="book-btn" disabled>確認預約</button>
     </section>
 
@@ -97,9 +113,9 @@
     </div>
   </div>
 
-  <script src="js/config.js?v=20260715009"></script>
-  <script src="js/liff-init.js?v=20260715009"></script>
-  <script src="js/api.js?v=20260715009"></script>
-  <script src="js/app.js?v=20260715009"></script>
+  <script src="js/config.js?v=20260715010"></script>
+  <script src="js/liff-init.js?v=20260715010"></script>
+  <script src="js/api.js?v=20260715010"></script>
+  <script src="js/app.js?v=20260715010"></script>
 </body>
 </html>

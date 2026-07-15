@@ -175,9 +175,10 @@
       return;
     }
 
-    container.innerHTML = bookings.map(function (b) {
+    var sorted = sortOwnerDayBookings(bookings);
+    container.innerHTML = sorted.map(function (b) {
       var isCancelled = b.status === "已取消";
-      var cardClass = "card booking-card" + (isCancelled ? " booking-card--cancelled" : "");
+      var cardClass = "card booking-card" + (isCancelled ? " booking-card--cancelled" : " booking-card--confirmed");
       var statusClass = isCancelled ? "booking-status cancelled" : "booking-status confirmed";
       var reasonLine = isCancelled && b.cancelReason
         ? '<p class="booking-cancel-reason">取消原因：' + escapeHtml(b.cancelReason) + "</p>"
@@ -194,6 +195,12 @@
           '</div>' +
           '<h3 class="booking-service">' + escapeHtml(b.serviceName || "服務") + '</h3>' +
           '<p class="booking-customer">' + escapeHtml(b.customerName || "客人") + '</p>' +
+          (b.phone
+            ? '<p class="booking-phone">電話：' + escapeHtml(b.phone) + '</p>'
+            : "") +
+          (b.birthday
+            ? '<p class="booking-birthday">生日：' + escapeHtml(formatDateZh(b.birthday)) + '</p>'
+            : "") +
           '<p class="booking-date-line">' + formatDateZh(b.date || date) + '</p>' +
           reasonLine +
           cancelBtn +
@@ -204,9 +211,28 @@
     container.querySelectorAll("[data-cancel-id]").forEach(function (btn) {
       btn.addEventListener("click", function () {
         var id = btn.getAttribute("data-cancel-id");
-        var booking = bookings.find(function (b) { return b.id === id; });
+        var booking = sorted.find(function (b) { return b.id === id; });
         openOwnerCancelModal(booking || { id: id, date: date });
       });
+    });
+  }
+
+  function sortOwnerDayBookings(bookings) {
+    return (bookings || []).slice().sort(function (a, b) {
+      var aRank = a.status === "已確認" ? 0 : (a.status === "已取消" ? 1 : 2);
+      var bRank = b.status === "已確認" ? 0 : (b.status === "已取消" ? 1 : 2);
+      if (aRank !== bRank) return aRank - bRank;
+
+      var aTime = String(a.time || "");
+      var bTime = String(b.time || "");
+      if (aTime < bTime) return -1;
+      if (aTime > bTime) return 1;
+
+      var aDate = String(a.date || "");
+      var bDate = String(b.date || "");
+      if (aDate < bDate) return -1;
+      if (aDate > bDate) return 1;
+      return 0;
     });
   }
 

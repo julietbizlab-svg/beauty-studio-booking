@@ -23,6 +23,8 @@
  * | 預約編號   | Title  | 自動產生           |
  * | LINE userId| 文字   |                    |
  * | 客人姓名   | 文字   |                    |
+ * | 客人電話   | 文字   | 預約當下留下（可選補欄）|
+ * | 客人生日   | 日期   | 可選               |
  * | 服務ID     | 文字   | Notion page ID     |
  * | 服務名稱   | 文字   |                    |
  * | 預約日期   | 日期   |                    |
@@ -31,6 +33,16 @@
  * | 取消原因   | 文字   | rich_text（可選）  |
  * | 取消者     | 選項   | 客人、業主（可選） |
  * | 取消時間   | 日期   | date（可選）       |
+ *
+ * ── 客人資料庫（NOTION_DATABASE_CUSTOMERS，建議）──
+ * | 欄位         | 類型     | 說明                 |
+ * | 客人名稱     | Title    | 真實姓名             |
+ * | LINE userId  | 文字     | 以 userId upsert     |
+ * | 電話         | 文字     |                      |
+ * | 生日         | 日期     | 可選                 |
+ * | LINE 暱稱    | 文字     |                      |
+ * | 備註         | 文字     |                      |
+ * （建立／最後更新時間由 Notion 內建即可）
  *
  * ── 店面設定資料庫（NOTION_DATABASE_SETTINGS）──
  * 僅需一筆資料（第一筆為預設）
@@ -197,6 +209,18 @@ function parseSlotPage(page) {
   };
 }
 
+function getPhone(props, name) {
+  var field = props[name];
+  if (!field) return "";
+  if (field.type === "phone_number") {
+    return field.phone_number || "";
+  }
+  if (field.type === "rich_text") {
+    return (field.rich_text || []).map(function (t) { return t.plain_text; }).join("");
+  }
+  return "";
+}
+
 function parseBookingPage(page) {
   var p = page.properties;
   return {
@@ -204,6 +228,8 @@ function parseBookingPage(page) {
     title: getTitle(p),
     userId: getRichText(p, "LINE userId"),
     customerName: getRichText(p, "客人姓名"),
+    phone: getPhone(p, "客人電話") || getPhone(p, "電話"),
+    birthday: getDateStart(p, "客人生日") || getDateStart(p, "生日"),
     serviceId: getRichText(p, "服務ID"),
     serviceName: getRichText(p, "服務名稱"),
     date: getDateStart(p, "預約日期"),
@@ -617,18 +643,146 @@ export async function getUserBookings(env, userId) {
   return pages.map(parseBookingPage);
 }
 
+var BOOKING_CUSTOMER_PROPERTY_SCHEMA = {
+  "客人電話": { rich_text: {} },
+  "客人生日": { date: {} }
+};
+
+var CUSTOMERS_PROPERTY_SCHEMA = {
+  "LINE userId": { rich_text: {} },
+  "電話": { rich_text: {} },
+  "生日": { date: {} },
+  "LINE 暱稱": { rich_text: {} },
+  "備註": { rich_text: {} }
+};
+
+async function ensureDatabaseProperties(env, databaseId, schema) {
+  if (!databaseId) return {};
+  var db = await notionFetch("/databases/" + databaseId, env.NOTION_TOKEN);
+  var existing = db.properties || {};
+  var toAdd = {};
+  Object.keys(schema).forEach(function (name) {
+    if (!existing[name]) {
+      toAdd[name] = schema[name];
+    }
+  });
+  if (!Object.keys(toAdd).length) {
+    return existing;
+  }
+  var updated = await notionFetch("/databases/" + databaseId, env.NOTION_TOKEN, {
+    method: "PATCH",
+    body: JSON.stringify({ properties: toAdd })
+  });
+  return updated.properties || existing;
+}
+
+function normalizePhoneInput(phone) {
+  return String(phone || "").trim().replace(/\s+/g, "");
+}
+
+function isValidPhoneInput(phone) {
+  var cleaned = normalizePhoneInput(phone).replace(/-/g, "");
+  return /^\+?\d{8,15}$/.test(cleaned);
+}
+
+function isValidBirthdayInput(birthday) {
+  if (!birthday) return true;
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(birthday));
+}
+
+function parseCustomerPage(page) {
+  var p = page.properties;
+  return {
+    id: page.id,
+    name: getTitle(p) || "",
+    userId: getRichText(p, "LINE userId"),
+    phone: getPhone(p, "電話"),
+    birthday: getDateStart(p, "生日"),
+    lineNickname: getRichText(p, "LINE 暱稱"),
+    note: getRichText(p, "備註")
+  };
+}
+
+/**
+ * 依 LINE userId 建立或更新客人資料（需設定 NOTION_DATABASE_CUSTOMERS）
+ */
+export async function upsertCustomer(env, payload) {
+  var databaseId = env.NOTION_DATABASE_CUSTOMERS;
+  if (!databaseId) {
+    return null;
+  }
+
+  var userId = String(payload.userId || "").trim();
+  var name = String(payload.name || "").trim();
+  var phone = normalizePhoneInput(payload.phone);
+  var birthday = payload.birthday ? String(payload.birthday).trim() : "";
+  var lineNickname = String(payload.lineNickname || "").trim();
+
+  if (!userId || !name || !phone) {
+    throw makeError("客人姓名與電話為必填", 400);
+  }
+
+  await ensureDatabaseProperties(env, databaseId, CUSTOMERS_PROPERTY_SCHEMA);
+
+  var db = await notionFetch("/databases/" + databaseId, env.NOTION_TOKEN);
+  var dbProps = db.properties || {};
+  var titleName = Object.keys(dbProps).find(function (key) {
+    return dbProps[key] && dbProps[key].type === "title";
+  }) || "客人名稱";
+
+  var properties = {};
+  properties[titleName] = { title: [{ text: { content: name.slice(0, 100) } }] };
+  properties["LINE userId"] = richTextProperty(userId);
+  properties["電話"] = richTextProperty(phone);
+  if (birthday) {
+    properties["生日"] = { date: { start: birthday } };
+  }
+  if (lineNickname) {
+    properties["LINE 暱稱"] = richTextProperty(lineNickname);
+  }
+
+  var existing = await queryDatabase(env, databaseId, {
+    property: "LINE userId",
+    rich_text: { equals: userId }
+  });
+
+  if (existing.length) {
+    var updated = await notionFetch("/pages/" + existing[0].id, env.NOTION_TOKEN, {
+      method: "PATCH",
+      body: JSON.stringify({ properties: properties })
+    });
+    return parseCustomerPage(updated);
+  }
+
+  var created = await notionFetch("/pages", env.NOTION_TOKEN, {
+    method: "POST",
+    body: JSON.stringify({
+      parent: { database_id: databaseId },
+      properties: properties
+    })
+  });
+  return parseCustomerPage(created);
+}
+
 function bookingTitle(customerName, serviceName, date, time) {
   return [customerName || "客人", serviceName, date, time].filter(Boolean).join("｜");
 }
 
 export async function createBooking(env, payload) {
   var userId = payload.userId;
-  var displayName = payload.displayName || "客人";
+  var lineNickname = payload.displayName || payload.lineNickname || "";
+  var customerName = String(payload.customerName || payload.name || "").trim();
+  var phone = normalizePhoneInput(payload.phone);
+  var birthday = payload.birthday ? String(payload.birthday).trim() : "";
   var serviceId = payload.serviceId;
   var date = payload.date;
   var time = payload.time;
 
   if (!userId) throw makeError("缺少 LINE userId");
+  if (!customerName) throw makeError("請填寫姓名", 400);
+  if (!phone) throw makeError("請填寫電話", 400);
+  if (!isValidPhoneInput(phone)) throw makeError("電話格式不正確", 400);
+  if (!isValidBirthdayInput(birthday)) throw makeError("生日格式請使用 YYYY-MM-DD", 400);
   if (!serviceId) throw makeError("請選擇服務項目");
   if (!date) throw makeError("請選擇預約日期");
   if (!time) throw makeError("請選擇預約時段");
@@ -663,20 +817,40 @@ export async function createBooking(env, payload) {
     throw makeError("此時段與現有預約重疊，請選擇其他時間");
   }
 
+  try {
+    await upsertCustomer(env, {
+      userId: userId,
+      name: customerName,
+      phone: phone,
+      birthday: birthday,
+      lineNickname: lineNickname
+    });
+  } catch (ignore) {
+    // customers 未設定或寫入失敗時，仍以 booking 保存姓名／電話
+  }
+
+  await ensureDatabaseProperties(env, env.NOTION_DATABASE_BOOKINGS, BOOKING_CUSTOMER_PROPERTY_SCHEMA);
+
+  var bookingProperties = {
+    "預約編號": { title: [{ text: { content: bookingTitle(customerName, service.name, date, time) } }] },
+    "LINE userId": richTextProperty(userId),
+    "客人姓名": richTextProperty(customerName),
+    "客人電話": richTextProperty(phone),
+    "服務ID": richTextProperty(serviceId),
+    "服務名稱": richTextProperty(service.name),
+    "預約日期": { date: { start: date } },
+    "預約時段": richTextProperty(time),
+    "狀態": { select: { name: "已確認" } }
+  };
+  if (birthday) {
+    bookingProperties["客人生日"] = { date: { start: birthday } };
+  }
+
   var page = await notionFetch("/pages", env.NOTION_TOKEN, {
     method: "POST",
     body: JSON.stringify({
       parent: { database_id: env.NOTION_DATABASE_BOOKINGS },
-      properties: {
-        "預約編號": { title: [{ text: { content: bookingTitle(displayName, service.name, date, time) } }] },
-        "LINE userId": { rich_text: [{ text: { content: userId } }] },
-        "客人姓名": { rich_text: [{ text: { content: displayName } }] },
-        "服務ID": { rich_text: [{ text: { content: serviceId } }] },
-        "服務名稱": { rich_text: [{ text: { content: service.name } }] },
-        "預約日期": { date: { start: date } },
-        "預約時段": { rich_text: [{ text: { content: time } }] },
-        "狀態": { select: { name: "已確認" } }
-      }
+      properties: bookingProperties
     })
   });
 
@@ -784,6 +958,8 @@ function bookingToOwnerDto(booking) {
   return {
     id: booking.id,
     customerName: booking.customerName,
+    phone: booking.phone || "",
+    birthday: booking.birthday || "",
     serviceName: booking.serviceName,
     date: booking.date,
     time: booking.time,

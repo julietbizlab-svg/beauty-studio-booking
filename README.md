@@ -98,6 +98,8 @@ beauty-studio-booking/
 | 預約編號 | Title |
 | LINE userId | 文字 |
 | 客人姓名 | 文字 |
+| 客人電話 | 文字（預約當下聯絡電話；首次預約可自動補欄） |
+| 客人生日 | 日期（選填） |
 | 服務ID | 文字 |
 | 服務名稱 | 文字 |
 | 預約日期 | 日期 |
@@ -123,6 +125,21 @@ beauty-studio-booking/
 
 > 訂金功能只顯示轉帳資訊，**不**串銀行、LINE Pay、也不追蹤付款狀態。帳號由 settings API 回傳，勿寫進前端 config。
 
+#### 客人資料（建議）
+
+環境變數：`NOTION_DATABASE_CUSTOMERS`（勿把真實 ID 寫進前端）
+
+| 欄位 | 類型 |
+|------|------|
+| 客人名稱 | Title |
+| LINE userId | 文字 |
+| 電話 | 文字 |
+| 生日 | 日期（選填） |
+| LINE 暱稱 | 文字 |
+| 備註 | 文字 |
+
+> 建立預約時會依 `LINE userId` 建立或更新客人資料；即使尚未設定此資料庫，預約仍會寫入 bookings 的姓名與電話。
+
 每個資料庫需連接您的 Integration（Connections）。
 
 ### 2. 後端設定
@@ -131,6 +148,7 @@ beauty-studio-booking/
 cd backend
 cp .dev.vars.example .dev.vars
 # 編輯 .dev.vars 填入 Notion Token、Database ID、OWNER_LINE_USER_IDS
+# 建議再填 NOTION_DATABASE_CUSTOMERS（客人資料）
 
 npm install
 npm run dev        # 本機開發
