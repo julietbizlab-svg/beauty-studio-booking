@@ -430,7 +430,7 @@
 
     container.querySelectorAll("[data-cancel]").forEach(function (btn) {
       btn.addEventListener("click", function () {
-        handleCancel(btn.getAttribute("data-cancel"));
+        openCancelConfirmModal(btn.getAttribute("data-cancel"));
       });
     });
   }
@@ -718,11 +718,47 @@
     setStatus("");
   }
 
-  async function handleCancel(bookingId) {
-    if (!confirm("確認要取消這筆預約嗎？取消後將無法恢復。")) return;
+  var cancelModalState = { bookingId: "", submitting: false };
+
+  function openCancelConfirmModal(bookingId) {
+    if (!els.cancelConfirmModal || !bookingId) return;
+    cancelModalState.bookingId = bookingId;
+    cancelModalState.submitting = false;
+    if (els.cancelConfirmYes) {
+      els.cancelConfirmYes.disabled = false;
+      els.cancelConfirmYes.textContent = "確認取消";
+    }
+    if (els.cancelConfirmNo) els.cancelConfirmNo.disabled = false;
+    els.cancelConfirmModal.classList.remove("hidden");
+    var card = els.cancelConfirmModal.querySelector(".modal-card");
+    if (card) {
+      card.style.animation = "none";
+      void card.offsetWidth;
+      card.style.animation = "";
+    }
+  }
+
+  function hideCancelConfirmModal() {
+    if (els.cancelConfirmModal) {
+      els.cancelConfirmModal.classList.add("hidden");
+    }
+    cancelModalState.bookingId = "";
+    cancelModalState.submitting = false;
+  }
+
+  async function confirmCancelBooking() {
+    var bookingId = cancelModalState.bookingId;
+    if (!bookingId || cancelModalState.submitting) return;
+    cancelModalState.submitting = true;
+    if (els.cancelConfirmYes) {
+      els.cancelConfirmYes.disabled = true;
+      els.cancelConfirmYes.textContent = "取消中…";
+    }
+    if (els.cancelConfirmNo) els.cancelConfirmNo.disabled = true;
     setStatus("", "取消中…");
     try {
       await window.beautyApi.cancelBooking(state.user.userId, bookingId);
+      hideCancelConfirmModal();
       setStatus("success", "已取消預約");
       await loadBookings();
       if (state.selectedService) {
@@ -732,6 +768,12 @@
         await loadSlots();
       }
     } catch (error) {
+      cancelModalState.submitting = false;
+      if (els.cancelConfirmYes) {
+        els.cancelConfirmYes.disabled = false;
+        els.cancelConfirmYes.textContent = "確認取消";
+      }
+      if (els.cancelConfirmNo) els.cancelConfirmNo.disabled = false;
       setStatus("error", error.message);
     }
   }
@@ -784,6 +826,24 @@
     if (els.bookingFailAck) {
       els.bookingFailAck.addEventListener("click", handleBookingFailAck);
     }
+    if (els.cancelConfirmYes) {
+      els.cancelConfirmYes.addEventListener("click", function () {
+        confirmCancelBooking().catch(function (e) { setStatus("error", e.message); });
+      });
+    }
+    if (els.cancelConfirmNo) {
+      els.cancelConfirmNo.addEventListener("click", function () {
+        if (cancelModalState.submitting) return;
+        hideCancelConfirmModal();
+      });
+    }
+    if (els.cancelConfirmModal) {
+      els.cancelConfirmModal.addEventListener("click", function (event) {
+        if (event.target === els.cancelConfirmModal && !cancelModalState.submitting) {
+          hideCancelConfirmModal();
+        }
+      });
+    }
   }
 
   function cacheElements() {
@@ -817,6 +877,9 @@
     els.bookingFailModal = $("booking-fail-modal");
     els.bookingFailBody = $("booking-fail-body");
     els.bookingFailAck = $("booking-fail-ack");
+    els.cancelConfirmModal = $("cancel-confirm-modal");
+    els.cancelConfirmYes = $("cancel-confirm-yes");
+    els.cancelConfirmNo = $("cancel-confirm-no");
     els.userName = $("user-name");
     els.userAvatar = $("user-avatar");
   }
