@@ -120,7 +120,8 @@ Demo 驗收見 [DEMO-ACCEPTANCE-2026-07-14.md](DEMO-ACCEPTANCE-2026-07-14.md)。
 7. **sync docs** — 執行 `scripts/sync-github-pages.sh`。  
 8. **deploy backend** — `npx wrangler deploy`，確認 `/api/health` 正常。  
 9. **push GitHub Pages** — push 並開啟 Pages，確認客人／業主網址可開。  
-10. **手機 LINE 驗收** — 用實機 LINE 測完整流程（見第 5 節）。
+10. **設定 LINE 官方帳號入口** — 圖文選單／按鈕掛上客人「預約」、業主「管理」（見 [LINE-ENTRY-SETUP-FLOW.md](LINE-ENTRY-SETUP-FLOW.md)）；確認沒有誤貼 Demo 連結。  
+11. **手機 LINE 驗收** — 用實機 LINE 從官方帳號點入口測完整流程（見第 5 節）。
 
 **建議時機**：客戶資料齊全、訂金收到後再開工（見 [CLIENT-INFO-FORM.md](CLIENT-INFO-FORM.md)）。
 
@@ -133,6 +134,7 @@ Demo 驗收見 [DEMO-ACCEPTANCE-2026-07-14.md](DEMO-ACCEPTANCE-2026-07-14.md)。
 ### 客人端
 
 - [ ] 客戶端可開啟（LINE LIFF 正常）
+- [ ] **可從官方帳號入口點進預約**（圖文選單或按鈕，見 [LINE-ENTRY-SETUP-FLOW.md](LINE-ENTRY-SETUP-FLOW.md)）
 - [ ] 客戶端可看到服務
 - [ ] 客戶端月曆可看到可約日期（有開放且有空位才可點）
 - [ ] 點可約日後可看到時段
@@ -142,10 +144,12 @@ Demo 驗收見 [DEMO-ACCEPTANCE-2026-07-14.md](DEMO-ACCEPTANCE-2026-07-14.md)。
 ### 業主端
 
 - [ ] 業主端可登入（授權帳號）
+- [ ] **可從官方帳號入口（或約定私訊連結）點進管理**
 - [ ] 業主端月曆可看到預約
 - [ ] 業主端可管理服務
 - [ ] 業主端可管理時段
 - [ ] 業主端可管理店面設定
+- [ ] 非業主無法操作管理功能
 
 ### 安全（必勾）
 
@@ -181,9 +185,10 @@ Demo 驗收見 [DEMO-ACCEPTANCE-2026-07-14.md](DEMO-ACCEPTANCE-2026-07-14.md)。
 | [CLIENT-DELIVERY-SOP.md](CLIENT-DELIVERY-SOP.md) | 工程交付細節 |
 | [CLIENT-NOTION-SETUP-FLOW.md](CLIENT-NOTION-SETUP-FLOW.md) | Notion 建庫 |
 | [CLIENT-LINE-SETUP-FLOW.md](CLIENT-LINE-SETUP-FLOW.md) | LINE／LIFF 設定 |
+| [LINE-ENTRY-SETUP-FLOW.md](LINE-ENTRY-SETUP-FLOW.md) | LINE 官方帳號入口（圖文選單／預約與管理按鈕） |
 | [DEMO-ACCEPTANCE-2026-07-14.md](DEMO-ACCEPTANCE-2026-07-14.md) | 驗收紀錄範本 |
 | [PRICING-PACKAGES.md](PRICING-PACKAGES.md) | 報價方案 |
 
 ---
 
-*文件版本：1.1｜beauty-studio-booking 套版母版｜不含任何 Token、密碼或客戶個資*
+*文件版本：1.2｜beauty-studio-booking 套版母版｜不含任何 Token、密碼或客戶個資*

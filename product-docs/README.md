@@ -16,6 +16,7 @@
 | CLIENT-INFO-CHECKLIST.md | 接新客戶前，蒐集店名、服務、價格、營業時間、品牌色等資料 |
 | CLIENT-NOTION-SETUP-FLOW.md | 在 Notion 建立四個資料庫、連接 Integration、填入 Database ID |
 | CLIENT-LINE-SETUP-FLOW.md | 新客戶 LINE / LIFF 逐步設定與驗收紀錄（含 Channel ID、LIFF ID、Endpoint） |
+| **LINE-ENTRY-SETUP-FLOW.md** | **LINE 入口設定 SOP**：官方帳號圖文選單／按鈕、客人與業主入口、可公開網址、Demo 與正式切開、交付檢查 |
 | PRICING-DRAFT.md | 報價方案草稿，協助判斷建置費與月維護費 |
 | CLIENT-DELIVERY-CHECKLIST.md | 系統完成後，交付給客戶前逐項確認 |
 | DEMO-ACCEPTANCE-2026-07-14.md | Demo 上線驗收紀錄（含客人端／業主端月曆），供交付 SOP 參考 |
@@ -30,10 +31,11 @@
 3. 先填 `CLIENT-INFO-CHECKLIST.md`
 4. 依 `CLIENT-NOTION-SETUP-FLOW.md` 建立 Notion 四個資料庫
 5. 依 `CLIENT-LINE-SETUP-FLOW.md` 完成 LINE / LIFF 設定
-6. 再依需求評估 `PRICING-DRAFT.md`
-7. 建置完成後使用 `CLIENT-DELIVERY-CHECKLIST.md`
-8. Demo 或正式上線後，可參考 `DEMO-ACCEPTANCE-2026-07-14.md` 作為驗收紀錄範本（含月曆選日期、月曆預約查詢）
-9. 客人基本資料功能上線後，用 `ACCEPTANCE-customer-profile-2026-07-15.md` 做手機勾選驗收
+6. 依 [LINE-ENTRY-SETUP-FLOW.md](LINE-ENTRY-SETUP-FLOW.md) 設定官方帳號「預約／管理」入口（圖文選單或按鈕）
+7. 再依需求評估 `PRICING-DRAFT.md`
+8. 建置完成後使用 `CLIENT-DELIVERY-CHECKLIST.md`
+9. Demo 或正式上線後，可參考 `DEMO-ACCEPTANCE-2026-07-14.md` 作為驗收紀錄範本（含月曆選日期、月曆預約查詢）
+10. 客人基本資料功能上線後，用 `ACCEPTANCE-customer-profile-2026-07-15.md` 做手機勾選驗收
 
 ## 基礎款月曆功能（交付新客戶必知）
 

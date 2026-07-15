@@ -257,6 +257,7 @@
 | **4. 收訂金** | 建議收訂金後再開工（比例自訂） |
 | **5. 建立客戶專屬帳號與資料庫** | 收資料表、建 Notion／LINE（交工程執行） |
 | **6. 部署系統** | 後端上線、前端網址、LIFF 設定（交工程執行） |
+| **6.5 設定 LINE 入口** | 官方帳號圖文選單／按鈕：客人「預約」、業主「管理」（見 [LINE-ENTRY-SETUP-FLOW.md](LINE-ENTRY-SETUP-FLOW.md)） |
 | **7. 客戶驗收** | 客人端＋業主端實機勾選（見下方第 11 節相關驗收文件） |
 | **8. 收尾款與交付** | 交操作說明、說明維護方式、留驗收紀錄 |
 
@@ -333,8 +334,10 @@
 | [CLIENT-INFO-FORM.md](CLIENT-INFO-FORM.md) | 客戶資料表 |
 | [PRICING-PACKAGES.md](PRICING-PACKAGES.md) | 三方案報價 |
 | [CLIENT-DELIVERY-SOP.md](CLIENT-DELIVERY-SOP.md) | 工程 10 步交付 |
+| [CLIENT-LINE-SETUP-FLOW.md](CLIENT-LINE-SETUP-FLOW.md) | LINE Login／LIFF／Secret 設定 |
+| [LINE-ENTRY-SETUP-FLOW.md](LINE-ENTRY-SETUP-FLOW.md) | **LINE 入口**：官方帳號圖文選單／客人預約與業主管理按鈕 |
 | [DEMO-ACCEPTANCE-2026-07-14.md](DEMO-ACCEPTANCE-2026-07-14.md) | 驗收紀錄範本（含月曆功能） |
 
 ---
 
-*文件版本：1.4｜beauty-studio-booking 商品母版｜兩產品線｜基礎款 v1.0｜不含任何 Token、密碼或客戶個資*
+*文件版本：1.5｜beauty-studio-booking 商品母版｜兩產品線｜基礎款 v1.0｜不含任何 Token、密碼或客戶個資*
