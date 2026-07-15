@@ -209,37 +209,38 @@ textarea { min-height: 72px; resize: vertical; }
 .calendar-month-label {
   flex: 1;
   text-align: center;
-  font-weight: 700;
-  font-size: 1rem;
+  font-weight: 600;
+  font-size: 17px;
   color: var(--text);
 }
 
 .calendar-weekdays {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  gap: 4px;
-  margin-bottom: 6px;
+  gap: 5px;
+  margin-bottom: 8px;
   text-align: center;
-  font-size: 0.75rem;
+  font-size: 16px;
   color: var(--muted);
-  font-weight: 600;
+  font-weight: 500;
+  line-height: 1.3;
 }
 
 .calendar-grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  gap: 4px;
+  gap: 5px;
   margin-bottom: 12px;
 }
 
 .calendar-cell--empty {
-  min-height: 44px;
+  min-height: 64px;
 }
 
 .calendar-day {
   position: relative;
-  min-height: 44px;
-  padding: 6px 4px 10px;
+  min-height: 64px;
+  padding: 8px 3px 16px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--card);
@@ -250,18 +251,19 @@ textarea { min-height: 72px; resize: vertical; }
 
 .calendar-day-num {
   display: block;
-  font-size: 0.9rem;
-  font-weight: 600;
-  line-height: 1.2;
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.25;
+  text-align: center;
 }
 
 .calendar-dot {
   position: absolute;
-  bottom: 5px;
+  bottom: 7px;
   left: 50%;
   transform: translateX(-50%);
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: var(--primary);
 }
