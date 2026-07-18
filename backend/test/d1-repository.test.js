@@ -22,7 +22,9 @@ import {
   getActiveBookingsByUser,
   getUserBookings,
   upsertCustomer,
-  createBooking
+  createBooking,
+  cancelBooking,
+  cancelBookingByOwner
 } from "../src/d1-repository.js";
 
 var TENANT = "tenant-test-001";
@@ -1213,5 +1215,306 @@ test("booking_no 以 BK- 開頭且不含姓名、電話、LINE userId；輸入�
         "輸入值「" + value + "」不得拼接進 SQL"
       );
     });
+  });
+});
+
+// ── cancelBooking（客戶取消） ────────────────────────────────
+
+var ISO_UTC_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+var ACTIVE_STATUS_LIST = "('pending', 'confirmed', 'checked_in')";
+
+function makeCancelDb(opts) {
+  var o = opts || {};
+  return makeFakeDb(function (sql, binds, method) {
+    if (method === "first" && /FROM bookings/.test(sql)) {
+      return o.booking !== undefined ? o.booking : {
+        id: "bk-1",
+        status: "confirmed",
+        customer_id: "cust-existing-1",
+        line_user_id: "U-cancel-user"
+      };
+    }
+    return null;
+  }, { batchResults: o.batchResults });
+}
+
+function makeOwnerEnv(db) {
+  return { DB: db, TENANT_ID: TENANT, STAFF_ID: STAFF };
+}
+
+test("cancelBooking 缺 userId／bookingId 拒絕且不觸發 SQL", async function () {
+  var db = makeCancelDb();
+  await assert.rejects(cancelBooking(makeEnv(db), "", "bk-1"), /缺少 LINE userId/);
+  await assert.rejects(cancelBooking(makeEnv(db), "U-cancel-user", ""), /缺少預約編號/);
+  assert.equal(db.calls.length, 0);
+});
+
+test("cancelBooking 找不到 booking 回 404", async function () {
+  var db = makeCancelDb({ booking: null });
+  await assert.rejects(
+    cancelBooking(makeEnv(db), "U-cancel-user", "bk-x"),
+    function (error) {
+      assert.equal(error.status, 404);
+      return true;
+    }
+  );
+});
+
+test("cancelBooking 非本人回 403 且不執行 batch", async function () {
+  var db = makeCancelDb();
+  await assert.rejects(
+    cancelBooking(makeEnv(db), "U-other-user", "bk-1"),
+    function (error) {
+      assert.equal(error.status, 403);
+      assert.match(error.message, /無法取消他人的預約/);
+      return true;
+    }
+  );
+  assert.equal(db.batches.length, 0);
+});
+
+test("cancelBooking 已取消狀態回「已取消」，不可取消狀態回「無法取消」", async function () {
+  var cancelledStatuses = ["cancelled_by_customer", "cancelled_by_store"];
+  for (var i = 0; i < cancelledStatuses.length; i++) {
+    var db1 = makeCancelDb({
+      booking: { id: "bk-1", status: cancelledStatuses[i], customer_id: "cust-existing-1", line_user_id: "U-cancel-user" }
+    });
+    await assert.rejects(
+      cancelBooking(makeEnv(db1), "U-cancel-user", "bk-1"),
+      /此預約已取消/
+    );
+    assert.equal(db1.batches.length, 0);
+  }
+
+  var blockedStatuses = ["completed", "no_show", "rescheduled"];
+  for (var j = 0; j < blockedStatuses.length; j++) {
+    var db2 = makeCancelDb({
+      booking: { id: "bk-1", status: blockedStatuses[j], customer_id: "cust-existing-1", line_user_id: "U-cancel-user" }
+    });
+    await assert.rejects(
+      cancelBooking(makeEnv(db2), "U-cancel-user", "bk-1"),
+      /此預約無法取消/
+    );
+    assert.equal(db2.batches.length, 0);
+  }
+});
+
+test("cancelBooking 預讀 SELECT 限制 tenant_id＋bookingId", async function () {
+  var db = makeCancelDb();
+  await cancelBooking(makeEnv(db), "U-cancel-user", "bk-1");
+
+  var select = db.calls.find(function (c) { return c.method === "first"; });
+  assert.match(select.sql, /b\.tenant_id = \?1 AND b\.id = \?2/);
+  assert.deepEqual(select.binds, [TENANT, "bk-1"]);
+});
+
+test("cancelBooking batch 順序為 log INSERT...SELECT → booking UPDATE，且都限 active statuses", async function () {
+  var db = makeCancelDb();
+  await cancelBooking(makeEnv(db), "U-cancel-user", "bk-1");
+
+  assert.equal(db.batches.length, 1);
+  var statements = db.batches[0];
+  assert.equal(statements.length, 2);
+  assert.match(statements[0].sql, /^INSERT INTO booking_status_logs [\s\S]*SELECT /);
+  assert.match(statements[1].sql, /^UPDATE bookings SET /);
+  assert.ok(statements[0].sql.includes("b.status IN " + ACTIVE_STATUS_LIST));
+  assert.ok(statements[1].sql.includes("status IN " + ACTIVE_STATUS_LIST));
+});
+
+test("cancelBooking 的 log 與 UPDATE 都以 line_accounts＋bind userId 再驗所有權", async function () {
+  var db = makeCancelDb();
+  await cancelBooking(makeEnv(db), "U-cancel-user", "bk-1");
+
+  var logInsert = db.batches[0][0];
+  var update = db.batches[0][1];
+
+  assert.match(
+    logInsert.sql,
+    /JOIN line_accounts la ON la\.tenant_id = b\.tenant_id AND la\.customer_id = b\.customer_id AND la\.line_user_id = \?6/
+  );
+  assert.equal(logInsert.binds[5], "U-cancel-user");
+
+  assert.match(
+    update.sql,
+    /AND EXISTS \(SELECT 1 FROM line_accounts la WHERE la\.tenant_id = bookings\.tenant_id AND la\.customer_id = bookings\.customer_id AND la\.line_user_id = \?4\)/
+  );
+  assert.equal(update.binds[3], "U-cancel-user");
+
+  [logInsert, update].forEach(function (s) {
+    assert.ok(!s.sql.includes("U-cancel-user"), "userId 不得拼接進 SQL");
+  });
+});
+
+test("cancelBooking 的 log 保存實際 from_status 與 customer 身分", async function () {
+  var db = makeCancelDb();
+  await cancelBooking(makeEnv(db), "U-cancel-user", "bk-1");
+
+  var logInsert = db.batches[0][0];
+  assert.match(
+    logInsert.sql,
+    /SELECT \?1, \?2, \?3, b\.status, 'cancelled_by_customer', 'customer', \?4/
+  );
+  assert.equal(logInsert.binds[1], TENANT);
+  assert.equal(logInsert.binds[2], "bk-1");
+  assert.equal(logInsert.binds[3], "cust-existing-1", "changed_by_id 必須為 customer_id");
+});
+
+test("cancelBooking 的 UPDATE 寫入 customer_cancelled、客人自行取消與 UTC 時間", async function () {
+  var db = makeCancelDb();
+  await cancelBooking(makeEnv(db), "U-cancel-user", "bk-1");
+
+  var update = db.batches[0][1];
+  assert.ok(update.sql.includes("status = 'cancelled_by_customer'"));
+  assert.ok(update.sql.includes("cancellation_reason_code = 'customer_cancelled'"));
+  assert.ok(update.sql.includes("cancellation_note = '客人自行取消'"));
+  assert.ok(update.sql.includes("cancelled_at = ?1, updated_at = ?1"));
+  assert.match(update.binds[0], ISO_UTC_PATTERN);
+  assert.equal(update.binds[1], TENANT);
+  assert.equal(update.binds[2], "bk-1");
+});
+
+test("cancelBooking UPDATE changes=0 回 400 不回成功；成功回傳相容格式", async function () {
+  var dbFail = makeCancelDb({
+    batchResults: function (statements) {
+      return statements.map(function (s) {
+        return { meta: { changes: /^UPDATE/.test(s.sql) ? 0 : 1 } };
+      });
+    }
+  });
+  await assert.rejects(
+    cancelBooking(makeEnv(dbFail), "U-cancel-user", "bk-1"),
+    function (error) {
+      assert.equal(error.status, 400);
+      return true;
+    }
+  );
+
+  var dbOk = makeCancelDb();
+  var result = await cancelBooking(makeEnv(dbOk), "U-cancel-user", "bk-1");
+  assert.deepEqual(result, { ok: true, message: "已取消預約", bookingId: "bk-1" });
+});
+
+// ── cancelBookingByOwner（業主取消） ─────────────────────────
+
+test("cancelBookingByOwner 缺 STAFF_ID 回 500", async function () {
+  var db = makeCancelDb();
+  await assert.rejects(
+    cancelBookingByOwner({ DB: db, TENANT_ID: TENANT }, "bk-1", "原因"),
+    function (error) {
+      assert.equal(error.status, 500);
+      assert.match(error.message, /STAFF_ID/);
+      return true;
+    }
+  );
+  assert.equal(db.calls.length, 0);
+});
+
+test("cancelBookingByOwner 缺 bookingId／空白 reason 拒絕", async function () {
+  var db = makeCancelDb();
+  await assert.rejects(cancelBookingByOwner(makeOwnerEnv(db), "", "原因"), /缺少預約編號/);
+  await assert.rejects(cancelBookingByOwner(makeOwnerEnv(db), "bk-1", "   "), /請填寫取消原因/);
+  assert.equal(db.calls.length, 0);
+});
+
+test("cancelBookingByOwner 找不到回 404；已取消與不可取消狀態拒絕", async function () {
+  var dbNotFound = makeCancelDb({ booking: null });
+  await assert.rejects(
+    cancelBookingByOwner(makeOwnerEnv(dbNotFound), "bk-x", "原因"),
+    function (error) {
+      assert.equal(error.status, 404);
+      return true;
+    }
+  );
+
+  var dbCancelled = makeCancelDb({ booking: { id: "bk-1", status: "cancelled_by_store" } });
+  await assert.rejects(
+    cancelBookingByOwner(makeOwnerEnv(dbCancelled), "bk-1", "原因"),
+    /此預約已取消/
+  );
+
+  var dbCompleted = makeCancelDb({ booking: { id: "bk-1", status: "completed" } });
+  await assert.rejects(
+    cancelBookingByOwner(makeOwnerEnv(dbCompleted), "bk-1", "原因"),
+    /此預約無法取消/
+  );
+  assert.equal(dbCompleted.batches.length, 0);
+});
+
+test("cancelBookingByOwner 的 SELECT／log／UPDATE 都限制 tenant_id，順序 log→UPDATE", async function () {
+  var db = makeCancelDb();
+  await cancelBookingByOwner(makeOwnerEnv(db), "bk-1", "原因");
+
+  var select = db.calls.find(function (c) { return c.method === "first"; });
+  assert.match(select.sql, /WHERE tenant_id = \?1 AND id = \?2/);
+  assert.deepEqual(select.binds, [TENANT, "bk-1"]);
+
+  var statements = db.batches[0];
+  assert.equal(statements.length, 2);
+  assert.match(statements[0].sql, /^INSERT INTO booking_status_logs /);
+  assert.match(statements[1].sql, /^UPDATE bookings SET /);
+  assert.match(statements[0].sql, /b\.tenant_id = \?2/);
+  assert.match(statements[1].sql, /WHERE tenant_id = \?3/);
+  assert.equal(statements[0].binds[1], TENANT);
+  assert.equal(statements[1].binds[2], TENANT);
+  assert.ok(statements[0].sql.includes("b.status IN " + ACTIVE_STATUS_LIST));
+  assert.ok(statements[1].sql.includes("status IN " + ACTIVE_STATUS_LIST));
+});
+
+test("cancelBookingByOwner 的 log 用實際 from_status、staff 身分與 STAFF_ID", async function () {
+  var db = makeCancelDb();
+  await cancelBookingByOwner(makeOwnerEnv(db), "bk-1", "原因");
+
+  var logInsert = db.batches[0][0];
+  assert.match(
+    logInsert.sql,
+    /SELECT \?1, \?2, \?3, b\.status, 'cancelled_by_store', 'staff', \?4/
+  );
+  assert.equal(logInsert.binds[3], STAFF, "changed_by_id 必須為 STAFF_ID");
+});
+
+test("cancelBookingByOwner 的 UPDATE 寫入 store_cancelled 與 trim 後 reason（走 bind）", async function () {
+  var db = makeCancelDb();
+  await cancelBookingByOwner(makeOwnerEnv(db), "bk-1", "  老師臨時有事  ");
+
+  var logInsert = db.batches[0][0];
+  var update = db.batches[0][1];
+
+  assert.ok(update.sql.includes("status = 'cancelled_by_store'"));
+  assert.ok(update.sql.includes("cancellation_reason_code = 'store_cancelled'"));
+  assert.ok(update.sql.includes("cancellation_note = ?1"));
+  assert.ok(update.sql.includes("cancelled_at = ?2, updated_at = ?2"));
+  assert.equal(update.binds[0], "老師臨時有事");
+  assert.match(update.binds[1], ISO_UTC_PATTERN);
+  assert.equal(logInsert.binds[4], "老師臨時有事");
+
+  db.calls.forEach(function (call) {
+    assert.ok(!call.sql.includes("老師臨時有事"), "reason 不得拼接進 SQL");
+  });
+});
+
+test("cancelBookingByOwner changes=0 回 400；成功回傳 cancelReason 與 canceledBy 業主", async function () {
+  var dbFail = makeCancelDb({
+    batchResults: function (statements) {
+      return statements.map(function (s) {
+        return { meta: { changes: /^UPDATE/.test(s.sql) ? 0 : 1 } };
+      });
+    }
+  });
+  await assert.rejects(
+    cancelBookingByOwner(makeOwnerEnv(dbFail), "bk-1", "原因"),
+    function (error) {
+      assert.equal(error.status, 400);
+      return true;
+    }
+  );
+
+  var dbOk = makeCancelDb();
+  var result = await cancelBookingByOwner(makeOwnerEnv(dbOk), "bk-1", " 原因 ");
+  assert.deepEqual(result, {
+    ok: true,
+    message: "已取消預約",
+    bookingId: "bk-1",
+    cancelReason: "原因",
+    canceledBy: "業主"
   });
 });
