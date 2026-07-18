@@ -20,7 +20,8 @@ import {
   getActiveBookingsForMonth,
   getActiveBookingsByDate,
   getActiveBookingsByUser,
-  getUserBookings
+  getUserBookings,
+  upsertCustomer
 } from "../src/d1-repository.js";
 
 var TENANT = "tenant-test-001";
@@ -741,4 +742,213 @@ test("getUserBookings 排除 rescheduled／no_show，已確認在前、已取消
     sql,
     /ORDER BY CASE WHEN b\.status IN \('pending', 'confirmed', 'checked_in'\) OR b\.status = 'completed' THEN 0 ELSE 1 END ASC, b\.start_at DESC/
   );
+});
+
+// ── upsertCustomer ───────────────────────────────────────────
+
+var UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+function customerPayload(overrides) {
+  return Object.assign({
+    userId: "U-upsert-user",
+    name: "測試客",
+    phone: "0912345678"
+  }, overrides || {});
+}
+
+function existingCustomerRow(overrides) {
+  return Object.assign({
+    customer_id: "cust-existing-1",
+    birthday: "1990-01-01",
+    notes: "既有備註",
+    line_display_name: "舊暱稱"
+  }, overrides || {});
+}
+
+test("upsertCustomer 拒絕缺 userId、空白 name、缺 phone", async function () {
+  var db = makeFakeDb();
+  var badPayloads = [
+    customerPayload({ userId: "" }),
+    customerPayload({ name: "   " }),
+    customerPayload({ phone: "" })
+  ];
+  for (var i = 0; i < badPayloads.length; i++) {
+    await assert.rejects(
+      upsertCustomer(makeEnv(db), badPayloads[i]),
+      /客人姓名與電話為必填/
+    );
+  }
+  assert.equal(db.calls.length, 0);
+});
+
+test("upsertCustomer 拒絕不足 8 碼、超過 15 碼或含非法字元的電話", async function () {
+  var db = makeFakeDb();
+  var badPhones = ["1234567", "1234567890123456", "09-12ab-345"];
+  for (var i = 0; i < badPhones.length; i++) {
+    await assert.rejects(
+      upsertCustomer(makeEnv(db), customerPayload({ phone: badPhones[i] })),
+      /電話格式不正確/
+    );
+  }
+  assert.equal(db.calls.length, 0);
+});
+
+test("upsertCustomer 電話接受空白／連字號／可選 +，保存正規化結果", async function () {
+  var db = makeFakeDb(function () { return null; });
+  var dto = await upsertCustomer(
+    makeEnv(db),
+    customerPayload({ phone: " +886 912-345-678 " })
+  );
+
+  // 與 notion.js normalizePhoneInput 相同：只移除空白，保留 + 與連字號
+  assert.equal(dto.phone, "+886912-345-678");
+  var customerInsert = db.batchedStatements[0];
+  assert.ok(customerInsert.binds.includes("+886912-345-678"));
+});
+
+test("upsertCustomer birthday 未提供可通過、閏年可通過、不存在日期拒絕", async function () {
+  var db = makeFakeDb(function () { return null; });
+
+  await upsertCustomer(makeEnv(db), customerPayload());
+  var dtoLeap = await upsertCustomer(
+    makeEnv(db),
+    customerPayload({ userId: "U-leap", birthday: "2024-02-29" })
+  );
+  assert.equal(dtoLeap.birthday, "2024-02-29");
+
+  var badBirthdays = ["2026-02-29", "2026-02-30", "2026-04-31"];
+  for (var i = 0; i < badBirthdays.length; i++) {
+    await assert.rejects(
+      upsertCustomer(makeEnv(db), customerPayload({ birthday: badBirthdays[i] })),
+      /生日格式請使用 YYYY-MM-DD/
+    );
+  }
+});
+
+test("upsertCustomer 的 SELECT 以 tenant_id＋line_user_id bind 查詢", async function () {
+  var db = makeFakeDb(function () { return null; });
+  await upsertCustomer(makeEnv(db), customerPayload());
+
+  var select = db.calls.find(function (c) { return c.method === "first"; });
+  assert.match(select.sql, /FROM line_accounts la/);
+  assert.match(select.sql, /la\.tenant_id = \?1 AND la\.line_user_id = \?2/);
+  assert.deepEqual(select.binds, [TENANT, "U-upsert-user"]);
+});
+
+test("既有客戶：雙 UPDATE 同一 batch、皆限制 tenant_id、不改綁 customer_id", async function () {
+  var db = makeFakeDb(function (sql, binds, method) {
+    if (method === "first") return existingCustomerRow();
+    return null;
+  });
+
+  var dto = await upsertCustomer(makeEnv(db), customerPayload());
+
+  assert.equal(db.batchedStatements.length, 2);
+  var customerUpdate = db.batchedStatements[0];
+  var lineUpdate = db.batchedStatements[1];
+
+  assert.match(customerUpdate.sql, /^UPDATE customers SET /);
+  assert.match(customerUpdate.sql, /WHERE tenant_id = \?\d+ AND id = \?\d+/);
+  assert.ok(customerUpdate.binds.includes(TENANT));
+  assert.ok(customerUpdate.binds.includes("cust-existing-1"));
+
+  assert.match(lineUpdate.sql, /^UPDATE line_accounts SET /);
+  assert.match(lineUpdate.sql, /WHERE tenant_id = \?\d+ AND line_user_id = \?\d+/);
+  assert.ok(lineUpdate.binds.includes(TENANT));
+  assert.ok(
+    !lineUpdate.sql.includes("customer_id"),
+    "line_accounts UPDATE 不得改動 customer_id"
+  );
+
+  assert.equal(dto.id, "cust-existing-1");
+});
+
+test("既有客戶：未提供 birthday 與暱稱時保留既有值", async function () {
+  var db = makeFakeDb(function (sql, binds, method) {
+    if (method === "first") return existingCustomerRow();
+    return null;
+  });
+
+  var dto = await upsertCustomer(makeEnv(db), customerPayload());
+
+  var customerUpdate = db.batchedStatements[0];
+  var lineUpdate = db.batchedStatements[1];
+  assert.ok(!customerUpdate.sql.includes("birthday"), "未提供生日不得更新 birthday 欄");
+  assert.ok(!lineUpdate.sql.includes("display_name"), "未提供暱稱不得更新 display_name 欄");
+
+  assert.equal(dto.birthday, "1990-01-01");
+  assert.equal(dto.lineNickname, "舊暱稱");
+  assert.equal(dto.note, "既有備註");
+});
+
+test("新客戶：雙 INSERT 同一 batch、同一 customer_id、ID 為不同 UUID", async function () {
+  var db = makeFakeDb(function () { return null; });
+  var dto = await upsertCustomer(makeEnv(db), customerPayload());
+
+  assert.equal(db.batchedStatements.length, 2);
+  var customerInsert = db.batchedStatements[0];
+  var lineInsert = db.batchedStatements[1];
+
+  assert.match(customerInsert.sql, /^INSERT INTO customers /);
+  assert.match(lineInsert.sql, /^INSERT INTO line_accounts /);
+
+  var customerId = customerInsert.binds[0];
+  var lineAccountId = lineInsert.binds[0];
+  assert.match(customerId, UUID_PATTERN);
+  assert.match(lineAccountId, UUID_PATTERN);
+  assert.notEqual(customerId, lineAccountId);
+  assert.equal(lineInsert.binds[2], customerId, "line_accounts 必須綁到同一 customer_id");
+  assert.equal(customerInsert.binds[1], TENANT);
+  assert.equal(lineInsert.binds[1], TENANT);
+  assert.equal(dto.id, customerId);
+});
+
+test("新客戶：lineNickname／lineDisplayName fallback，userId 不寫成顯示名稱", async function () {
+  var db1 = makeFakeDb(function () { return null; });
+  var dto1 = await upsertCustomer(
+    makeEnv(db1),
+    customerPayload({ lineNickname: "暱稱A", lineDisplayName: "暱稱B" })
+  );
+  assert.equal(dto1.lineNickname, "暱稱A");
+
+  var db2 = makeFakeDb(function () { return null; });
+  var dto2 = await upsertCustomer(
+    makeEnv(db2),
+    customerPayload({ lineDisplayName: "暱稱B" })
+  );
+  assert.equal(dto2.lineNickname, "暱稱B");
+  assert.equal(db2.batchedStatements[1].binds[4], "暱稱B");
+
+  var db3 = makeFakeDb(function () { return null; });
+  await upsertCustomer(makeEnv(db3), customerPayload());
+  var lineInsert = db3.batchedStatements[1];
+  assert.equal(lineInsert.binds[4], null, "未提供暱稱時 display_name 為 null");
+  assert.ok(
+    lineInsert.binds[4] !== "U-upsert-user",
+    "LINE userId 不得寫成顯示名稱"
+  );
+});
+
+test("upsertCustomer DTO 欄位完整且輸入值只出現在 bind、不在 SQL", async function () {
+  var db = makeFakeDb(function () { return null; });
+  var dto = await upsertCustomer(
+    makeEnv(db),
+    customerPayload({ birthday: "1995-05-05", lineNickname: "小美" })
+  );
+
+  assert.deepEqual(Object.keys(dto).sort(), [
+    "birthday", "id", "lineNickname", "name", "note", "phone", "userId"
+  ]);
+  assert.equal(dto.name, "測試客");
+  assert.equal(dto.userId, "U-upsert-user");
+
+  var inputValues = ["U-upsert-user", "測試客", "0912345678", "1995-05-05", "小美"];
+  db.calls.forEach(function (call) {
+    inputValues.forEach(function (value) {
+      assert.ok(
+        !call.sql.includes(value),
+        "輸入值「" + value + "」不得拼接進 SQL"
+      );
+    });
+  });
 });
