@@ -769,3 +769,143 @@ export async function getUserBookings(env, userId) {
 
   return (result.results || []).map(bookingRowToDto);
 }
+
+// ────────────────────────────── customers ────────────────────────────────
+//
+// 對應資料表：customers、line_accounts（0001_init_core.sql）。
+// 以 line_accounts.line_user_id 定位既有客戶；一經綁定即不重綁
+// customer_id（維持 UNIQUE (tenant_id, line_user_id) 與
+// UNIQUE (tenant_id, customer_id) 的既有關聯）。
+
+/** 與 notion.js 相同的電話正規化與驗證規則 */
+function normalizePhoneInput(phone) {
+  return String(phone || "").trim().replace(/\s+/g, "");
+}
+
+function isValidPhoneInput(phone) {
+  var cleaned = normalizePhoneInput(phone).replace(/-/g, "");
+  return /^\+?\d{8,15}$/.test(cleaned);
+}
+
+/** 真實日期驗證（round-trip，拒絕 2026-02-30 這類自動進位輸入） */
+function isRealDateString(value) {
+  var match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value));
+  if (!match) {
+    return false;
+  }
+  var year = Number(match[1]);
+  var month = Number(match[2]);
+  var day = Number(match[3]);
+  var parsed = new Date(Date.UTC(year, month - 1, day));
+  return parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() === month - 1 &&
+    parsed.getUTCDate() === day;
+}
+
+/**
+ * 依 LINE userId 建立或更新客戶（與 notion.js 的 upsertCustomer 相容）。
+ * 回傳 DTO：{ id, name, userId, phone, birthday, lineNickname, note }
+ */
+export async function upsertCustomer(env, payload) {
+  ensureD1Env(env);
+  var input = payload || {};
+
+  var userId = String(input.userId || "").trim();
+  var name = String(input.name || "").trim();
+  var phone = normalizePhoneInput(input.phone);
+  var birthday = input.birthday ? String(input.birthday).trim() : "";
+  var lineNickname = String(input.lineNickname || input.lineDisplayName || "").trim();
+
+  if (!userId || !name || !phone) {
+    throw makeError("客人姓名與電話為必填", 400);
+  }
+  if (!isValidPhoneInput(phone)) {
+    throw makeError("電話格式不正確", 400);
+  }
+  if (birthday && !isRealDateString(birthday)) {
+    throw makeError("生日格式請使用 YYYY-MM-DD", 400);
+  }
+
+  var now = nowIso();
+
+  var existing = await env.DB.prepare(
+    "SELECT c.id AS customer_id, c.birthday, c.notes, " +
+    "la.display_name AS line_display_name " +
+    "FROM line_accounts la " +
+    "JOIN customers c ON c.tenant_id = la.tenant_id AND c.id = la.customer_id " +
+    "WHERE la.tenant_id = ?1 AND la.line_user_id = ?2"
+  ).bind(env.TENANT_ID, userId).first();
+
+  if (existing) {
+    // 既有客戶：就地更新，不重綁 customer_id
+    var customerSets = ["display_name = ?1", "mobile = ?2", "updated_at = ?3"];
+    var customerBinds = [name, phone, now];
+    if (birthday) {
+      customerBinds.push(birthday);
+      customerSets.push("birthday = ?" + customerBinds.length);
+    }
+    customerBinds.push(env.TENANT_ID);
+    var custTenantIndex = customerBinds.length;
+    customerBinds.push(existing.customer_id);
+    var custIdIndex = customerBinds.length;
+
+    var lineSets = ["last_seen_at = ?1"];
+    var lineBinds = [now];
+    if (lineNickname) {
+      lineBinds.push(lineNickname);
+      lineSets.push("display_name = ?" + lineBinds.length);
+    }
+    lineBinds.push(env.TENANT_ID);
+    var lineTenantIndex = lineBinds.length;
+    lineBinds.push(userId);
+    var lineUserIndex = lineBinds.length;
+
+    await env.DB.batch([
+      env.DB.prepare(
+        "UPDATE customers SET " + customerSets.join(", ") +
+        " WHERE tenant_id = ?" + custTenantIndex + " AND id = ?" + custIdIndex
+      ).bind(...customerBinds),
+      env.DB.prepare(
+        "UPDATE line_accounts SET " + lineSets.join(", ") +
+        " WHERE tenant_id = ?" + lineTenantIndex + " AND line_user_id = ?" + lineUserIndex
+      ).bind(...lineBinds)
+    ]);
+
+    return {
+      id: existing.customer_id,
+      name: name,
+      userId: userId,
+      phone: phone,
+      birthday: birthday || existing.birthday || "",
+      lineNickname: lineNickname || existing.line_display_name || "",
+      note: existing.notes || ""
+    };
+  }
+
+  // 新客戶：customers＋line_accounts 同一個 batch 建立（單一交易）
+  var customerId = crypto.randomUUID();
+  var lineAccountId = crypto.randomUUID();
+
+  await env.DB.batch([
+    env.DB.prepare(
+      "INSERT INTO customers " +
+      "(id, tenant_id, display_name, mobile, birthday, source, created_at, updated_at) " +
+      "VALUES (?1, ?2, ?3, ?4, ?5, 'line', ?6, ?6)"
+    ).bind(customerId, env.TENANT_ID, name, phone, birthday || null, now),
+    env.DB.prepare(
+      "INSERT INTO line_accounts " +
+      "(id, tenant_id, customer_id, line_user_id, display_name, linked_at, last_seen_at) " +
+      "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)"
+    ).bind(lineAccountId, env.TENANT_ID, customerId, userId, lineNickname || null, now)
+  ]);
+
+  return {
+    id: customerId,
+    name: name,
+    userId: userId,
+    phone: phone,
+    birthday: birthday,
+    lineNickname: lineNickname,
+    note: ""
+  };
+}
