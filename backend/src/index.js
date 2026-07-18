@@ -24,7 +24,9 @@ import {
   getServiceById,
   getServiceDurationMap,
   getCustomerProfileByUserId,
-  updateCustomerByOwner
+  updateCustomerByOwner,
+  previewCustomerImport,
+  commitCustomerImport
 } from "./data-repository.js";
 import { requireOwnerFromRequest } from "./owner-auth.js";
 import { requireCustomerFromRequest } from "./liff-verify.js";
@@ -346,6 +348,24 @@ export default {
         var customerQuery = url.searchParams.get("q") || "";
         var customerList = await getOwnerCustomersFromBookings(env, customerQuery);
         return jsonResponse(customerList, corsHeaders);
+      }
+
+      // 客戶 CSV 匯入：不 log CSV、canonicalString 或完整電話；
+      // 回應中的電話只出現在 maskedPreview 遮罩值
+      if (url.pathname === "/api/owner/customers/import/preview" && request.method === "POST") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var importPreviewBody = await readJson(request);
+        var importPreview = await previewCustomerImport(env, importPreviewBody);
+        return jsonResponse(importPreview, corsHeaders);
+      }
+
+      if (url.pathname === "/api/owner/customers/import/commit" && request.method === "POST") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var importCommitBody = await readJson(request);
+        var importCommit = await commitCustomerImport(env, importCommitBody);
+        return jsonResponse(importCommit, corsHeaders);
       }
 
       var ownerCustomerPatchMatch = url.pathname.match(/^\/api\/owner\/customers\/([^/]+)$/);

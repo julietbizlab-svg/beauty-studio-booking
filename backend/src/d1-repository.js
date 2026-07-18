@@ -1515,3 +1515,10 @@ export async function getOwnerCustomerBookings(env, userId) {
     bookings: dtos.map(bookingDtoToOwnerDto)
   };
 }
+
+// ── 客戶 CSV 匯入（實作在 d1-customer-import.js，經此 re-export
+//    讓 data-repository selector 視為 D1 repository 的一部分） ──
+export {
+  previewCustomerImport,
+  commitCustomerImport
+} from "./d1-customer-import.js";

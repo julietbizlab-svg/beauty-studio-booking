@@ -226,7 +226,7 @@ test("wrapper dispatch：tenant ID 只出現在 bind，不拼進 SQL", async fun
   assert.ok(!call.sql.includes(TENANT), "tenant ID 不得拼接進 SQL");
 });
 
-test("selector export index.js 使用的全部 21 個 wrapper 與 ensureDataEnv", function () {
+test("selector export index.js 使用的全部 23 個 wrapper 與 ensureDataEnv", function () {
   var expectedWrappers = [
     "listServices",
     "createService",
@@ -248,9 +248,11 @@ test("selector export index.js 使用的全部 21 個 wrapper 與 ensureDataEnv"
     "getServiceById",
     "getServiceDurationMap",
     "getCustomerProfileByUserId",
-    "updateCustomerByOwner"
+    "updateCustomerByOwner",
+    "previewCustomerImport",
+    "commitCustomerImport"
   ];
-  assert.equal(expectedWrappers.length, 21);
+  assert.equal(expectedWrappers.length, 23);
 
   expectedWrappers.forEach(function (name) {
     assert.equal(
@@ -267,7 +269,9 @@ test("customer profile wrapper：notion 後端 fail closed 回 501，不碰任�
   var env = fullNotionEnv();
   var wrapperCalls = [
     function () { return dataRepository.getCustomerProfileByUserId(env, "U-x"); },
-    function () { return dataRepository.updateCustomerByOwner(env, "U-x", { customerName: "甲", phone: "0912345678" }); }
+    function () { return dataRepository.updateCustomerByOwner(env, "U-x", { customerName: "甲", phone: "0912345678" }); },
+    function () { return dataRepository.previewCustomerImport(env, { csvText: "姓名\n王小美\n" }); },
+    function () { return dataRepository.commitCustomerImport(env, { csvText: "姓名\n王小美\n", canonicalHash: "a".repeat(64) }); }
   ];
   for (var i = 0; i < wrapperCalls.length; i++) {
     await assert.rejects(

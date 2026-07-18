@@ -138,3 +138,13 @@ export function getCustomerProfileByUserId(env, userId) {
 export function updateCustomerByOwner(env, userId, patch) {
   return requireRepositoryFunction(env, "updateCustomerByOwner")(env, userId, patch);
 }
+
+// ── 客戶 CSV 匯入（僅 D1 支援；Notion 後端 fail closed） ────────
+
+export function previewCustomerImport(env, payload) {
+  return requireRepositoryFunction(env, "previewCustomerImport")(env, payload);
+}
+
+export function commitCustomerImport(env, payload) {
+  return requireRepositoryFunction(env, "commitCustomerImport")(env, payload);
+}
