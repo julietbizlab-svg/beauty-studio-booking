@@ -16,7 +16,11 @@ import {
   getSettings,
   updateSettings,
   listWeeklySlots,
-  replaceWeeklySlots
+  replaceWeeklySlots,
+  getActiveBookingsForMonth,
+  getActiveBookingsByDate,
+  getActiveBookingsByUser,
+  getUserBookings
 } from "../src/d1-repository.js";
 
 var TENANT = "tenant-test-001";
@@ -564,5 +568,177 @@ test("status 開放／關閉／未提供 正確轉成 1／0／1", async function
   assert.deepEqual(
     result.map(function (r) { return r.status; }),
     ["開放", "關閉", "開放"]
+  );
+});
+
+// ── bookings 唯讀查詢 ────────────────────────────────────────
+
+function bookingRow(overrides) {
+  return Object.assign({
+    id: "bk-1",
+    booking_no: "BK-0001",
+    start_at: "2026-07-17T16:30:00.000Z",
+    status: "confirmed",
+    cancellation_reason_code: null,
+    cancellation_note: null,
+    cancelled_at: null,
+    created_at: "2026-07-10T01:00:00.000Z",
+    display_name: "測試客",
+    mobile: "0912345678",
+    birthday: "1990-01-01",
+    line_user_id: "U-test-user",
+    service_id: "svc-1",
+    service_name_snapshot: "基礎護理"
+  }, overrides || {});
+}
+
+test("getActiveBookingsForMonth 拒絕非法 month", async function () {
+  var db = makeFakeDb();
+  var badMonths = ["2026-00", "2026-13", "2026-7"];
+  for (var i = 0; i < badMonths.length; i++) {
+    await assert.rejects(
+      getActiveBookingsForMonth(makeEnv(db), badMonths[i]),
+      /month 格式錯誤/
+    );
+  }
+  assert.equal(db.calls.length, 0);
+});
+
+test("getActiveBookingsForMonth 2026-07 的 UTC 邊界對應台北 7/1～8/1 00:00", async function () {
+  var db = makeFakeDb(function () { return []; });
+  await getActiveBookingsForMonth(makeEnv(db), "2026-07");
+
+  var call = db.calls[0];
+  assert.equal(call.binds[0], TENANT);
+  assert.equal(call.binds[1], "2026-06-30T16:00:00.000Z");
+  assert.equal(call.binds[2], "2026-07-31T16:00:00.000Z");
+  assert.match(call.sql, /b\.start_at >= \?2 AND b\.start_at < \?3/);
+});
+
+test("getActiveBookingsForMonth 限制 tenant_id 與 active statuses，range 相容", async function () {
+  var db = makeFakeDb(function () { return []; });
+  var result = await getActiveBookingsForMonth(makeEnv(db), "2026-07");
+
+  var call = db.calls[0];
+  assert.match(call.sql, /b\.tenant_id = \?1/);
+  assert.match(call.sql, /b\.status IN \('pending', 'confirmed', 'checked_in'\)/);
+
+  assert.deepEqual(result.range, {
+    month: "2026-07",
+    start: "2026-07-01",
+    end: "2026-07-31"
+  });
+  assert.deepEqual(result.bookings, []);
+});
+
+test("getActiveBookingsByDate 拒絕不存在的日期、接受閏年 2024-02-29", async function () {
+  var db = makeFakeDb(function () { return []; });
+  var badDates = ["2026-02-29", "2026-02-30", "2026-04-31"];
+  for (var i = 0; i < badDates.length; i++) {
+    await assert.rejects(
+      getActiveBookingsByDate(makeEnv(db), badDates[i]),
+      /date 格式錯誤/
+    );
+  }
+  assert.equal(db.calls.length, 0);
+
+  var bookings = await getActiveBookingsByDate(makeEnv(db), "2024-02-29");
+  assert.deepEqual(bookings, []);
+  assert.equal(db.calls.length, 1);
+});
+
+test("getActiveBookingsByDate 的 UTC 範圍正好涵蓋台北該日 24 小時", async function () {
+  var db = makeFakeDb(function () { return []; });
+  await getActiveBookingsByDate(makeEnv(db), "2026-07-18");
+
+  var call = db.calls[0];
+  assert.equal(call.binds[0], TENANT);
+  assert.equal(call.binds[1], "2026-07-17T16:00:00.000Z");
+  assert.equal(call.binds[2], "2026-07-18T16:00:00.000Z");
+  var spanMs = new Date(call.binds[2]).getTime() - new Date(call.binds[1]).getTime();
+  assert.equal(spanMs, 24 * 60 * 60 * 1000);
+  assert.match(call.sql, /b\.start_at >= \?2 AND b\.start_at < \?3/);
+});
+
+test("DTO 時區：UTC 16:30 輸出台北隔日 00:30，cancelled_at 轉台北日期", async function () {
+  var db = makeFakeDb(function (sql, binds, method) {
+    if (method === "all") {
+      return [bookingRow({
+        status: "cancelled_by_customer",
+        start_at: "2026-07-17T16:30:00.000Z",
+        cancelled_at: "2026-07-17T16:30:00.000Z",
+        cancellation_note: "客人自行取消"
+      })];
+    }
+    return null;
+  });
+
+  var bookings = await getUserBookings(makeEnv(db), "U-test-user");
+  var dto = bookings[0];
+
+  assert.equal(dto.date, "2026-07-18");
+  assert.equal(dto.time, "00:30");
+  assert.equal(dto.canceledAt, "2026-07-18");
+  assert.equal(dto.cancelReason, "客人自行取消");
+});
+
+test("狀態轉換：四種 active/completed 皆為已確認；兩種取消對應客人／業主", async function () {
+  var rows = [
+    bookingRow({ id: "b1", status: "pending" }),
+    bookingRow({ id: "b2", status: "confirmed" }),
+    bookingRow({ id: "b3", status: "checked_in" }),
+    bookingRow({ id: "b4", status: "completed" }),
+    bookingRow({ id: "b5", status: "cancelled_by_customer", cancelled_at: "2026-07-01T02:00:00.000Z" }),
+    bookingRow({ id: "b6", status: "cancelled_by_store", cancelled_at: "2026-07-01T02:00:00.000Z" })
+  ];
+  var db = makeFakeDb(function (sql, binds, method) {
+    return method === "all" ? rows : null;
+  });
+
+  var bookings = await getUserBookings(makeEnv(db), "U-test-user");
+
+  assert.deepEqual(
+    bookings.map(function (b) { return b.status; }),
+    ["已確認", "已確認", "已確認", "已確認", "已取消", "已取消"]
+  );
+  assert.deepEqual(
+    bookings.map(function (b) { return b.canceledBy; }),
+    ["", "", "", "", "客人", "業主"]
+  );
+});
+
+test("user 查詢透過 line_accounts.line_user_id，userId 與 tenant 都走 bind", async function () {
+  var db = makeFakeDb(function () { return []; });
+  await getActiveBookingsByUser(makeEnv(db), "U-test-user");
+
+  var call = db.calls[0];
+  assert.match(call.sql, /la\.line_user_id = \?2/);
+  assert.deepEqual(call.binds, [TENANT, "U-test-user"]);
+  assert.ok(
+    !/b\.customer_id = \?/.test(call.sql),
+    "userId 不得綁成 customer_id 條件"
+  );
+  assert.ok(!call.sql.includes("U-test-user"), "userId 不得拼接進 SQL");
+});
+
+test("bookings SQL 以 booking_items sort_order 最前一筆子查詢取服務", async function () {
+  var db = makeFakeDb(function () { return []; });
+  await getActiveBookingsByDate(makeEnv(db), "2026-07-18");
+
+  var sql = db.calls[0].sql;
+  assert.match(sql, /SELECT bi2\.id FROM booking_items bi2/);
+  assert.match(sql, /ORDER BY bi2\.sort_order ASC, bi2\.created_at ASC LIMIT 1/);
+});
+
+test("getUserBookings 排除 rescheduled／no_show，已確認在前、已取消在後", async function () {
+  var db = makeFakeDb(function () { return []; });
+  await getUserBookings(makeEnv(db), "U-test-user");
+
+  var sql = db.calls[0].sql;
+  assert.ok(!sql.includes("rescheduled"), "查詢不得包含 rescheduled");
+  assert.ok(!sql.includes("no_show"), "查詢不得包含 no_show");
+  assert.match(
+    sql,
+    /ORDER BY CASE WHEN b\.status IN \('pending', 'confirmed', 'checked_in'\) OR b\.status = 'completed' THEN 0 ELSE 1 END ASC, b\.start_at DESC/
   );
 });
