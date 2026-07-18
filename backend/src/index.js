@@ -2,7 +2,8 @@
  * 美業工作室 — Cloudflare Workers API
  */
 import {
-  ensureNotionEnv,
+  ensureDataEnv,
+  getDataBackendName,
   listServices,
   createService,
   updateService,
@@ -22,7 +23,7 @@ import {
   updateSettings,
   getServiceById,
   getServiceDurationMap
-} from "./notion.js";
+} from "./data-repository.js";
 import { requireOwnerFromRequest } from "./owner-auth.js";
 import {
   weekdayLabelFromIndex,
@@ -54,24 +55,25 @@ export default {
         return jsonResponse({
           ok: true,
           studio: env.STUDIO_NAME || "美業工作室",
-          notion: Boolean(env.NOTION_TOKEN)
+          notion: Boolean(env.NOTION_TOKEN),
+          dataBackend: getDataBackendName(env)
         }, corsHeaders);
       }
 
       if (url.pathname === "/api/settings" && request.method === "GET") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         var settings = await getSettings(env);
         return jsonResponse(settings, corsHeaders);
       }
 
       if (url.pathname === "/api/services" && request.method === "GET") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         var services = await listServices(env, true);
         return jsonResponse(services, corsHeaders);
       }
 
       if (url.pathname === "/api/slots/month" && request.method === "GET") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         var monthParam = url.searchParams.get("month");
         var monthServiceId = url.searchParams.get("serviceId");
 
@@ -130,7 +132,7 @@ export default {
       }
 
       if (url.pathname === "/api/slots" && request.method === "GET") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         var date = url.searchParams.get("date");
         var serviceId = url.searchParams.get("serviceId");
 
@@ -197,14 +199,14 @@ export default {
       }
 
       if (url.pathname === "/api/bookings" && request.method === "POST") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         var bookBody = await readJson(request);
         var bookResult = await createBooking(env, bookBody);
         return jsonResponse(bookResult, corsHeaders);
       }
 
       if (url.pathname === "/api/bookings/me" && request.method === "GET") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         var meUserId = url.searchParams.get("userId");
         if (!meUserId) {
           return jsonResponse({ ok: false, message: "缺少 userId" }, corsHeaders, 400);
@@ -214,14 +216,14 @@ export default {
       }
 
       if (url.pathname === "/api/bookings/cancel" && request.method === "POST") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         var cancelBody = await readJson(request);
         var cancelResult = await cancelBooking(env, cancelBody.userId, cancelBody.bookingId);
         return jsonResponse(cancelResult, corsHeaders);
       }
 
       if (url.pathname === "/api/owner/bookings/cancel" && request.method === "POST") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         await requireOwnerFromRequest(request, env);
         var ownerCancelBody = await readJson(request);
         var ownerCancelResult = await cancelBookingByOwner(
@@ -233,7 +235,7 @@ export default {
       }
 
       if (url.pathname === "/api/owner/bookings/month" && request.method === "GET") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         await requireOwnerFromRequest(request, env);
 
         var month = url.searchParams.get("month");
@@ -245,7 +247,7 @@ export default {
       }
 
       if (url.pathname === "/api/owner/today" && request.method === "GET") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         await requireOwnerFromRequest(request, env);
 
         var targetDate = url.searchParams.get("date") || getTaipeiDateString();
@@ -257,14 +259,14 @@ export default {
       }
 
       if (url.pathname === "/api/owner/services" && request.method === "GET") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         await requireOwnerFromRequest(request, env);
         var allServices = await listServices(env, false);
         return jsonResponse(allServices, corsHeaders);
       }
 
       if (url.pathname === "/api/owner/services" && request.method === "POST") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         var ownerCreateBody = await readJson(request);
         await requireOwnerFromRequest(request, env);
         var newService = await createService(env, ownerCreateBody);
@@ -273,7 +275,7 @@ export default {
 
       var servicePatchMatch = url.pathname.match(/^\/api\/owner\/services\/([^/]+)$/);
       if (servicePatchMatch && request.method === "PATCH") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         var ownerPatchBody = await readJson(request);
         await requireOwnerFromRequest(request, env);
         var patched = await updateService(env, servicePatchMatch[1], ownerPatchBody);
@@ -281,14 +283,14 @@ export default {
       }
 
       if (url.pathname === "/api/owner/slots" && request.method === "GET") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         await requireOwnerFromRequest(request, env);
         var currentSlots = await listWeeklySlots(env);
         return jsonResponse(currentSlots, corsHeaders);
       }
 
       if (url.pathname === "/api/owner/slots" && request.method === "POST") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         var slotsBody = await readJson(request);
         await requireOwnerFromRequest(request, env);
         var savedSlots = await replaceWeeklySlots(env, slotsBody.slots || []);
@@ -296,14 +298,14 @@ export default {
       }
 
       if (url.pathname === "/api/owner/settings" && request.method === "GET") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         await requireOwnerFromRequest(request, env);
         var ownerSettings = await getSettings(env);
         return jsonResponse(ownerSettings, corsHeaders);
       }
 
       if (url.pathname === "/api/owner/settings" && request.method === "PATCH") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         var settingsBody = await readJson(request);
         await requireOwnerFromRequest(request, env);
         var updatedSettings = await updateSettings(env, settingsBody);
@@ -311,7 +313,7 @@ export default {
       }
 
       if (url.pathname === "/api/owner/customers" && request.method === "GET") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         await requireOwnerFromRequest(request, env);
         var customerQuery = url.searchParams.get("q") || "";
         var customerList = await getOwnerCustomersFromBookings(env, customerQuery);
@@ -319,7 +321,7 @@ export default {
       }
 
       if (url.pathname === "/api/owner/customer-bookings" && request.method === "GET") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         await requireOwnerFromRequest(request, env);
         var customerUserId = url.searchParams.get("userId");
         if (!customerUserId) {
