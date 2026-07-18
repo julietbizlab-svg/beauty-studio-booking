@@ -542,3 +542,230 @@ export async function replaceWeeklySlots(env, slots) {
     });
   });
 }
+
+// ─────────────────────── bookings（唯讀查詢） ────────────────────────────
+//
+// 對應資料表：bookings、booking_items（0002_bookings.sql）、
+// customers、line_accounts（0001_init_core.sql）。
+// 只提供客戶端查詢；不含 createBooking／cancelBooking／owner 函式。
+//
+// 狀態轉換（D1 → 現有 API）：
+// - pending / confirmed / checked_in / completed →「已確認」
+// - cancelled_by_customer →「已取消」＋ canceledBy「客人」
+// - cancelled_by_store   →「已取消」＋ canceledBy「業主」
+// - rescheduled / no_show 不屬於 active，也不出現在客戶查詢
+//
+// 時間規則：start_at／cancelled_at 以 UTC ISO 儲存；輸出 date／time／
+// canceledAt 一律轉 Asia/Taipei；月／日查詢先把台北日界換算成 UTC 範圍
+// 再比對 start_at，不假設 UTC 日期等於台北日期。
+
+/** active＝可占用時段的狀態（completed 已結束、rescheduled/no_show 不算） */
+var BOOKING_ACTIVE_STATUSES = "('pending', 'confirmed', 'checked_in')";
+
+/** 客戶查詢會出現的全部狀態（排除 rescheduled／no_show） */
+var BOOKING_VISIBLE_STATUSES =
+  "('pending', 'confirmed', 'checked_in', 'completed', " +
+  "'cancelled_by_customer', 'cancelled_by_store')";
+
+var BOOKING_STATUS_TO_API = {
+  pending: "已確認",
+  confirmed: "已確認",
+  checked_in: "已確認",
+  completed: "已確認",
+  cancelled_by_customer: "已取消",
+  cancelled_by_store: "已取消"
+};
+
+var BOOKING_CANCELED_BY = {
+  cancelled_by_customer: "客人",
+  cancelled_by_store: "業主"
+};
+
+/** 台北日期（YYYY-MM-DD）00:00 → UTC ISO 字串（Asia/Taipei 固定 +08:00） */
+function taipeiDateToUtcIso(dateStr) {
+  var parsed = new Date(dateStr + "T00:00:00+08:00");
+  if (isNaN(parsed.getTime())) {
+    throw makeError("date 格式錯誤，請使用 YYYY-MM-DD", 400);
+  }
+  return parsed.toISOString();
+}
+
+function utcIsoToTaipeiDate(isoString) {
+  if (!isoString) return "";
+  var parsed = new Date(isoString);
+  if (isNaN(parsed.getTime())) return "";
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Taipei",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(parsed);
+}
+
+function utcIsoToTaipeiTime(isoString) {
+  if (!isoString) return "";
+  var parsed = new Date(isoString);
+  if (isNaN(parsed.getTime())) return "";
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Taipei",
+    hourCycle: "h23",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(parsed);
+}
+
+/** 與 notion.js 的 parseMonthParam 相同的驗證與台北月份範圍 */
+function parseBookingMonthParam(month) {
+  if (!month || !/^\d{4}-\d{2}$/.test(month)) {
+    throw makeError("month 格式錯誤，請使用 YYYY-MM", 400);
+  }
+  var parts = String(month).split("-");
+  var year = Number(parts[0]);
+  var monthNum = Number(parts[1]);
+  if (monthNum < 1 || monthNum > 12) {
+    throw makeError("month 格式錯誤，請使用 YYYY-MM", 400);
+  }
+  var start = month + "-01";
+  var lastDay = new Date(year, monthNum, 0).getDate();
+  var end = month + "-" + String(lastDay).padStart(2, "0");
+  var nextMonthFirst = monthNum === 12
+    ? (year + 1) + "-01-01"
+    : year + "-" + String(monthNum + 1).padStart(2, "0") + "-01";
+  return { month: month, start: start, end: end, nextMonthFirst: nextMonthFirst };
+}
+
+function validateBookingDateParam(date) {
+  var value = String(date || "");
+  var match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) {
+    throw makeError("date 格式錯誤，請使用 YYYY-MM-DD", 400);
+  }
+
+  var year = Number(match[1]);
+  var month = Number(match[2]);
+  var day = Number(match[3]);
+
+  // round-trip 驗證：Date 對 2026-02-30 這類輸入會自動進位成 03-02，
+  // 反查年月日不一致即表示原始日期不存在
+  var parsed = new Date(Date.UTC(year, month - 1, day));
+  if (
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day
+  ) {
+    throw makeError("date 格式錯誤，請使用 YYYY-MM-DD", 400);
+  }
+
+  return value;
+}
+
+/**
+ * 共用 SELECT：bookings JOIN customers／line_accounts，
+ * 服務資訊取 booking_items 中 sort_order 最前的一筆（單服務 DTO 相容）。
+ */
+var BOOKING_SELECT_SQL =
+  "SELECT b.id, b.booking_no, b.start_at, b.status, " +
+  "b.cancellation_reason_code, b.cancellation_note, b.cancelled_at, b.created_at, " +
+  "c.display_name, c.mobile, c.birthday, " +
+  "la.line_user_id, " +
+  "bi.service_id, bi.service_name_snapshot " +
+  "FROM bookings b " +
+  "JOIN customers c ON c.tenant_id = b.tenant_id AND c.id = b.customer_id " +
+  "LEFT JOIN line_accounts la ON la.tenant_id = b.tenant_id AND la.customer_id = b.customer_id " +
+  "LEFT JOIN booking_items bi ON bi.id = (" +
+  "SELECT bi2.id FROM booking_items bi2 " +
+  "WHERE bi2.tenant_id = b.tenant_id AND bi2.booking_id = b.id " +
+  "ORDER BY bi2.sort_order ASC, bi2.created_at ASC LIMIT 1" +
+  ") ";
+
+function bookingRowToDto(row) {
+  return {
+    id: row.id,
+    title: row.booking_no || "",
+    userId: row.line_user_id || "",
+    customerName: row.display_name || "",
+    phone: row.mobile || "",
+    birthday: row.birthday || "",
+    serviceId: row.service_id || "",
+    serviceName: row.service_name_snapshot || "",
+    date: utcIsoToTaipeiDate(row.start_at),
+    time: utcIsoToTaipeiTime(row.start_at),
+    status: BOOKING_STATUS_TO_API[row.status] || "已取消",
+    cancelReason: row.cancellation_note || row.cancellation_reason_code || "",
+    canceledBy: BOOKING_CANCELED_BY[row.status] || "",
+    canceledAt: utcIsoToTaipeiDate(row.cancelled_at),
+    createdAt: row.created_at || ""
+  };
+}
+
+export async function getActiveBookingsForMonth(env, month) {
+  ensureD1Env(env);
+  var range = parseBookingMonthParam(month);
+  var startUtc = taipeiDateToUtcIso(range.start);
+  var endUtc = taipeiDateToUtcIso(range.nextMonthFirst);
+
+  var result = await env.DB.prepare(
+    BOOKING_SELECT_SQL +
+    "WHERE b.tenant_id = ?1 AND b.status IN " + BOOKING_ACTIVE_STATUSES + " " +
+    "AND b.start_at >= ?2 AND b.start_at < ?3 " +
+    "ORDER BY b.start_at ASC"
+  ).bind(env.TENANT_ID, startUtc, endUtc).all();
+
+  return {
+    range: { month: range.month, start: range.start, end: range.end },
+    bookings: (result.results || []).map(bookingRowToDto)
+  };
+}
+
+export async function getActiveBookingsByDate(env, date) {
+  ensureD1Env(env);
+  var day = validateBookingDateParam(date);
+  var startUtc = taipeiDateToUtcIso(day);
+  var endUtc = new Date(new Date(startUtc).getTime() + 24 * 60 * 60 * 1000).toISOString();
+
+  var result = await env.DB.prepare(
+    BOOKING_SELECT_SQL +
+    "WHERE b.tenant_id = ?1 AND b.status IN " + BOOKING_ACTIVE_STATUSES + " " +
+    "AND b.start_at >= ?2 AND b.start_at < ?3 " +
+    "ORDER BY b.start_at ASC"
+  ).bind(env.TENANT_ID, startUtc, endUtc).all();
+
+  return (result.results || []).map(bookingRowToDto);
+}
+
+export async function getActiveBookingsByUser(env, userId) {
+  ensureD1Env(env);
+  if (!userId) {
+    throw makeError("缺少 userId", 400);
+  }
+
+  var result = await env.DB.prepare(
+    BOOKING_SELECT_SQL +
+    "WHERE b.tenant_id = ?1 AND la.line_user_id = ?2 " +
+    "AND b.status IN " + BOOKING_ACTIVE_STATUSES + " " +
+    "ORDER BY b.start_at ASC"
+  ).bind(env.TENANT_ID, String(userId)).all();
+
+  return (result.results || []).map(bookingRowToDto);
+}
+
+/**
+ * 我的預約：已確認（含 completed）在前、已取消在後，
+ * 各組依預約時間新到舊排序（與現有 API 的日期遞減一致）。
+ */
+export async function getUserBookings(env, userId) {
+  ensureD1Env(env);
+  if (!userId) {
+    throw makeError("缺少 userId", 400);
+  }
+
+  var result = await env.DB.prepare(
+    BOOKING_SELECT_SQL +
+    "WHERE b.tenant_id = ?1 AND la.line_user_id = ?2 " +
+    "AND b.status IN " + BOOKING_VISIBLE_STATUSES + " " +
+    "ORDER BY CASE WHEN b.status IN " + BOOKING_ACTIVE_STATUSES + " OR b.status = 'completed' " +
+    "THEN 0 ELSE 1 END ASC, b.start_at DESC"
+  ).bind(env.TENANT_ID, String(userId)).all();
+
+  return (result.results || []).map(bookingRowToDto);
+}
