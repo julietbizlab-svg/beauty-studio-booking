@@ -26,7 +26,9 @@ import {
   cancelBooking,
   cancelBookingByOwner,
   getTodayBookingsForOwner,
-  getOwnerBookingsForMonth
+  getOwnerBookingsForMonth,
+  getOwnerCustomersFromBookings,
+  getOwnerCustomerBookings
 } from "../src/d1-repository.js";
 
 var TENANT = "tenant-test-001";
@@ -1678,4 +1680,348 @@ test("getOwnerBookingsForMonth 空結果回傳 days:{}", async function () {
   var db = makeFakeDb(function () { return []; });
   var result = await getOwnerBookingsForMonth(makeEnv(db), "2026-07");
   assert.deepEqual(result, { ok: true, month: "2026-07", days: {} });
+});
+
+// ── getOwnerCustomersFromBookings（業主客戶目錄） ────────────
+
+function ownerCustomerRow(overrides) {
+  return Object.assign({
+    line_user_id: "U-owner-cust",
+    display_name: "測試客",
+    mobile: "0912345678",
+    birthday: "1990-01-01",
+    last_start_at: "2026-07-17T16:30:00.000Z",
+    booking_count: 3
+  }, overrides || {});
+}
+
+test("getOwnerCustomersFromBookings 空結果回傳 { ok: true, customers: [] }", async function () {
+  var db = makeFakeDb(function () { return []; });
+  var result = await getOwnerCustomersFromBookings(makeEnv(db));
+  assert.deepEqual(result, { ok: true, customers: [] });
+});
+
+test("getOwnerCustomersFromBookings JOIN 三表且每個 JOIN 都含 tenant 條件", async function () {
+  var db = makeFakeDb(function () { return []; });
+  await getOwnerCustomersFromBookings(makeEnv(db));
+
+  var call = db.calls[0];
+  assert.match(call.sql, /FROM bookings b/);
+  assert.match(
+    call.sql,
+    /JOIN customers c ON c\.tenant_id = b\.tenant_id AND c\.id = b\.customer_id/
+  );
+  assert.match(
+    call.sql,
+    /JOIN line_accounts la ON la\.tenant_id = b\.tenant_id AND la\.customer_id = b\.customer_id/
+  );
+  assert.match(call.sql, /WHERE b\.tenant_id = \?1/);
+  assert.equal(call.binds[0], TENANT);
+});
+
+test("getOwnerCustomersFromBookings 只含六種可見狀態，排除 no_show／rescheduled", async function () {
+  var db = makeFakeDb(function () { return []; });
+  await getOwnerCustomersFromBookings(makeEnv(db));
+
+  var sql = db.calls[0].sql;
+  assert.ok(sql.includes("b.status IN " + VISIBLE_STATUS_LIST));
+  assert.ok(!sql.includes("no_show"), "查詢不得包含 no_show");
+  assert.ok(!sql.includes("rescheduled"), "查詢不得包含 rescheduled");
+});
+
+test("getOwnerCustomersFromBookings 不 JOIN booking_items，bookingCount 不重複計算", async function () {
+  var db = makeFakeDb(function () { return []; });
+  await getOwnerCustomersFromBookings(makeEnv(db));
+
+  var sql = db.calls[0].sql;
+  assert.ok(!sql.includes("booking_items"), "彙總查詢不得 JOIN booking_items");
+});
+
+test("getOwnerCustomersFromBookings 的 booking_count 正確轉成 Number", async function () {
+  var db = makeFakeDb(function (sql, binds, method) {
+    if (method === "all") {
+      return [ownerCustomerRow({ booking_count: "5" })];
+    }
+    return null;
+  });
+
+  var result = await getOwnerCustomersFromBookings(makeEnv(db));
+  assert.equal(typeof result.customers[0].bookingCount, "number");
+  assert.equal(result.customers[0].bookingCount, 5);
+});
+
+test("getOwnerCustomersFromBookings 的 last_start_at 轉 Asia/Taipei 日期（跨 UTC 日界）", async function () {
+  var db = makeFakeDb(function (sql, binds, method) {
+    if (method === "all") {
+      // UTC 7/17 16:30 → 台北 7/18 00:30
+      return [ownerCustomerRow({ last_start_at: "2026-07-17T16:30:00.000Z" })];
+    }
+    return null;
+  });
+
+  var result = await getOwnerCustomersFromBookings(makeEnv(db));
+  assert.equal(result.customers[0].lastBookingDate, "2026-07-18");
+});
+
+test("getOwnerCustomersFromBookings 的 customerName／phone／birthday 使用 customers 資料", async function () {
+  var db = makeFakeDb(function (sql, binds, method) {
+    if (method === "all") {
+      return [ownerCustomerRow({
+        display_name: "王小美",
+        mobile: "0987654321",
+        birthday: "1995-05-05"
+      })];
+    }
+    return null;
+  });
+
+  var result = await getOwnerCustomersFromBookings(makeEnv(db));
+  var customer = result.customers[0];
+  assert.equal(customer.userId, "U-owner-cust");
+  assert.equal(customer.customerName, "王小美");
+  assert.equal(customer.phone, "0987654321");
+  assert.equal(customer.birthday, "1995-05-05");
+});
+
+test("getOwnerCustomersFromBookings 的 queryText trim 後走 bind，不拼接進 SQL", async function () {
+  var db = makeFakeDb(function () { return []; });
+  await getOwnerCustomersFromBookings(makeEnv(db), "  小美  ");
+
+  var call = db.calls[0];
+  assert.deepEqual(call.binds, [TENANT, "小美"]);
+  assert.ok(!call.sql.includes("小美"), "查詢字串不得拼接進 SQL");
+});
+
+test("getOwnerCustomersFromBookings 搜尋用 instr 不用 LIKE，% 與 _ 是一般字元走 bind", async function () {
+  var db = makeFakeDb(function () { return []; });
+  await getOwnerCustomersFromBookings(makeEnv(db), "%_");
+
+  var call = db.calls[0];
+  assert.match(call.sql, /instr\(lower\(c\.display_name\), lower\(\?2\)\) > 0/);
+  assert.match(call.sql, /instr\(lower\(COALESCE\(c\.mobile, ''\)\), lower\(\?2\)\) > 0/);
+  assert.ok(!/\bLIKE\b/i.test(call.sql), "搜尋不得使用 LIKE");
+  assert.equal(call.binds[1], "%_", "萬用字元須原樣走 bind，不轉義、不拼接");
+  assert.ok(!call.sql.includes("%_"), "查詢字串不得拼接進 SQL");
+});
+
+test("getOwnerCustomersFromBookings 空 query 不加搜尋 SQL、只有一個 bind", async function () {
+  var emptyQueries = [undefined, "", "   "];
+  for (var i = 0; i < emptyQueries.length; i++) {
+    var db = makeFakeDb(function () { return []; });
+    await getOwnerCustomersFromBookings(makeEnv(db), emptyQueries[i]);
+
+    var call = db.calls[0];
+    assert.deepEqual(call.binds, [TENANT], "空 query 只能 bind TENANT_ID");
+    assert.ok(!call.sql.includes("instr"), "空 query 不得加入搜尋條件");
+    assert.ok(!call.sql.includes("?2"), "空 query 不得出現第二個佔位符");
+  }
+});
+
+test("getOwnerCustomersFromBookings 排序：日期新到舊，同日依 customerName zh-Hant", async function () {
+  // 乙（1 畫）與 丁（2 畫）：zh-Hant 筆畫排序與 Unicode 碼位順序相反，
+  // 可驗證確實使用 localeCompare(..., "zh-Hant") 而非預設字串比較
+  var db = makeFakeDb(function (sql, binds, method) {
+    if (method === "all") {
+      return [
+        ownerCustomerRow({
+          line_user_id: "U-old",
+          display_name: "王小明",
+          last_start_at: "2026-07-15T02:00:00.000Z"
+        }),
+        ownerCustomerRow({
+          line_user_id: "U-new-b",
+          display_name: "丁",
+          last_start_at: "2026-07-18T02:00:00.000Z"
+        }),
+        ownerCustomerRow({
+          line_user_id: "U-new-a",
+          display_name: "乙",
+          last_start_at: "2026-07-17T16:30:00.000Z"
+        })
+      ];
+    }
+    return null;
+  });
+
+  var result = await getOwnerCustomersFromBookings(makeEnv(db));
+
+  assert.deepEqual(
+    result.customers.map(function (c) { return c.lastBookingDate; }),
+    ["2026-07-18", "2026-07-18", "2026-07-15"],
+    "lastBookingDate 應為台北日期且新到舊"
+  );
+
+  var sameDayExpected = ["丁", "乙"].sort(function (a, b) {
+    return a.localeCompare(b, "zh-Hant");
+  });
+  assert.deepEqual(
+    result.customers.slice(0, 2).map(function (c) { return c.customerName; }),
+    sameDayExpected,
+    "同日應依 customerName 的 zh-Hant 排序"
+  );
+  assert.equal(result.customers[2].customerName, "王小明");
+});
+
+// ── getOwnerCustomerBookings（業主客戶歷史） ─────────────────
+
+var OWNER_DTO_KEYS = [
+  "birthday", "cancelReason", "canceledAt", "canceledBy",
+  "customerName", "date", "id", "phone", "serviceName",
+  "status", "time"
+];
+
+test("getOwnerCustomerBookings 缺或空白 userId 回 400 且不查 DB", async function () {
+  var db = makeFakeDb(function () { return []; });
+  var badIds = [undefined, null, "", "   "];
+  for (var i = 0; i < badIds.length; i++) {
+    await assert.rejects(
+      getOwnerCustomerBookings(makeEnv(db), badIds[i]),
+      function (error) {
+        assert.equal(error.status, 400);
+        assert.match(error.message, /userId/);
+        return true;
+      }
+    );
+  }
+  assert.equal(db.calls.length, 0, "驗證失敗不得觸發任何 SQL");
+});
+
+test("getOwnerCustomerBookings 透過 la.line_user_id 定位，userId 不當 customer_id", async function () {
+  var db = makeFakeDb(function () { return []; });
+  await getOwnerCustomerBookings(makeEnv(db), "U-owner-query");
+
+  var sql = db.calls[0].sql;
+  assert.match(sql, /la\.line_user_id = \?2/);
+  assert.ok(
+    !/b\.customer_id = \?/.test(sql),
+    "userId 不得綁成 customer_id 條件"
+  );
+});
+
+test("getOwnerCustomerBookings 的 TENANT_ID 與 userId 都走 bind，不拼接 SQL", async function () {
+  var db = makeFakeDb(function () { return []; });
+  await getOwnerCustomerBookings(makeEnv(db), "  U-owner-query  ");
+
+  var call = db.calls[0];
+  assert.deepEqual(call.binds, [TENANT, "U-owner-query"], "userId 應 trim 後 bind");
+  assert.ok(!call.sql.includes("U-owner-query"), "userId 不得拼接進 SQL");
+  assert.ok(!call.sql.includes(TENANT), "TENANT_ID 不得拼接進 SQL");
+});
+
+test("getOwnerCustomerBookings 只含六種可見狀態，排除 no_show／rescheduled", async function () {
+  var db = makeFakeDb(function () { return []; });
+  await getOwnerCustomerBookings(makeEnv(db), "U-owner-query");
+
+  var sql = db.calls[0].sql;
+  assert.ok(sql.includes("b.status IN " + VISIBLE_STATUS_LIST));
+  assert.ok(!sql.includes("no_show"), "查詢不得包含 no_show");
+  assert.ok(!sql.includes("rescheduled"), "查詢不得包含 rescheduled");
+});
+
+test("getOwnerCustomerBookings 排序：已確認（含 completed）在前、已取消在後、各組 start_at DESC", async function () {
+  var db = makeFakeDb(function () { return []; });
+  await getOwnerCustomerBookings(makeEnv(db), "U-owner-query");
+
+  assert.match(
+    db.calls[0].sql,
+    /ORDER BY CASE WHEN b\.status IN \('pending', 'confirmed', 'checked_in'\) OR b\.status = 'completed' THEN 0 ELSE 1 END ASC, b\.start_at DESC/
+  );
+});
+
+test("getOwnerCustomerBookings 空結果回傳相容格式：客戶欄位空字串、bookings:[]", async function () {
+  var db = makeFakeDb(function () { return []; });
+  var result = await getOwnerCustomerBookings(makeEnv(db), "U-owner-query");
+
+  assert.deepEqual(result, {
+    ok: true,
+    userId: "U-owner-query",
+    customerName: "",
+    phone: "",
+    birthday: "",
+    bookings: []
+  });
+});
+
+test("getOwnerCustomerBookings 有資料時回傳 customers 的 customerName／phone／birthday", async function () {
+  var db = makeFakeDb(function (sql, binds, method) {
+    if (method === "all") {
+      return [bookingRow({
+        display_name: "王小美",
+        mobile: "0987654321",
+        birthday: "1995-05-05"
+      })];
+    }
+    return null;
+  });
+
+  var result = await getOwnerCustomerBookings(makeEnv(db), "U-owner-query");
+
+  assert.equal(result.ok, true);
+  assert.equal(result.userId, "U-owner-query");
+  assert.equal(result.customerName, "王小美");
+  assert.equal(result.phone, "0987654321");
+  assert.equal(result.birthday, "1995-05-05");
+});
+
+test("getOwnerCustomerBookings 的 bookings 每筆只含 owner DTO 的 11 個欄位", async function () {
+  var db = makeFakeDb(function (sql, binds, method) {
+    if (method === "all") {
+      return [
+        bookingRow({ id: "b1", status: "confirmed" }),
+        bookingRow({
+          id: "b2", status: "cancelled_by_store",
+          cancelled_at: "2026-07-17T10:00:00.000Z"
+        })
+      ];
+    }
+    return null;
+  });
+
+  var result = await getOwnerCustomerBookings(makeEnv(db), "U-owner-query");
+
+  assert.equal(result.bookings.length, 2);
+  result.bookings.forEach(function (booking) {
+    assert.deepEqual(Object.keys(booking).sort(), OWNER_DTO_KEYS);
+  });
+});
+
+test("getOwnerCustomerBookings 的 confirmed 與兩種取消轉換 status／canceledBy／cancelReason", async function () {
+  var db = makeFakeDb(function (sql, binds, method) {
+    if (method === "all") {
+      return [
+        bookingRow({ id: "b1", status: "confirmed" }),
+        bookingRow({
+          id: "b2", status: "cancelled_by_customer",
+          cancelled_at: "2026-07-17T16:30:00.000Z",
+          cancellation_note: "客人自行取消"
+        }),
+        bookingRow({
+          id: "b3", status: "cancelled_by_store",
+          cancelled_at: "2026-07-17T16:30:00.000Z",
+          cancellation_note: "店家調整"
+        })
+      ];
+    }
+    return null;
+  });
+
+  var result = await getOwnerCustomerBookings(makeEnv(db), "U-owner-query");
+
+  assert.deepEqual(
+    result.bookings.map(function (b) { return b.status; }),
+    ["已確認", "已取消", "已取消"]
+  );
+  assert.deepEqual(
+    result.bookings.map(function (b) { return b.canceledBy; }),
+    ["", "客人", "業主"]
+  );
+  assert.deepEqual(
+    result.bookings.map(function (b) { return b.cancelReason; }),
+    ["", "客人自行取消", "店家調整"]
+  );
+  assert.deepEqual(
+    result.bookings.map(function (b) { return b.canceledAt; }),
+    ["", "2026-07-18", "2026-07-18"],
+    "canceledAt 應轉台北日期"
+  );
 });
