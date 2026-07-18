@@ -1070,3 +1070,147 @@ export async function createBooking(env, payload) {
     }
   };
 }
+
+// ──────────────────────── bookings（取消預約） ───────────────────────────
+//
+// 取消規則：只有 pending／confirmed／checked_in 可取消；
+// completed／no_show／rescheduled 與已取消狀態一律拒絕。
+// batch 順序：先以 INSERT...SELECT 從「目前仍為 active 的 booking」
+// 寫 status log（保留實際 from_status），再做同條件的條件式 UPDATE；
+// 兩者同一交易且共用 active 條件，UPDATE 沒改到列時 log 也必為 0 筆，
+// 不會留下單獨 log。
+
+function assertCancellableStatus(status) {
+  if (status === "cancelled_by_customer" || status === "cancelled_by_store") {
+    throw makeError("此預約已取消");
+  }
+  if (status !== "pending" && status !== "confirmed" && status !== "checked_in") {
+    throw makeError("此預約無法取消");
+  }
+}
+
+export async function cancelBooking(env, userId, bookingId) {
+  ensureD1Env(env);
+  if (!userId) throw makeError("缺少 LINE userId");
+  if (!bookingId) throw makeError("缺少預約編號");
+
+  var existing = await env.DB.prepare(
+    "SELECT b.id, b.status, b.customer_id, la.line_user_id " +
+    "FROM bookings b " +
+    "LEFT JOIN line_accounts la ON la.tenant_id = b.tenant_id AND la.customer_id = b.customer_id " +
+    "WHERE b.tenant_id = ?1 AND b.id = ?2"
+  ).bind(env.TENANT_ID, String(bookingId)).first();
+
+  if (!existing) {
+    throw makeError("找不到此預約", 404);
+  }
+  if (existing.line_user_id !== String(userId)) {
+    throw makeError("無法取消他人的預約", 403);
+  }
+  assertCancellableStatus(existing.status);
+
+  // batch 內再次驗證所有權：log 與 UPDATE 都以 line_accounts
+  // （tenant＋customer_id＋line_user_id，userId 走 bind）重查，
+  // 防止預讀後所有權變動的競態
+  var now = nowIso();
+  var results = await env.DB.batch([
+    env.DB.prepare(
+      "INSERT INTO booking_status_logs " +
+      "(id, tenant_id, booking_id, from_status, to_status, changed_by_type, " +
+      "changed_by_id, reason_code, note, created_at) " +
+      "SELECT ?1, ?2, ?3, b.status, 'cancelled_by_customer', 'customer', ?4, " +
+      "'customer_cancelled', '客人自行取消', ?5 " +
+      "FROM bookings b " +
+      "JOIN line_accounts la ON la.tenant_id = b.tenant_id " +
+      "AND la.customer_id = b.customer_id AND la.line_user_id = ?6 " +
+      "WHERE b.tenant_id = ?2 AND b.id = ?3 " +
+      "AND b.status IN " + BOOKING_ACTIVE_STATUSES
+    ).bind(
+      crypto.randomUUID(),
+      env.TENANT_ID,
+      String(bookingId),
+      existing.customer_id,
+      now,
+      String(userId)
+    ),
+    env.DB.prepare(
+      "UPDATE bookings SET status = 'cancelled_by_customer', " +
+      "cancellation_reason_code = 'customer_cancelled', " +
+      "cancellation_note = '客人自行取消', " +
+      "cancelled_at = ?1, updated_at = ?1 " +
+      "WHERE tenant_id = ?2 AND id = ?3 AND status IN " + BOOKING_ACTIVE_STATUSES + " " +
+      "AND EXISTS (" +
+      "SELECT 1 FROM line_accounts la WHERE la.tenant_id = bookings.tenant_id " +
+      "AND la.customer_id = bookings.customer_id AND la.line_user_id = ?4" +
+      ")"
+    ).bind(now, env.TENANT_ID, String(bookingId), String(userId))
+  ]);
+
+  var updateResult = results && results[1];
+  if (!updateResult || !updateResult.meta || !updateResult.meta.changes) {
+    throw makeError("此預約狀態已變更，無法取消", 400);
+  }
+
+  return {
+    ok: true,
+    message: "已取消預約",
+    bookingId: String(bookingId)
+  };
+}
+
+/**
+ * 業主取消客戶預約（路由層須先經 requireOwnerFromRequest）
+ */
+export async function cancelBookingByOwner(env, bookingId, cancelReason) {
+  ensureD1Env(env);
+  if (!env.STAFF_ID) {
+    throw makeError("缺少 STAFF_ID 設定", 500);
+  }
+  if (!bookingId) throw makeError("缺少預約編號");
+  var reason = String(cancelReason || "").trim();
+  if (!reason) {
+    throw makeError("請填寫取消原因", 400);
+  }
+
+  var existing = await env.DB.prepare(
+    "SELECT id, status FROM bookings WHERE tenant_id = ?1 AND id = ?2"
+  ).bind(env.TENANT_ID, String(bookingId)).first();
+
+  if (!existing) {
+    throw makeError("找不到此預約", 404);
+  }
+  assertCancellableStatus(existing.status);
+
+  var now = nowIso();
+  var results = await env.DB.batch([
+    env.DB.prepare(
+      "INSERT INTO booking_status_logs " +
+      "(id, tenant_id, booking_id, from_status, to_status, changed_by_type, " +
+      "changed_by_id, reason_code, note, created_at) " +
+      "SELECT ?1, ?2, ?3, b.status, 'cancelled_by_store', 'staff', ?4, " +
+      "'store_cancelled', ?5, ?6 " +
+      "FROM bookings b WHERE b.tenant_id = ?2 AND b.id = ?3 " +
+      "AND b.status IN " + BOOKING_ACTIVE_STATUSES
+    ).bind(crypto.randomUUID(), env.TENANT_ID, String(bookingId), env.STAFF_ID, reason, now),
+    env.DB.prepare(
+      "UPDATE bookings SET status = 'cancelled_by_store', " +
+      "cancellation_reason_code = 'store_cancelled', " +
+      "cancellation_note = ?1, " +
+      "cancelled_at = ?2, updated_at = ?2 " +
+      "WHERE tenant_id = ?3 AND id = ?4 AND status IN " + BOOKING_ACTIVE_STATUSES
+    ).bind(reason, now, env.TENANT_ID, String(bookingId))
+  ]);
+
+  var updateResult = results && results[1];
+  if (!updateResult || !updateResult.meta || !updateResult.meta.changes) {
+    throw makeError("此預約狀態已變更，無法取消", 400);
+  }
+
+  return {
+    ok: true,
+    message: "已取消預約",
+    bookingId: String(bookingId),
+    cancelReason: reason,
+    canceledBy: "業主"
+  };
+}
