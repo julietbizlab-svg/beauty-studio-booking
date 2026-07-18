@@ -13,3 +13,19 @@ binding = "DB"
 database_name = "beauty-studio-booking-v2"
 database_id = "58e5f639-221d-4b7e-bc74-27dc83664d43"
 migrations_dir = "migrations"
+
+[env.v2-test]
+name = "beauty-studio-api-v2-test"
+
+[env.v2-test.vars]
+STUDIO_NAME = "美業工作室 v2 測試"
+TENANT_ID = "tenant_beauty_studio_default"
+LOCATION_ID = "location_main"
+STAFF_ID = "staff_owner"
+DATA_BACKEND = "d1"
+
+[[env.v2-test.d1_databases]]
+binding = "DB"
+database_name = "beauty-studio-booking-v2"
+database_id = "58e5f639-221d-4b7e-bc74-27dc83664d43"
+migrations_dir = "migrations"
