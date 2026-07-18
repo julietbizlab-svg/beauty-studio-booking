@@ -10,6 +10,6 @@ STAFF_ID = "staff_owner"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "juliet-ai-db"
-database_id = "4d680020-e5e7-4719-a0fd-fdd53373f895"
+database_name = "beauty-studio-booking-v2"
+database_id = "58e5f639-221d-4b7e-bc74-27dc83664d43"
 migrations_dir = "migrations"
