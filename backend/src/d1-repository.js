@@ -909,3 +909,164 @@ export async function upsertCustomer(env, payload) {
     note: ""
   };
 }
+
+// ──────────────────────── bookings（建立預約） ───────────────────────────
+//
+// 對應資料表：bookings、booking_items、booking_status_logs（0002）。
+// 併發防護：不只靠「先 SELECT 再 INSERT」——bookings 用
+// INSERT ... SELECT ... WHERE NOT EXISTS 在同一條寫入內重查
+// 「同客戶同台北日 active」與「同 staff 時段重疊」；booking_items 與
+// status log 再以 WHERE EXISTS 依附 booking 是否真的插入，
+// 三筆同一個 batch（單一交易），條件不成立時不留任何半套資料。
+
+/** 台北 date＋time（HH:MM）→ UTC ISO */
+function taipeiDateTimeToUtcIso(dateStr, timeStr) {
+  return new Date(dateStr + "T" + timeStr + ":00+08:00").toISOString();
+}
+
+export async function createBooking(env, payload) {
+  ensureD1SlotsEnv(env);
+  var input = payload || {};
+
+  var userId = String(input.userId || "").trim();
+  var customerName = String(input.customerName || input.name || "").trim();
+  var phone = normalizePhoneInput(input.phone);
+  var birthday = input.birthday ? String(input.birthday).trim() : "";
+  var lineNickname = String(input.displayName || input.lineNickname || "").trim();
+  var serviceId = input.serviceId;
+  var date = input.date ? String(input.date).trim() : "";
+  var time = input.time ? String(input.time).trim() : "";
+
+  if (!userId) throw makeError("缺少 LINE userId");
+  if (!customerName) throw makeError("請填寫姓名", 400);
+  if (!phone) throw makeError("請填寫電話", 400);
+  if (!isValidPhoneInput(phone)) throw makeError("電話格式不正確", 400);
+  if (birthday && !isRealDateString(birthday)) {
+    throw makeError("生日格式請使用 YYYY-MM-DD", 400);
+  }
+  if (!serviceId) throw makeError("請選擇服務項目");
+  if (!date) throw makeError("請選擇預約日期");
+  if (!isRealDateString(date)) {
+    throw makeError("date 格式錯誤，請使用 YYYY-MM-DD", 400);
+  }
+  if (!time) throw makeError("請選擇預約時段");
+  if (!TIME_HHMM_PATTERN.test(time)) {
+    throw makeError("時間格式錯誤，請使用 HH:MM（24 小時制）", 400);
+  }
+
+  // 服務必須屬於同一 tenant 且為 active（getServiceById 已限制 tenant）
+  var service = await getServiceById(env, serviceId);
+  if (service.status !== "上架") {
+    throw makeError("此服務目前未開放預約");
+  }
+  var durationMinutes = Number(service.durationMinutes) || 60;
+
+  // D1 版不可忽略 customer 寫入失敗：失敗直接拋出
+  var customer = await upsertCustomer(env, {
+    userId: userId,
+    name: customerName,
+    phone: phone,
+    birthday: birthday,
+    lineNickname: lineNickname
+  });
+  var customerId = customer.id;
+
+  var now = nowIso();
+  var startUtc = taipeiDateTimeToUtcIso(date, time);
+  var endUtc = new Date(new Date(startUtc).getTime() + durationMinutes * 60 * 1000).toISOString();
+  var dayStartUtc = taipeiDateToUtcIso(date);
+  var dayEndUtc = new Date(new Date(dayStartUtc).getTime() + 24 * 60 * 60 * 1000).toISOString();
+
+  var bookingId = crypto.randomUUID();
+  var bookingNo = "BK-" + crypto.randomUUID();
+  var itemId = crypto.randomUUID();
+  var logId = crypto.randomUUID();
+
+  var statements = [
+    // 條件式建立 booking：同客戶同台北日無 active、同 staff 無時段重疊才插入
+    env.DB.prepare(
+      "INSERT INTO bookings " +
+      "(id, tenant_id, location_id, customer_id, staff_id, booking_no, " +
+      "start_at, end_at, status, source, created_by_type, created_by_id, " +
+      "created_at, updated_at) " +
+      "SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'confirmed', 'line', 'customer', ?4, ?9, ?9 " +
+      "WHERE NOT EXISTS (" +
+      "SELECT 1 FROM bookings b WHERE b.tenant_id = ?2 " +
+      "AND b.customer_id = ?4 " +
+      "AND b.status IN " + BOOKING_ACTIVE_STATUSES + " " +
+      "AND b.start_at >= ?10 AND b.start_at < ?11" +
+      ") AND NOT EXISTS (" +
+      "SELECT 1 FROM bookings b WHERE b.tenant_id = ?2 " +
+      "AND b.staff_id = ?5 " +
+      "AND b.status IN " + BOOKING_ACTIVE_STATUSES + " " +
+      "AND b.start_at < ?8 AND b.end_at > ?7" +
+      ")"
+    ).bind(
+      bookingId,
+      env.TENANT_ID,
+      env.LOCATION_ID,
+      customerId,
+      env.STAFF_ID,
+      bookingNo,
+      startUtc,
+      endUtc,
+      now,
+      dayStartUtc,
+      dayEndUtc
+    ),
+    // booking_items 依附 booking 實際存在才插入
+    env.DB.prepare(
+      "INSERT INTO booking_items " +
+      "(id, tenant_id, booking_id, service_id, service_name_snapshot, " +
+      "duration_minutes, quantity, unit_price_amount, discount_amount, " +
+      "final_amount, sort_order, created_at) " +
+      "SELECT ?1, ?2, ?3, ?4, ?5, ?6, 1, ?7, 0, ?7, 0, ?8 " +
+      "WHERE EXISTS (SELECT 1 FROM bookings WHERE tenant_id = ?2 AND id = ?3)"
+    ).bind(
+      itemId,
+      env.TENANT_ID,
+      bookingId,
+      String(serviceId),
+      service.name,
+      durationMinutes,
+      Number(service.price) || 0,
+      now
+    ),
+    // 初始狀態紀錄同樣依附 booking 存在
+    env.DB.prepare(
+      "INSERT INTO booking_status_logs " +
+      "(id, tenant_id, booking_id, from_status, to_status, changed_by_type, " +
+      "changed_by_id, created_at) " +
+      "SELECT ?1, ?2, ?3, NULL, 'confirmed', 'customer', ?4, ?5 " +
+      "WHERE EXISTS (SELECT 1 FROM bookings WHERE tenant_id = ?2 AND id = ?3)"
+    ).bind(logId, env.TENANT_ID, bookingId, customerId, now)
+  ];
+
+  var results = await env.DB.batch(statements);
+  var bookingResult = results && results[0];
+  if (!bookingResult || !bookingResult.meta || !bookingResult.meta.changes) {
+    throw makeError("此時段與現有預約重疊，或同一天已有預約，請選擇其他時間", 400);
+  }
+
+  return {
+    ok: true,
+    message: "預約成功",
+    booking: {
+      id: bookingId,
+      title: bookingNo,
+      userId: userId,
+      customerName: customerName,
+      phone: phone,
+      birthday: birthday,
+      serviceId: String(serviceId),
+      serviceName: service.name,
+      date: date,
+      time: time,
+      status: "已確認",
+      cancelReason: "",
+      canceledBy: "",
+      canceledAt: "",
+      createdAt: now
+    }
+  };
+}
