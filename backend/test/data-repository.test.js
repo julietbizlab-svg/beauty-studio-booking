@@ -226,7 +226,7 @@ test("wrapper dispatch：tenant ID 只出現在 bind，不拼進 SQL", async fun
   assert.ok(!call.sql.includes(TENANT), "tenant ID 不得拼接進 SQL");
 });
 
-test("selector export index.js 使用的全部 19 個 wrapper 與 ensureDataEnv", function () {
+test("selector export index.js 使用的全部 21 個 wrapper 與 ensureDataEnv", function () {
   var expectedWrappers = [
     "listServices",
     "createService",
@@ -246,9 +246,11 @@ test("selector export index.js 使用的全部 19 個 wrapper 與 ensureDataEnv"
     "getSettings",
     "updateSettings",
     "getServiceById",
-    "getServiceDurationMap"
+    "getServiceDurationMap",
+    "getCustomerProfileByUserId",
+    "updateCustomerByOwner"
   ];
-  assert.equal(expectedWrappers.length, 19);
+  assert.equal(expectedWrappers.length, 21);
 
   expectedWrappers.forEach(function (name) {
     assert.equal(
@@ -259,6 +261,41 @@ test("selector export index.js 使用的全部 19 個 wrapper 與 ensureDataEnv"
   });
   assert.equal(typeof dataRepository.ensureDataEnv, "function");
   assert.equal(typeof dataRepository.getDataBackendName, "function");
+});
+
+test("customer profile wrapper：notion 後端 fail closed 回 501，不碰任何資料", async function () {
+  var env = fullNotionEnv();
+  var wrapperCalls = [
+    function () { return dataRepository.getCustomerProfileByUserId(env, "U-x"); },
+    function () { return dataRepository.updateCustomerByOwner(env, "U-x", { customerName: "甲", phone: "0912345678" }); }
+  ];
+  for (var i = 0; i < wrapperCalls.length; i++) {
+    await assert.rejects(
+      Promise.resolve().then(wrapperCalls[i]),
+      function (error) {
+        assert.equal(error.status, 501, "notion 後端應回 501");
+        assert.match(error.message, /不支援/);
+        return true;
+      }
+    );
+  }
+});
+
+test("customer profile wrapper：d1 後端正常 dispatch（Fake D1）", async function () {
+  var db = makeFakeDb(function (sql, binds, method) {
+    if (method === "first") {
+      return { display_name: "王小美", mobile: "0987654321", birthday: "1995-05-05" };
+    }
+    return null;
+  });
+  var env = { DATA_BACKEND: "d1", DB: db, TENANT_ID: TENANT };
+
+  var profile = await dataRepository.getCustomerProfileByUserId(env, "U-x");
+  assert.deepEqual(profile, {
+    exists: true,
+    customer: { customerName: "王小美", phone: "0987654321", birthday: "1995-05-05" }
+  });
+  assert.equal(db.calls[0].binds[0], TENANT);
 });
 
 // ── /api/health（直接呼叫 index.js 的 fetch handler） ────────

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
   <title>工作室管理</title>
-  <link rel="stylesheet" href="css/style.css?v=20260718001">
+  <link rel="stylesheet" href="css/style.css?v=20260719001">
 </head>
 <body>
   <div class="app">
@@ -53,6 +53,28 @@
       <div id="customer-detail-view" class="hidden">
         <button type="button" class="btn btn-small" id="customer-back-btn">← 返回客戶名單</button>
         <div id="customer-detail-header" class="card customer-detail-header"></div>
+        <div class="card customer-edit-card">
+          <h3 class="customer-edit-title">編輯客戶資料</h3>
+          <div class="form-group">
+            <label for="customer-edit-name">姓名（必填）</label>
+            <input type="text" id="customer-edit-name" maxlength="40" placeholder="客戶真實姓名">
+          </div>
+          <div class="form-group">
+            <label for="customer-edit-phone">電話（必填）</label>
+            <input type="tel" id="customer-edit-phone" inputmode="tel" maxlength="20" placeholder="例：0912345678">
+          </div>
+          <div class="form-group">
+            <label for="customer-edit-birthday">生日（選填）</label>
+            <input type="date" id="customer-edit-birthday">
+          </div>
+          <div class="form-group">
+            <label for="customer-edit-note">客戶特別事項（僅業主可見，選填）</label>
+            <textarea id="customer-edit-note" rows="4" maxlength="2000"
+              placeholder="例：對精油過敏、偏好安靜服務"></textarea>
+            <p class="panel-hint" id="customer-edit-note-count">0 / 2000</p>
+          </div>
+          <button type="button" class="btn btn-primary" id="customer-edit-save">儲存客戶資料</button>
+        </div>
         <h3 class="customer-history-title">歷史預約</h3>
         <div id="customer-booking-list"></div>
       </div>
@@ -183,9 +205,9 @@
     </div>
   </div>
 
-  <script src="js/config.js?v=20260718001"></script>
-  <script src="js/liff-init.js?v=20260718001"></script>
-  <script src="js/api.js?v=20260718001"></script>
-  <script src="js/app.js?v=20260718001"></script>
+  <script src="js/config.js?v=20260719001"></script>
+  <script src="js/liff-init.js?v=20260719001"></script>
+  <script src="js/api.js?v=20260719001"></script>
+  <script src="js/app.js?v=20260719001"></script>
 </body>
 </html>

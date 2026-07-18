@@ -502,6 +502,19 @@ input[type="date"] {
   background: #fff;
 }
 
+.customer-profile-form input.input-locked {
+  background: #f3efee;
+  color: var(--muted);
+  border-style: dashed;
+  cursor: not-allowed;
+}
+
+.profile-locked-hint {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin: 0 0 10px;
+}
+
 .empty {
   text-align: center;
   color: var(--muted);

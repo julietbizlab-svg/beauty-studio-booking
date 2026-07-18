@@ -102,10 +102,18 @@
     }
     clearLoginAttempt();
     var profile = await liff.getProfile();
+    // idToken 僅保存在記憶體（beautyUser.idToken），
+    // 不寫入 localStorage、URL 或任何 log
+    var idToken = liff.getIDToken();
+    if (!idToken) {
+      requestLogin();
+      return;
+    }
     window.beautyUser = {
       userId: profile.userId,
       displayName: profile.displayName || "客人",
-      pictureUrl: profile.pictureUrl || ""
+      pictureUrl: profile.pictureUrl || "",
+      idToken: idToken
     };
     if (window.__resolveBeautyLiff) {
       window.__resolveBeautyLiff();

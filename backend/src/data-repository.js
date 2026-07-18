@@ -120,3 +120,21 @@ export function getServiceById(env, serviceId) {
 export function getServiceDurationMap(env, serviceIds) {
   return resolveRepository(env).getServiceDurationMap(env, serviceIds);
 }
+
+// ── 客戶 profile（僅 D1 支援；Notion 後端 fail closed） ─────────
+
+function requireRepositoryFunction(env, name) {
+  var repository = resolveRepository(env);
+  if (typeof repository[name] !== "function") {
+    throw makeError("目前資料後端不支援此功能", 501);
+  }
+  return repository[name];
+}
+
+export function getCustomerProfileByUserId(env, userId) {
+  return requireRepositoryFunction(env, "getCustomerProfileByUserId")(env, userId);
+}
+
+export function updateCustomerByOwner(env, userId, patch) {
+  return requireRepositoryFunction(env, "updateCustomerByOwner")(env, userId, patch);
+}

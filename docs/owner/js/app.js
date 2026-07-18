@@ -661,7 +661,10 @@
         : '<p class="customer-meta muted">電話：未填寫</p>') +
       (detail.birthday
         ? '<p class="customer-meta">生日：' + escapeHtml(formatDateZh(detail.birthday)) + "</p>"
-        : '<p class="customer-meta muted">生日：未填寫</p>');
+        : '<p class="customer-meta muted">生日：未填寫</p>') +
+      (detail.note
+        ? '<p class="customer-meta">特別事項：' + escapeHtml(detail.note) + "</p>"
+        : "");
   }
 
   function renderCustomerBookings(bookings) {
@@ -691,15 +694,68 @@
     }).join("");
   }
 
+  var CUSTOMER_NOTE_MAX_LENGTH = 2000;
+
+  function updateCustomerNoteCount() {
+    if (!els.customerEditNote || !els.customerEditNoteCount) return;
+    els.customerEditNoteCount.textContent =
+      els.customerEditNote.value.length + " / " + CUSTOMER_NOTE_MAX_LENGTH;
+  }
+
+  function fillCustomerEditForm(detail) {
+    if (!els.customerEditName || !els.customerEditPhone || !els.customerEditBirthday) return;
+    els.customerEditName.value = detail.customerName || "";
+    els.customerEditPhone.value = detail.phone || "";
+    els.customerEditBirthday.value = detail.birthday || "";
+    if (els.customerEditNote) {
+      els.customerEditNote.value = detail.note || "";
+      updateCustomerNoteCount();
+    }
+  }
+
   async function openCustomerDetail(userId) {
     if (!userId) return;
     setStatus("info", "載入客戶預約…");
     var data = await window.ownerApi.getCustomerBookings(userId);
     state.selectedCustomer = data;
     renderCustomerDetailHeader(data || {});
+    fillCustomerEditForm(data || {});
     renderCustomerBookings((data && data.bookings) || []);
     showCustomerDetailView();
     setStatus("");
+  }
+
+  async function handleSaveCustomerEdit() {
+    var detail = state.selectedCustomer;
+    if (!detail || !detail.userId) return;
+    var payload = {
+      customerName: els.customerEditName.value.trim(),
+      phone: els.customerEditPhone.value.trim(),
+      birthday: els.customerEditBirthday.value.trim(),
+      note: els.customerEditNote ? els.customerEditNote.value.trim() : ""
+    };
+    if (!payload.customerName) {
+      setStatus("error", "請填寫姓名");
+      return;
+    }
+    if (!payload.phone) {
+      setStatus("error", "請填寫電話");
+      return;
+    }
+    if (payload.note.length > CUSTOMER_NOTE_MAX_LENGTH) {
+      setStatus("error", "客戶特別事項最長 " + CUSTOMER_NOTE_MAX_LENGTH + " 字");
+      return;
+    }
+    setStatus("info", "儲存客戶資料中…");
+    try {
+      await window.ownerApi.updateCustomer(detail.userId, payload);
+      await openCustomerDetail(detail.userId);
+      await loadCustomers(state.customerQuery);
+      showCustomerDetailView();
+      setStatus("success", "客戶資料已更新");
+    } catch (error) {
+      setStatus("error", error.message || "儲存客戶資料失敗，請稍後再試");
+    }
   }
 
   function scheduleCustomerSearch() {
@@ -767,6 +823,12 @@
     els.customerList = $("customer-list");
     els.customerDetailHeader = $("customer-detail-header");
     els.customerBookingList = $("customer-booking-list");
+    els.customerEditName = $("customer-edit-name");
+    els.customerEditPhone = $("customer-edit-phone");
+    els.customerEditBirthday = $("customer-edit-birthday");
+    els.customerEditNote = $("customer-edit-note");
+    els.customerEditNoteCount = $("customer-edit-note-count");
+    els.customerEditSave = $("customer-edit-save");
   }
 
   function bindEvents() {
@@ -822,6 +884,14 @@
     $("customer-back-btn").addEventListener("click", function () {
       showCustomerListView();
     });
+    if (els.customerEditSave) {
+      els.customerEditSave.addEventListener("click", function () {
+        handleSaveCustomerEdit().catch(function (e) { setStatus("error", e.message); });
+      });
+    }
+    if (els.customerEditNote) {
+      els.customerEditNote.addEventListener("input", updateCustomerNoteCount);
+    }
   }
 
   async function boot() {

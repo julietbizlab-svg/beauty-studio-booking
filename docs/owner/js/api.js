@@ -162,6 +162,16 @@
       );
     },
 
+    updateCustomer: function (userId, data) {
+      return apiFetch(
+        "/api/owner/customers/" + encodeURIComponent(userId || ""),
+        {
+          method: "PATCH",
+          body: JSON.stringify(data || {})
+        }
+      );
+    },
+
     isConfigured: function () {
       return Boolean(getApiBaseUrl());
     }

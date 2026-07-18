@@ -22,9 +22,12 @@ import {
   getSettings,
   updateSettings,
   getServiceById,
-  getServiceDurationMap
+  getServiceDurationMap,
+  getCustomerProfileByUserId,
+  updateCustomerByOwner
 } from "./data-repository.js";
 import { requireOwnerFromRequest } from "./owner-auth.js";
+import { requireCustomerFromRequest } from "./liff-verify.js";
 import {
   weekdayLabelFromIndex,
   buildAllSlotTimesForDay,
@@ -198,28 +201,53 @@ export default {
         }, corsHeaders);
       }
 
+      // 客人 API：一律以驗證後 token 的 sub 為 userId，
+      // body／query 中的 userId 一律忽略，不能覆蓋已驗證身分。
       if (url.pathname === "/api/bookings" && request.method === "POST") {
         ensureDataEnv(env);
+        var bookCustomer = await requireCustomerFromRequest(request, env);
         var bookBody = await readJson(request);
-        var bookResult = await createBooking(env, bookBody);
+        // LINE 身分與 LINE profile metadata（暱稱、頭像）一律以
+        // requireCustomerFromRequest 驗證結果為唯一可信來源；
+        // client body 的同名欄位不可優先、不可進入 SQL bind。
+        var bookResult = await createBooking(
+          env,
+          Object.assign({}, bookBody, {
+            userId: bookCustomer.userId,
+            displayName: bookCustomer.name,
+            lineDisplayName: bookCustomer.name,
+            lineNickname: bookCustomer.name,
+            picture: bookCustomer.picture,
+            pictureUrl: bookCustomer.picture
+          })
+        );
         return jsonResponse(bookResult, corsHeaders);
       }
 
       if (url.pathname === "/api/bookings/me" && request.method === "GET") {
         ensureDataEnv(env);
-        var meUserId = url.searchParams.get("userId");
-        if (!meUserId) {
-          return jsonResponse({ ok: false, message: "缺少 userId" }, corsHeaders, 400);
-        }
-        var myBookings = await getUserBookings(env, meUserId);
+        var meCustomer = await requireCustomerFromRequest(request, env);
+        var myBookings = await getUserBookings(env, meCustomer.userId);
         return jsonResponse(myBookings, corsHeaders);
       }
 
       if (url.pathname === "/api/bookings/cancel" && request.method === "POST") {
         ensureDataEnv(env);
+        var cancelCustomer = await requireCustomerFromRequest(request, env);
         var cancelBody = await readJson(request);
-        var cancelResult = await cancelBooking(env, cancelBody.userId, cancelBody.bookingId);
+        var cancelResult = await cancelBooking(env, cancelCustomer.userId, cancelBody.bookingId);
         return jsonResponse(cancelResult, corsHeaders);
+      }
+
+      if (url.pathname === "/api/customer/me" && request.method === "GET") {
+        ensureDataEnv(env);
+        var profileCustomer = await requireCustomerFromRequest(request, env);
+        var profile = await getCustomerProfileByUserId(env, profileCustomer.userId);
+        return jsonResponse({
+          ok: true,
+          exists: profile.exists,
+          customer: profile.customer
+        }, corsHeaders);
       }
 
       if (url.pathname === "/api/owner/bookings/cancel" && request.method === "POST") {
@@ -318,6 +346,19 @@ export default {
         var customerQuery = url.searchParams.get("q") || "";
         var customerList = await getOwnerCustomersFromBookings(env, customerQuery);
         return jsonResponse(customerList, corsHeaders);
+      }
+
+      var ownerCustomerPatchMatch = url.pathname.match(/^\/api\/owner\/customers\/([^/]+)$/);
+      if (ownerCustomerPatchMatch && request.method === "PATCH") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var ownerCustomerBody = await readJson(request);
+        var updatedCustomer = await updateCustomerByOwner(
+          env,
+          decodeURIComponent(ownerCustomerPatchMatch[1]),
+          ownerCustomerBody
+        );
+        return jsonResponse(updatedCustomer, corsHeaders);
       }
 
       if (url.pathname === "/api/owner/customer-bookings" && request.method === "GET") {

@@ -666,7 +666,7 @@ function validateBookingDateParam(date) {
 var BOOKING_SELECT_SQL =
   "SELECT b.id, b.booking_no, b.start_at, b.status, " +
   "b.cancellation_reason_code, b.cancellation_note, b.cancelled_at, b.created_at, " +
-  "c.display_name, c.mobile, c.birthday, " +
+  "c.display_name, c.mobile, c.birthday, c.notes, " +
   "la.line_user_id, " +
   "bi.service_id, bi.service_name_snapshot " +
   "FROM bookings b " +
@@ -805,6 +805,11 @@ function isRealDateString(value) {
 /**
  * 依 LINE userId 建立或更新客戶（與 notion.js 的 upsertCustomer 相容）。
  * 回傳 DTO：{ id, name, userId, phone, birthday, lineNickname, note }
+ *
+ * 不可變規則：客戶資料（display_name／mobile／birthday）只在「第一次建立」
+ * 時寫入；既有客戶不因客人 payload 更新這三個欄位，只更新 LINE
+ * metadata（line_accounts.last_seen_at、暱稱），並回傳 D1 中既有的
+ * 姓名、電話、生日。要修改既有客戶資料只能走 updateCustomerByOwner。
  */
 export async function upsertCustomer(env, payload) {
   ensureD1Env(env);
@@ -829,7 +834,7 @@ export async function upsertCustomer(env, payload) {
   var now = nowIso();
 
   var existing = await env.DB.prepare(
-    "SELECT c.id AS customer_id, c.birthday, c.notes, " +
+    "SELECT c.id AS customer_id, c.display_name, c.mobile, c.birthday, c.notes, " +
     "la.display_name AS line_display_name " +
     "FROM line_accounts la " +
     "JOIN customers c ON c.tenant_id = la.tenant_id AND c.id = la.customer_id " +
@@ -837,18 +842,8 @@ export async function upsertCustomer(env, payload) {
   ).bind(env.TENANT_ID, userId).first();
 
   if (existing) {
-    // 既有客戶：就地更新，不重綁 customer_id
-    var customerSets = ["display_name = ?1", "mobile = ?2", "updated_at = ?3"];
-    var customerBinds = [name, phone, now];
-    if (birthday) {
-      customerBinds.push(birthday);
-      customerSets.push("birthday = ?" + customerBinds.length);
-    }
-    customerBinds.push(env.TENANT_ID);
-    var custTenantIndex = customerBinds.length;
-    customerBinds.push(existing.customer_id);
-    var custIdIndex = customerBinds.length;
-
+    // 既有客戶：不碰 customers 表（姓名／電話／生日不可由客人改寫），
+    // 只更新 line_accounts 的 last_seen_at 與暱稱，也不重綁 customer_id
     var lineSets = ["last_seen_at = ?1"];
     var lineBinds = [now];
     if (lineNickname) {
@@ -860,23 +855,17 @@ export async function upsertCustomer(env, payload) {
     lineBinds.push(userId);
     var lineUserIndex = lineBinds.length;
 
-    await env.DB.batch([
-      env.DB.prepare(
-        "UPDATE customers SET " + customerSets.join(", ") +
-        " WHERE tenant_id = ?" + custTenantIndex + " AND id = ?" + custIdIndex
-      ).bind(...customerBinds),
-      env.DB.prepare(
-        "UPDATE line_accounts SET " + lineSets.join(", ") +
-        " WHERE tenant_id = ?" + lineTenantIndex + " AND line_user_id = ?" + lineUserIndex
-      ).bind(...lineBinds)
-    ]);
+    await env.DB.prepare(
+      "UPDATE line_accounts SET " + lineSets.join(", ") +
+      " WHERE tenant_id = ?" + lineTenantIndex + " AND line_user_id = ?" + lineUserIndex
+    ).bind(...lineBinds).run();
 
     return {
       id: existing.customer_id,
-      name: name,
+      name: existing.display_name || "",
       userId: userId,
-      phone: phone,
-      birthday: birthday || existing.birthday || "",
+      phone: existing.mobile || "",
+      birthday: existing.birthday || "",
       lineNickname: lineNickname || existing.line_display_name || "",
       note: existing.notes || ""
     };
@@ -907,6 +896,126 @@ export async function upsertCustomer(env, payload) {
     birthday: birthday,
     lineNickname: lineNickname,
     note: ""
+  };
+}
+
+/**
+ * 依 tenant＋LINE userId 讀取客戶 profile（GET /api/customer/me 用）。
+ * 尚未建立回 { exists: false, customer: null }；
+ * 已建立回 { exists: true, customer: { customerName, phone, birthday } }。
+ */
+export async function getCustomerProfileByUserId(env, userId) {
+  ensureD1Env(env);
+  var id = String(userId || "").trim();
+  if (!id) {
+    throw makeError("缺少 userId", 400);
+  }
+
+  var row = await env.DB.prepare(
+    "SELECT c.display_name, c.mobile, c.birthday " +
+    "FROM line_accounts la " +
+    "JOIN customers c ON c.tenant_id = la.tenant_id AND c.id = la.customer_id " +
+    "WHERE la.tenant_id = ?1 AND la.line_user_id = ?2"
+  ).bind(env.TENANT_ID, id).first();
+
+  if (!row) {
+    return { exists: false, customer: null };
+  }
+  return {
+    exists: true,
+    customer: {
+      customerName: row.display_name || "",
+      phone: row.mobile || "",
+      birthday: row.birthday || ""
+    }
+  };
+}
+
+/** 業主備註（customers.notes）長度上限 */
+var CUSTOMER_NOTE_MAX_LENGTH = 2000;
+
+/**
+ * 業主更新客戶資料（路由層須先經 requireOwnerFromRequest）。
+ * 以 line_accounts.line_user_id 定位客戶（tenant scoped）；
+ * 只更新 customers.display_name／mobile／birthday／notes／updated_at，
+ * 不允許改 LINE userId、tenant_id 或 customer_id。
+ *
+ * note 規則：省略時保留原值；空字串清除；有值時 trim；
+ * 超過 2000 字回 400 且不寫入。
+ */
+export async function updateCustomerByOwner(env, userId, patch) {
+  ensureD1Env(env);
+  var id = String(userId || "").trim();
+  if (!id) {
+    throw makeError("缺少 userId", 400);
+  }
+
+  var input = patch || {};
+  var name = String(input.customerName || "").trim();
+  var phone = normalizePhoneInput(input.phone);
+  var birthday = input.birthday ? String(input.birthday).trim() : "";
+  var noteProvided = input.note !== undefined;
+  var note = noteProvided
+    ? String(input.note == null ? "" : input.note).trim()
+    : null;
+
+  if (!name) {
+    throw makeError("請填寫姓名", 400);
+  }
+  if (!phone) {
+    throw makeError("請填寫電話", 400);
+  }
+  if (!isValidPhoneInput(phone)) {
+    throw makeError("電話格式不正確", 400);
+  }
+  if (birthday && !isRealDateString(birthday)) {
+    throw makeError("生日格式請使用 YYYY-MM-DD", 400);
+  }
+  if (noteProvided && note.length > CUSTOMER_NOTE_MAX_LENGTH) {
+    throw makeError("備註最長 " + CUSTOMER_NOTE_MAX_LENGTH + " 字", 400);
+  }
+
+  var existing = await env.DB.prepare(
+    "SELECT c.id AS customer_id, c.notes " +
+    "FROM line_accounts la " +
+    "JOIN customers c ON c.tenant_id = la.tenant_id AND c.id = la.customer_id " +
+    "WHERE la.tenant_id = ?1 AND la.line_user_id = ?2"
+  ).bind(env.TENANT_ID, id).first();
+
+  if (!existing) {
+    throw makeError("找不到此客戶", 404);
+  }
+
+  var sets = ["display_name = ?1", "mobile = ?2", "birthday = ?3"];
+  var binds = [name, phone, birthday || null];
+  if (noteProvided) {
+    binds.push(note);
+    sets.push("notes = ?" + binds.length);
+  }
+  binds.push(nowIso());
+  sets.push("updated_at = ?" + binds.length);
+  binds.push(env.TENANT_ID);
+  var tenantIndex = binds.length;
+  binds.push(existing.customer_id);
+  var idIndex = binds.length;
+
+  var result = await env.DB.prepare(
+    "UPDATE customers SET " + sets.join(", ") +
+    " WHERE tenant_id = ?" + tenantIndex + " AND id = ?" + idIndex
+  ).bind(...binds).run();
+
+  if (!result.meta || !result.meta.changes) {
+    throw makeError("找不到此客戶", 404);
+  }
+
+  return {
+    ok: true,
+    customer: {
+      customerName: name,
+      phone: phone,
+      birthday: birthday,
+      note: noteProvided ? note : (existing.notes || "")
+    }
   };
 }
 
@@ -961,7 +1070,9 @@ export async function createBooking(env, payload) {
   }
   var durationMinutes = Number(service.durationMinutes) || 60;
 
-  // D1 版不可忽略 customer 寫入失敗：失敗直接拋出
+  // D1 版不可忽略 customer 寫入失敗：失敗直接拋出。
+  // 既有客戶時 upsertCustomer 不會改寫姓名／電話／生日，
+  // 後續一律使用 repository 回傳的既有 customer DTO。
   var customer = await upsertCustomer(env, {
     userId: userId,
     name: customerName,
@@ -1055,9 +1166,9 @@ export async function createBooking(env, payload) {
       id: bookingId,
       title: bookingNo,
       userId: userId,
-      customerName: customerName,
-      phone: phone,
-      birthday: birthday,
+      customerName: customer.name,
+      phone: customer.phone,
+      birthday: customer.birthday || "",
       serviceId: String(serviceId),
       serviceName: service.name,
       date: date,
@@ -1312,7 +1423,7 @@ export async function getOwnerCustomersFromBookings(env, queryText) {
   var query = String(queryText || "").trim();
 
   var sql =
-    "SELECT la.line_user_id, c.display_name, c.mobile, c.birthday, " +
+    "SELECT la.line_user_id, c.display_name, c.mobile, c.birthday, c.notes, " +
     "MAX(b.start_at) AS last_start_at, COUNT(*) AS booking_count " +
     "FROM bookings b " +
     "JOIN customers c ON c.tenant_id = b.tenant_id AND c.id = b.customer_id " +
@@ -1327,7 +1438,7 @@ export async function getOwnerCustomersFromBookings(env, queryText) {
       "OR instr(lower(COALESCE(c.mobile, '')), lower(?2)) > 0) ";
   }
 
-  sql += "GROUP BY la.line_user_id, c.id, c.display_name, c.mobile, c.birthday";
+  sql += "GROUP BY la.line_user_id, c.id, c.display_name, c.mobile, c.birthday, c.notes";
 
   var result = await env.DB.prepare(sql).bind(...binds).all();
 
@@ -1337,6 +1448,7 @@ export async function getOwnerCustomersFromBookings(env, queryText) {
       customerName: row.display_name || "",
       phone: row.mobile || "",
       birthday: row.birthday || "",
+      note: row.notes || "",
       lastBookingDate: utcIsoToTaipeiDate(row.last_start_at),
       bookingCount: Number(row.booking_count) || 0
     };
@@ -1360,7 +1472,8 @@ export async function getOwnerCustomersFromBookings(env, queryText) {
  * 指定客戶歷史預約（與 notion.js 的 getOwnerCustomerBookings 相容）。
  * 以 line_accounts.line_user_id 定位客戶（userId 不當 customer_id 用）；
  * 已確認（含 completed）在前、已取消在後，各組依 start_at 新到舊。
- * customerName／phone／birthday 取 customers 目前資料（JOIN 後每列相同）。
+ * customerName／phone／birthday／note 取 customers 目前資料
+ * （JOIN 後每列相同）。note 只出現在業主 API，客人端不回傳。
  */
 export async function getOwnerCustomerBookings(env, userId) {
   ensureD1Env(env);
@@ -1377,7 +1490,8 @@ export async function getOwnerCustomerBookings(env, userId) {
     "THEN 0 ELSE 1 END ASC, b.start_at DESC"
   ).bind(env.TENANT_ID, id).all();
 
-  var dtos = (result.results || []).map(bookingRowToDto);
+  var rows = result.results || [];
+  var dtos = rows.map(bookingRowToDto);
 
   if (!dtos.length) {
     return {
@@ -1386,6 +1500,7 @@ export async function getOwnerCustomerBookings(env, userId) {
       customerName: "",
       phone: "",
       birthday: "",
+      note: "",
       bookings: []
     };
   }
@@ -1396,6 +1511,7 @@ export async function getOwnerCustomerBookings(env, userId) {
     customerName: dtos[0].customerName,
     phone: dtos[0].phone || "",
     birthday: dtos[0].birthday || "",
+    note: rows[0].notes || "",
     bookings: dtos.map(bookingDtoToOwnerDto)
   };
 }

@@ -16,7 +16,9 @@
     slots: [],
     bookings: [],
     calendarMonth: "",
-    monthDays: {}
+    monthDays: {},
+    serverProfile: null,
+    profileLocked: false
   };
 
   var els = {};
@@ -487,6 +489,47 @@
     updateBookButton();
   }
 
+  function setProfileFieldsLocked(locked) {
+    state.profileLocked = locked;
+    if (els.customerName) {
+      els.customerName.readOnly = locked;
+      els.customerName.classList.toggle("input-locked", locked);
+    }
+    if (els.customerPhone) {
+      els.customerPhone.readOnly = locked;
+      els.customerPhone.classList.toggle("input-locked", locked);
+    }
+    if (els.customerBirthday) {
+      // date input 的 readOnly 在多數瀏覽器無效，改用 disabled 鎖定
+      els.customerBirthday.disabled = locked;
+      els.customerBirthday.classList.toggle("input-locked", locked);
+    }
+    if (els.profileLockedHint) {
+      els.profileLockedHint.hidden = !locked;
+    }
+  }
+
+  function applyServerProfile(profile) {
+    state.serverProfile = profile || null;
+    if (!els.customerName || !els.customerPhone || !els.customerBirthday) return;
+    if (profile) {
+      // 伺服器資料為準，不得以 localStorage 值覆蓋
+      els.customerName.value = profile.customerName || "";
+      els.customerPhone.value = profile.phone || "";
+      els.customerBirthday.value = profile.birthday || "";
+      setProfileFieldsLocked(true);
+    } else {
+      setProfileFieldsLocked(false);
+      fillCustomerProfileForm();
+    }
+    updateBookButton();
+  }
+
+  async function loadServerProfile() {
+    var result = await window.beautyApi.getCustomerMe();
+    applyServerProfile(result && result.exists ? result.customer : null);
+  }
+
   function escapeHtml(str) {
     return String(str || "")
       .replace(/&/g, "&amp;")
@@ -616,7 +659,7 @@
   }
 
   async function loadBookings() {
-    state.bookings = await window.beautyApi.getMyBookings(state.user.userId);
+    state.bookings = await window.beautyApi.getMyBookings();
     renderBookings();
   }
 
@@ -638,7 +681,6 @@
     var bookedTime = state.selectedTime;
     try {
       await window.beautyApi.createBooking({
-        userId: state.user.userId,
         displayName: state.user.displayName,
         customerName: profile.customerName,
         phone: profile.phone,
@@ -647,7 +689,9 @@
         date: bookedDate,
         time: bookedTime
       });
-      saveCustomerProfileLocal(profile);
+      if (!state.profileLocked) {
+        saveCustomerProfileLocal(profile);
+      }
       setStatus("");
       state.selectedTime = "";
       try {
@@ -661,6 +705,10 @@
         date: bookedDate,
         time: bookedTime
       });
+      // 第一次預約成功後改以伺服器 profile 為準並鎖定姓名／電話
+      try {
+        await loadServerProfile();
+      } catch (ignore) {}
       await loadMonthCalendar(state.calendarMonth || getCurrentMonthIso());
       await loadSlots();
       await loadBookings();
@@ -757,7 +805,7 @@
     if (els.cancelConfirmNo) els.cancelConfirmNo.disabled = true;
     setStatus("", "取消中…");
     try {
-      await window.beautyApi.cancelBooking(state.user.userId, bookingId);
+      await window.beautyApi.cancelBooking(bookingId);
       hideCancelConfirmModal();
       setStatus("success", "已取消預約");
       await loadBookings();
@@ -863,6 +911,7 @@
     els.customerName = $("customer-name");
     els.customerPhone = $("customer-phone");
     els.customerBirthday = $("customer-birthday");
+    els.profileLockedHint = $("profile-locked-hint");
     els.bookBtn = $("book-btn");
     els.bookingList = $("booking-list");
     els.depositTransferBox = $("deposit-transfer-box");
@@ -910,6 +959,7 @@
       setStatus("", "載入中…");
       await loadSettings();
       await loadServices();
+      await loadServerProfile();
       await loadBookings();
       setStatus("");
     } catch (error) {
