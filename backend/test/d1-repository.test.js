@@ -1740,14 +1740,17 @@ test("getOwnerBookingsForMonth 空結果回傳 days:{}", async function () {
   assert.deepEqual(result, { ok: true, month: "2026-07", days: {} });
 });
 
-// ── getOwnerCustomersFromBookings（業主客戶目錄） ────────────
+// ── getOwnerCustomersFromBookings（業主客戶名單：customers 為主表，
+//    含未預約、未綁 LINE、CSV 匯入客戶） ──────────────────────
 
 function ownerCustomerRow(overrides) {
   return Object.assign({
+    customer_id: "cust-owner-1",
     line_user_id: "U-owner-cust",
     display_name: "測試客",
     mobile: "0912345678",
     birthday: "1990-01-01",
+    source: "line",
     last_start_at: "2026-07-17T16:30:00.000Z",
     booking_count: 3
   }, overrides || {});
@@ -1759,22 +1762,101 @@ test("getOwnerCustomersFromBookings 空結果回傳 { ok: true, customers: [] }"
   assert.deepEqual(result, { ok: true, customers: [] });
 });
 
-test("getOwnerCustomersFromBookings JOIN 三表且每個 JOIN 都含 tenant 條件", async function () {
+test("getOwnerCustomersFromBookings 以 customers 為主表 LEFT JOIN，每個 JOIN 都含 tenant 條件", async function () {
   var db = makeFakeDb(function () { return []; });
   await getOwnerCustomersFromBookings(makeEnv(db));
 
   var call = db.calls[0];
-  assert.match(call.sql, /FROM bookings b/);
+  assert.match(call.sql, /FROM customers c/);
   assert.match(
     call.sql,
-    /JOIN customers c ON c\.tenant_id = b\.tenant_id AND c\.id = b\.customer_id/
+    /LEFT JOIN line_accounts la ON la\.tenant_id = c\.tenant_id AND la\.customer_id = c\.id/
   );
   assert.match(
     call.sql,
-    /JOIN line_accounts la ON la\.tenant_id = b\.tenant_id AND la\.customer_id = b\.customer_id/
+    /LEFT JOIN bookings b ON b\.tenant_id = c\.tenant_id AND b\.customer_id = c\.id/
   );
-  assert.match(call.sql, /WHERE b\.tenant_id = \?1/);
+  assert.match(call.sql, /WHERE c\.tenant_id = \?1/);
   assert.equal(call.binds[0], TENANT);
+});
+
+test("getOwnerCustomersFromBookings 排除 deleted_at 非 NULL 的客戶", async function () {
+  var db = makeFakeDb(function () { return []; });
+  await getOwnerCustomersFromBookings(makeEnv(db));
+  assert.match(db.calls[0].sql, /c\.deleted_at IS NULL/);
+});
+
+test("getOwnerCustomersFromBookings：無 booking、無 LINE 的匯入客戶仍出現", async function () {
+  var db = makeFakeDb(function (sql, binds, method) {
+    if (method === "all") {
+      return [ownerCustomerRow({
+        customer_id: "cust-imported-1",
+        line_user_id: null,
+        source: "import",
+        last_start_at: null,
+        booking_count: 0
+      })];
+    }
+    return null;
+  });
+
+  var result = await getOwnerCustomersFromBookings(makeEnv(db));
+  var customer = result.customers[0];
+  assert.equal(customer.customerId, "cust-imported-1");
+  assert.equal(customer.userId, "", "未綁 LINE 回空字串");
+  assert.equal(customer.linkedLine, false);
+  assert.equal(customer.source, "import");
+  assert.equal(customer.lastBookingDate, "", "無預約回空字串");
+  assert.equal(customer.bookingCount, 0);
+});
+
+test("getOwnerCustomersFromBookings：綁定 LINE 客戶 linkedLine=true 且含 customerId", async function () {
+  var db = makeFakeDb(function (sql, binds, method) {
+    if (method === "all") {
+      return [ownerCustomerRow()];
+    }
+    return null;
+  });
+
+  var result = await getOwnerCustomersFromBookings(makeEnv(db));
+  assert.equal(result.customers[0].linkedLine, true);
+  assert.equal(result.customers[0].userId, "U-owner-cust");
+  assert.equal(result.customers[0].customerId, "cust-owner-1");
+});
+
+test("getOwnerCustomersFromBookings 搜尋涵蓋 customer_no（走 bind）", async function () {
+  var db = makeFakeDb(function () { return []; });
+  await getOwnerCustomersFromBookings(makeEnv(db), "A001");
+
+  var call = db.calls[0];
+  assert.match(call.sql, /instr\(lower\(COALESCE\(c\.customer_no, ''\)\), lower\(\?2\)\) > 0/);
+  assert.equal(call.binds[1], "A001");
+  assert.ok(!call.sql.includes("A001"), "搜尋值不得拼接進 SQL");
+});
+
+test("getOwnerCustomersFromBookings 排序：無預約者排最後", async function () {
+  var db = makeFakeDb(function (sql, binds, method) {
+    if (method === "all") {
+      return [
+        ownerCustomerRow({
+          customer_id: "cust-no-booking",
+          display_name: "匯入客",
+          last_start_at: null,
+          booking_count: 0
+        }),
+        ownerCustomerRow({
+          customer_id: "cust-with-booking",
+          display_name: "常客",
+          last_start_at: "2026-07-18T02:00:00.000Z"
+        })
+      ];
+    }
+    return null;
+  });
+
+  var result = await getOwnerCustomersFromBookings(makeEnv(db));
+  assert.equal(result.customers[0].customerId, "cust-with-booking");
+  assert.equal(result.customers[1].customerId, "cust-no-booking", "無預約者必須排最後");
 });
 
 test("getOwnerCustomersFromBookings 只含六種可見狀態，排除 no_show／rescheduled", async function () {

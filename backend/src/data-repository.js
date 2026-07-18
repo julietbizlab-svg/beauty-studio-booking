@@ -139,6 +139,14 @@ export function updateCustomerByOwner(env, userId, patch) {
   return requireRepositoryFunction(env, "updateCustomerByOwner")(env, userId, patch);
 }
 
+export function getOwnerCustomerById(env, customerId) {
+  return requireRepositoryFunction(env, "getOwnerCustomerById")(env, customerId);
+}
+
+export function updateCustomerByOwnerById(env, customerId, patch) {
+  return requireRepositoryFunction(env, "updateCustomerByOwnerById")(env, customerId, patch);
+}
+
 // ── 客戶 CSV 匯入（僅 D1 支援；Notion 後端 fail closed） ────────
 
 export function previewCustomerImport(env, payload) {

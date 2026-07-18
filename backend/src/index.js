@@ -25,6 +25,8 @@ import {
   getServiceDurationMap,
   getCustomerProfileByUserId,
   updateCustomerByOwner,
+  getOwnerCustomerById,
+  updateCustomerByOwnerById,
   previewCustomerImport,
   commitCustomerImport
 } from "./data-repository.js";
@@ -366,6 +368,31 @@ export default {
         var importCommitBody = await readJson(request);
         var importCommit = await commitCustomerImport(env, importCommitBody);
         return jsonResponse(importCommit, corsHeaders);
+      }
+
+      // customerId 版客戶詳情／更新：必須先於舊的 /:userId 動態比對，
+      // 支援未綁 LINE／無預約的匯入客戶
+      var ownerCustomerByIdMatch = url.pathname.match(/^\/api\/owner\/customers\/by-id\/([^/]+)$/);
+      if (ownerCustomerByIdMatch && request.method === "GET") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var customerByIdDetail = await getOwnerCustomerById(
+          env,
+          decodeURIComponent(ownerCustomerByIdMatch[1])
+        );
+        return jsonResponse(customerByIdDetail, corsHeaders);
+      }
+
+      if (ownerCustomerByIdMatch && request.method === "PATCH") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var customerByIdBody = await readJson(request);
+        var customerByIdUpdated = await updateCustomerByOwnerById(
+          env,
+          decodeURIComponent(ownerCustomerByIdMatch[1]),
+          customerByIdBody
+        );
+        return jsonResponse(customerByIdUpdated, corsHeaders);
       }
 
       var ownerCustomerPatchMatch = url.pathname.match(/^\/api\/owner\/customers\/([^/]+)$/);

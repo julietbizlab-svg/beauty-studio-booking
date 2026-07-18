@@ -1019,6 +1019,131 @@ export async function updateCustomerByOwner(env, userId, patch) {
   };
 }
 
+/**
+ * 以 customerId 更新客戶（PATCH /api/owner/customers/by-id/:customerId）。
+ *
+ * 驗證沿用 updateCustomerByOwner，差異：電話允許空白（匯入客戶可能
+ * 沒有電話），有值時才驗證格式。
+ * 只更新 customers 白名單欄位（display_name／mobile／birthday／notes／
+ * updated_at），不動 customerId、tenant_id、customer_no、source，
+ * 不建立或修改 line_accounts；deleted 客戶回 404。
+ * customer UPDATE 與 audit INSERT 在同一次 D1 batch；
+ * audit 的 before_json／after_json 不含 LINE userId。
+ */
+export async function updateCustomerByOwnerById(env, customerId, patch) {
+  ensureD1Env(env);
+  var id = String(customerId || "").trim();
+  if (!id) {
+    throw makeError("缺少 customerId", 400);
+  }
+
+  var input = patch || {};
+  var name = String(input.customerName || "").trim();
+  var phone = normalizePhoneInput(input.phone);
+  var birthday = input.birthday ? String(input.birthday).trim() : "";
+  var noteProvided = input.note !== undefined;
+  var note = noteProvided
+    ? String(input.note == null ? "" : input.note).trim()
+    : null;
+
+  if (!name) {
+    throw makeError("請填寫姓名", 400);
+  }
+  if (phone && !isValidPhoneInput(phone)) {
+    throw makeError("電話格式不正確", 400);
+  }
+  if (birthday && !isRealDateString(birthday)) {
+    throw makeError("生日格式請使用 YYYY-MM-DD", 400);
+  }
+  if (noteProvided && note.length > CUSTOMER_NOTE_MAX_LENGTH) {
+    throw makeError("備註最長 " + CUSTOMER_NOTE_MAX_LENGTH + " 字", 400);
+  }
+
+  // 驗證 env.STAFF_ID 屬於本 tenant（audit actor，fail closed）
+  if (!env.STAFF_ID) {
+    throw makeError("操作人員設定錯誤，請確認工作室設定", 500);
+  }
+  var staffRow = await env.DB.prepare(
+    "SELECT id FROM staff WHERE tenant_id = ?1 AND id = ?2"
+  ).bind(env.TENANT_ID, env.STAFF_ID).first();
+  if (!staffRow) {
+    throw makeError("操作人員設定錯誤，請確認工作室設定", 500);
+  }
+
+  var existing = await env.DB.prepare(
+    "SELECT id, display_name, mobile, birthday, notes FROM customers " +
+    "WHERE tenant_id = ?1 AND id = ?2 AND deleted_at IS NULL"
+  ).bind(env.TENANT_ID, id).first();
+
+  if (!existing) {
+    throw makeError("找不到此客戶", 404);
+  }
+
+  var finalNote = noteProvided ? note : (existing.notes || "");
+  var now = nowIso();
+
+  var sets = ["display_name = ?1", "mobile = ?2", "birthday = ?3"];
+  var binds = [name, phone || null, birthday || null];
+  if (noteProvided) {
+    binds.push(note);
+    sets.push("notes = ?" + binds.length);
+  }
+  binds.push(now);
+  sets.push("updated_at = ?" + binds.length);
+  binds.push(env.TENANT_ID);
+  var tenantIndex = binds.length;
+  binds.push(id);
+  var idIndex = binds.length;
+
+  // before_json／after_json 只含客戶白名單欄位，不含 LINE userId
+  var beforeJson = JSON.stringify({
+    customerName: existing.display_name || "",
+    phone: existing.mobile || "",
+    birthday: existing.birthday || "",
+    note: existing.notes || ""
+  });
+  var afterJson = JSON.stringify({
+    customerName: name,
+    phone: phone,
+    birthday: birthday,
+    note: finalNote
+  });
+
+  await env.DB.batch([
+    env.DB.prepare(
+      "UPDATE customers SET " + sets.join(", ") +
+      " WHERE tenant_id = ?" + tenantIndex + " AND id = ?" + idIndex +
+      " AND deleted_at IS NULL"
+    ).bind(...binds),
+    env.DB.prepare(
+      "INSERT INTO audit_logs " +
+      "(id, tenant_id, actor_type, actor_id, action, entity_type, entity_id, " +
+      "source, before_json, after_json, created_at) " +
+      "VALUES (?1, ?2, 'staff', ?3, 'customer.update_by_owner', 'customer', ?4, " +
+      "'admin', ?5, ?6, ?7)"
+    ).bind(
+      crypto.randomUUID(),
+      env.TENANT_ID,
+      env.STAFF_ID,
+      id,
+      beforeJson,
+      afterJson,
+      now
+    )
+  ]);
+
+  return {
+    ok: true,
+    customer: {
+      customerId: id,
+      customerName: name,
+      phone: phone,
+      birthday: birthday,
+      note: finalNote
+    }
+  };
+}
+
 // ──────────────────────── bookings（建立預約） ───────────────────────────
 //
 // 對應資料表：bookings、booking_items、booking_status_logs（0002）。
@@ -1414,48 +1539,65 @@ export async function getOwnerBookingsForMonth(env, month) {
 // bookingCount 不會因多筆 items 重複計算。
 
 /**
- * 業主客戶目錄（與 notion.js 的 getOwnerCustomersFromBookings 相容）。
- * queryText 搜尋 customerName 或 phone：trim、不分英文大小寫、走 bind；
- * 用 instr(lower(...), lower(?)) 比對，% 與 _ 都是一般字元，不當萬用字元。
+ * 業主客戶名單（Phase 3c-1 改版：以 customers 為主表）。
+ *
+ * customers LEFT JOIN line_accounts LEFT JOIN bookings：
+ * 尚未預約、尚未綁定 LINE、CSV 匯入的客戶都必須出現。
+ * 沿用既有函式名稱以避免擴大改動，語意已是「所有客戶」而非
+ * 「有預約的客戶」。
+ *
+ * - tenant scoped；排除 deleted_at 非 NULL
+ * - bookings 只算六種可見狀態；line_accounts 有 UNIQUE(tenant, customer)
+ *   且不 JOIN booking_items，GROUP BY 後 bookingCount 不重複計數
+ * - queryText 搜尋 customerName／phone／customer_no：trim、走 bind、
+ *   用 instr(lower(...), lower(?))，% 與 _ 都是一般字元
+ * - 排序：最近預約日期新到舊，無預約者排最後，同組依 customerName zh-Hant
  */
 export async function getOwnerCustomersFromBookings(env, queryText) {
   ensureD1Env(env);
   var query = String(queryText || "").trim();
 
   var sql =
-    "SELECT la.line_user_id, c.display_name, c.mobile, c.birthday, c.notes, " +
-    "MAX(b.start_at) AS last_start_at, COUNT(*) AS booking_count " +
-    "FROM bookings b " +
-    "JOIN customers c ON c.tenant_id = b.tenant_id AND c.id = b.customer_id " +
-    "JOIN line_accounts la ON la.tenant_id = b.tenant_id AND la.customer_id = b.customer_id " +
-    "WHERE b.tenant_id = ?1 AND b.status IN " + BOOKING_VISIBLE_STATUSES + " ";
+    "SELECT c.id AS customer_id, c.display_name, c.mobile, c.birthday, " +
+    "c.notes, c.source, la.line_user_id, " +
+    "MAX(b.start_at) AS last_start_at, COUNT(b.id) AS booking_count " +
+    "FROM customers c " +
+    "LEFT JOIN line_accounts la ON la.tenant_id = c.tenant_id AND la.customer_id = c.id " +
+    "LEFT JOIN bookings b ON b.tenant_id = c.tenant_id AND b.customer_id = c.id " +
+    "AND b.status IN " + BOOKING_VISIBLE_STATUSES + " " +
+    "WHERE c.tenant_id = ?1 AND c.deleted_at IS NULL ";
 
   var binds = [env.TENANT_ID];
   if (query) {
     binds.push(query);
     sql +=
       "AND (instr(lower(c.display_name), lower(?2)) > 0 " +
-      "OR instr(lower(COALESCE(c.mobile, '')), lower(?2)) > 0) ";
+      "OR instr(lower(COALESCE(c.mobile, '')), lower(?2)) > 0 " +
+      "OR instr(lower(COALESCE(c.customer_no, '')), lower(?2)) > 0) ";
   }
 
-  sql += "GROUP BY la.line_user_id, c.id, c.display_name, c.mobile, c.birthday, c.notes";
+  sql += "GROUP BY c.id, c.display_name, c.mobile, c.birthday, c.notes, " +
+    "c.source, la.line_user_id";
 
   var result = await env.DB.prepare(sql).bind(...binds).all();
 
   var customers = (result.results || []).map(function (row) {
     return {
-      userId: row.line_user_id,
+      customerId: row.customer_id,
+      userId: row.line_user_id || "",
+      linkedLine: Boolean(row.line_user_id),
       customerName: row.display_name || "",
       phone: row.mobile || "",
       birthday: row.birthday || "",
       note: row.notes || "",
+      source: row.source || "",
       lastBookingDate: utcIsoToTaipeiDate(row.last_start_at),
       bookingCount: Number(row.booking_count) || 0
     };
   });
 
-  // 台北日期新到舊；同日依 customerName zh-Hant（與 notion.js 相同，
-  // localeCompare 無法下放 SQL，故在應用層排序）
+  // 台北日期新到舊；無預約（空字串）排最後；同組依 customerName zh-Hant
+  // （localeCompare 無法下放 SQL，故在應用層排序）
   customers.sort(function (a, b) {
     if (a.lastBookingDate > b.lastBookingDate) return -1;
     if (a.lastBookingDate < b.lastBookingDate) return 1;
@@ -1465,6 +1607,53 @@ export async function getOwnerCustomersFromBookings(env, queryText) {
   return {
     ok: true,
     customers: customers
+  };
+}
+
+/**
+ * 以 customerId 讀取客戶詳情（GET /api/owner/customers/by-id/:customerId）。
+ * 未綁 LINE／無預約仍正常回傳；deleted 客戶回 404；tenant scoped。
+ * bookings DTO 沿用 bookingDtoToOwnerDto（不含 note）；此資料僅業主 API
+ * 可取得，客戶端 API 無此路徑。
+ */
+export async function getOwnerCustomerById(env, customerId) {
+  ensureD1Env(env);
+  var id = String(customerId || "").trim();
+  if (!id) {
+    throw makeError("缺少 customerId", 400);
+  }
+
+  var customer = await env.DB.prepare(
+    "SELECT c.id AS customer_id, c.display_name, c.mobile, c.birthday, " +
+    "c.notes, c.source, la.line_user_id " +
+    "FROM customers c " +
+    "LEFT JOIN line_accounts la ON la.tenant_id = c.tenant_id AND la.customer_id = c.id " +
+    "WHERE c.tenant_id = ?1 AND c.id = ?2 AND c.deleted_at IS NULL"
+  ).bind(env.TENANT_ID, id).first();
+
+  if (!customer) {
+    throw makeError("找不到此客戶", 404);
+  }
+
+  var result = await env.DB.prepare(
+    BOOKING_SELECT_SQL +
+    "WHERE b.tenant_id = ?1 AND b.customer_id = ?2 " +
+    "AND b.status IN " + BOOKING_VISIBLE_STATUSES + " " +
+    "ORDER BY CASE WHEN b.status IN " + BOOKING_ACTIVE_STATUSES + " OR b.status = 'completed' " +
+    "THEN 0 ELSE 1 END ASC, b.start_at DESC"
+  ).bind(env.TENANT_ID, id).all();
+
+  return {
+    ok: true,
+    customerId: customer.customer_id,
+    userId: customer.line_user_id || "",
+    linkedLine: Boolean(customer.line_user_id),
+    customerName: customer.display_name || "",
+    phone: customer.mobile || "",
+    birthday: customer.birthday || "",
+    note: customer.notes || "",
+    source: customer.source || "",
+    bookings: (result.results || []).map(bookingRowToDto).map(bookingDtoToOwnerDto)
   };
 }
 
