@@ -1214,3 +1214,83 @@ export async function cancelBookingByOwner(env, bookingId, cancelReason) {
     canceledBy: "業主"
   };
 }
+
+// ──────────────────────── bookings（業主查詢） ───────────────────────────
+//
+// 業主看得到全部可見狀態（pending／confirmed／checked_in／completed／
+// cancelled_by_customer／cancelled_by_store＝BOOKING_VISIBLE_STATUSES），
+// 排除 no_show／rescheduled；狀態與取消者轉換沿用 bookingRowToDto。
+
+/** 與 notion.js 的 bookingToOwnerDto 相同的欄位子集 */
+function bookingDtoToOwnerDto(dto) {
+  return {
+    id: dto.id,
+    customerName: dto.customerName,
+    phone: dto.phone || "",
+    birthday: dto.birthday || "",
+    serviceName: dto.serviceName,
+    date: dto.date,
+    time: dto.time,
+    status: dto.status,
+    cancelReason: dto.cancelReason || "",
+    canceledBy: dto.canceledBy || "",
+    canceledAt: dto.canceledAt || ""
+  };
+}
+
+export async function getTodayBookingsForOwner(env, date) {
+  ensureD1Env(env);
+  var day = validateBookingDateParam(date);
+  var startUtc = taipeiDateToUtcIso(day);
+  var endUtc = new Date(new Date(startUtc).getTime() + 24 * 60 * 60 * 1000).toISOString();
+
+  var result = await env.DB.prepare(
+    BOOKING_SELECT_SQL +
+    "WHERE b.tenant_id = ?1 AND b.status IN " + BOOKING_VISIBLE_STATUSES + " " +
+    "AND b.start_at >= ?2 AND b.start_at < ?3 " +
+    "ORDER BY b.start_at ASC"
+  ).bind(env.TENANT_ID, startUtc, endUtc).all();
+
+  return (result.results || []).map(bookingRowToDto);
+}
+
+export async function getOwnerBookingsForMonth(env, month) {
+  ensureD1Env(env);
+  var range = parseBookingMonthParam(month);
+  var startUtc = taipeiDateToUtcIso(range.start);
+  var endUtc = taipeiDateToUtcIso(range.nextMonthFirst);
+
+  var result = await env.DB.prepare(
+    BOOKING_SELECT_SQL +
+    "WHERE b.tenant_id = ?1 AND b.status IN " + BOOKING_VISIBLE_STATUSES + " " +
+    "AND b.start_at >= ?2 AND b.start_at < ?3 " +
+    "ORDER BY b.start_at ASC"
+  ).bind(env.TENANT_ID, startUtc, endUtc).all();
+
+  var days = {};
+  (result.results || []).map(bookingRowToDto).forEach(function (dto) {
+    if (!dto.date) {
+      return;
+    }
+    if (!days[dto.date]) {
+      days[dto.date] = {
+        confirmedCount: 0,
+        canceledCount: 0,
+        bookings: []
+      };
+    }
+    if (dto.status === "已確認") {
+      days[dto.date].confirmedCount += 1;
+    } else if (dto.status === "已取消") {
+      days[dto.date].canceledCount += 1;
+    }
+    // 查詢已依 start_at ASC 排序，各日 bookings 天然由早到晚
+    days[dto.date].bookings.push(bookingDtoToOwnerDto(dto));
+  });
+
+  return {
+    ok: true,
+    month: range.month,
+    days: days
+  };
+}
