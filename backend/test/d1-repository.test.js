@@ -24,7 +24,9 @@ import {
   upsertCustomer,
   createBooking,
   cancelBooking,
-  cancelBookingByOwner
+  cancelBookingByOwner,
+  getTodayBookingsForOwner,
+  getOwnerBookingsForMonth
 } from "../src/d1-repository.js";
 
 var TENANT = "tenant-test-001";
@@ -1517,4 +1519,163 @@ test("cancelBookingByOwner changes=0 回 400；成功回傳 cancelReason 與 can
     cancelReason: "原因",
     canceledBy: "業主"
   });
+});
+
+// ── 業主查詢：今日與整月月曆 ─────────────────────────────────
+
+var VISIBLE_STATUS_LIST =
+  "('pending', 'confirmed', 'checked_in', 'completed', " +
+  "'cancelled_by_customer', 'cancelled_by_store')";
+
+test("getTodayBookingsForOwner 拒絕非法日期", async function () {
+  var db = makeFakeDb(function () { return []; });
+  var badDates = ["2026-02-30", "2026-13-01", "not-a-date"];
+  for (var i = 0; i < badDates.length; i++) {
+    await assert.rejects(
+      getTodayBookingsForOwner(makeEnv(db), badDates[i]),
+      /date 格式錯誤/
+    );
+  }
+  assert.equal(db.calls.length, 0);
+});
+
+test("getTodayBookingsForOwner 的 UTC bind 範圍對應台北日界", async function () {
+  var db = makeFakeDb(function () { return []; });
+  await getTodayBookingsForOwner(makeEnv(db), "2026-07-18");
+
+  var call = db.calls[0];
+  assert.deepEqual(call.binds, [
+    TENANT,
+    "2026-07-17T16:00:00.000Z",
+    "2026-07-18T16:00:00.000Z"
+  ]);
+  assert.match(call.sql, /b\.start_at >= \?2 AND b\.start_at < \?3/);
+});
+
+test("getTodayBookingsForOwner SQL 限 tenant、含六種可見狀態、排除 no_show／rescheduled、start_at ASC", async function () {
+  var db = makeFakeDb(function () { return []; });
+  await getTodayBookingsForOwner(makeEnv(db), "2026-07-18");
+
+  var sql = db.calls[0].sql;
+  assert.match(sql, /b\.tenant_id = \?1/);
+  assert.ok(sql.includes("b.status IN " + VISIBLE_STATUS_LIST));
+  assert.ok(!sql.includes("no_show"));
+  assert.ok(!sql.includes("rescheduled"));
+  assert.match(sql, /ORDER BY b\.start_at ASC/);
+});
+
+test("getTodayBookingsForOwner 回傳完整 DTO，台北時間與取消者轉換正確", async function () {
+  var db = makeFakeDb(function (sql, binds, method) {
+    if (method === "all") {
+      return [bookingRow({
+        status: "cancelled_by_store",
+        start_at: "2026-07-17T16:30:00.000Z",
+        cancelled_at: "2026-07-17T16:30:00.000Z",
+        cancellation_note: "店家調整"
+      })];
+    }
+    return null;
+  });
+
+  var bookings = await getTodayBookingsForOwner(makeEnv(db), "2026-07-18");
+  var dto = bookings[0];
+
+  assert.deepEqual(Object.keys(dto).sort(), [
+    "birthday", "cancelReason", "canceledAt", "canceledBy", "createdAt",
+    "customerName", "date", "id", "phone", "serviceId", "serviceName",
+    "status", "time", "title", "userId"
+  ]);
+  assert.equal(dto.date, "2026-07-18");
+  assert.equal(dto.time, "00:30");
+  assert.equal(dto.status, "已取消");
+  assert.equal(dto.canceledBy, "業主");
+  assert.equal(dto.canceledAt, "2026-07-18");
+  assert.equal(dto.cancelReason, "店家調整");
+});
+
+test("getOwnerBookingsForMonth 拒絕非法 month", async function () {
+  var db = makeFakeDb(function () { return []; });
+  var badMonths = ["2026-13", "2026-0", "abc"];
+  for (var i = 0; i < badMonths.length; i++) {
+    await assert.rejects(
+      getOwnerBookingsForMonth(makeEnv(db), badMonths[i]),
+      /month 格式錯誤/
+    );
+  }
+  assert.equal(db.calls.length, 0);
+});
+
+test("getOwnerBookingsForMonth 的 UTC bind 邊界正確且 SQL 限 tenant＋六種狀態", async function () {
+  var db = makeFakeDb(function () { return []; });
+  await getOwnerBookingsForMonth(makeEnv(db), "2026-07");
+
+  var call = db.calls[0];
+  assert.deepEqual(call.binds, [
+    TENANT,
+    "2026-06-30T16:00:00.000Z",
+    "2026-07-31T16:00:00.000Z"
+  ]);
+  assert.match(call.sql, /b\.tenant_id = \?1/);
+  assert.ok(call.sql.includes("b.status IN " + VISIBLE_STATUS_LIST));
+});
+
+test("getOwnerBookingsForMonth 計數、跨 UTC 分組、owner DTO 欄位與排序", async function () {
+  // 六種狀態同一台北日（7/18）：四種計 confirmedCount、兩種計 canceledCount。
+  // start_at 皆為 UTC 7/17 16:30～23:00（台北 7/18 00:30～07:00，跨 UTC 日期），
+  // 另加一筆台北 7/20，驗證依台北日期分組。
+  var rows = [
+    bookingRow({ id: "m1", status: "pending", start_at: "2026-07-17T16:30:00.000Z" }),
+    bookingRow({ id: "m2", status: "confirmed", start_at: "2026-07-17T18:00:00.000Z" }),
+    bookingRow({ id: "m3", status: "checked_in", start_at: "2026-07-17T20:00:00.000Z" }),
+    bookingRow({ id: "m4", status: "completed", start_at: "2026-07-17T22:00:00.000Z" }),
+    bookingRow({
+      id: "m5", status: "cancelled_by_customer",
+      start_at: "2026-07-17T22:30:00.000Z", cancelled_at: "2026-07-17T10:00:00.000Z"
+    }),
+    bookingRow({
+      id: "m6", status: "cancelled_by_store",
+      start_at: "2026-07-17T23:00:00.000Z", cancelled_at: "2026-07-17T10:00:00.000Z",
+      cancellation_note: "店家調整"
+    }),
+    bookingRow({ id: "m7", status: "confirmed", start_at: "2026-07-20T02:00:00.000Z" })
+  ];
+  var db = makeFakeDb(function (sql, binds, method) {
+    return method === "all" ? rows : null;
+  });
+
+  var result = await getOwnerBookingsForMonth(makeEnv(db), "2026-07");
+
+  assert.equal(result.ok, true);
+  assert.equal(result.month, "2026-07");
+  assert.deepEqual(Object.keys(result.days).sort(), ["2026-07-18", "2026-07-20"]);
+
+  var day18 = result.days["2026-07-18"];
+  assert.equal(day18.confirmedCount, 4, "pending/confirmed/checked_in/completed 皆計入");
+  assert.equal(day18.canceledCount, 2, "兩種 cancelled 皆計入");
+  assert.equal(day18.bookings.length, 6);
+
+  var day20 = result.days["2026-07-20"];
+  assert.equal(day20.confirmedCount, 1);
+  assert.equal(day20.canceledCount, 0);
+
+  // owner DTO 只含規定的 11 個欄位
+  day18.bookings.forEach(function (b) {
+    assert.deepEqual(Object.keys(b).sort(), [
+      "birthday", "cancelReason", "canceledAt", "canceledBy",
+      "customerName", "date", "id", "phone", "serviceName",
+      "status", "time"
+    ]);
+  });
+
+  // 每日 bookings 由早到晚（台北時間）
+  var times = day18.bookings.map(function (b) { return b.time; });
+  assert.deepEqual(times, times.slice().sort());
+  assert.equal(times[0], "00:30");
+  assert.equal(times[times.length - 1], "07:00");
+});
+
+test("getOwnerBookingsForMonth 空結果回傳 days:{}", async function () {
+  var db = makeFakeDb(function () { return []; });
+  var result = await getOwnerBookingsForMonth(makeEnv(db), "2026-07");
+  assert.deepEqual(result, { ok: true, month: "2026-07", days: {} });
 });
