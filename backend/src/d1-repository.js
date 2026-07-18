@@ -7,6 +7,7 @@
  * 對應資料表（backend/migrations/）：
  * - services（0001_init_core.sql）
  * - tenant_settings（0003_settings_schedules.sql，key-value）
+ * - staff_schedules（0003_settings_schedules.sql，僅 schedule_type='weekly'）
  *
  * DTO 相容規則：
  * - service：{ id, name, durationMinutes, price, description, status, sortOrder }
@@ -34,6 +35,17 @@ export function ensureD1Env(env) {
   }
   if (!env.TENANT_ID) {
     throw makeError("缺少 TENANT_ID 設定", 500);
+  }
+}
+
+/** slots 功能另需 location／staff 定位設定 */
+export function ensureD1SlotsEnv(env) {
+  ensureD1Env(env);
+  if (!env.LOCATION_ID) {
+    throw makeError("缺少 LOCATION_ID 設定", 500);
+  }
+  if (!env.STAFF_ID) {
+    throw makeError("缺少 STAFF_ID 設定", 500);
   }
 }
 
@@ -388,4 +400,145 @@ export async function updateSettings(env, patch) {
   }
 
   return getSettings(env);
+}
+
+// ──────────────────────────── weekly slots ───────────────────────────────
+
+/** index 即 staff_schedules.weekday（0=日 … 6=六），與 slots.js 標籤一致 */
+var SLOT_WEEKDAY_LABELS = ["日", "一", "二", "三", "四", "五", "六"];
+
+var TIME_HHMM_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+function weekdayLabelToIndex(label) {
+  var index = SLOT_WEEKDAY_LABELS.indexOf(String(label));
+  if (index === -1) {
+    throw makeError("星期格式錯誤，僅支援：日、一、二、三、四、五、六", 400);
+  }
+  return index;
+}
+
+function slotRowToDto(row) {
+  var weekdayLabel = SLOT_WEEKDAY_LABELS[Number(row.weekday)] || "";
+  var status = Number(row.is_available) === 1 ? "開放" : "關閉";
+  return {
+    id: row.id,
+    name: "週" + weekdayLabel + " " + row.start_time + "~" + row.end_time,
+    weekday: weekdayLabel,
+    startTime: row.start_time,
+    endTime: row.end_time,
+    status: status
+  };
+}
+
+/**
+ * 與 notion.js 的 listWeeklySlots 相容：只回傳「開放」時段。
+ */
+export async function listWeeklySlots(env) {
+  ensureD1SlotsEnv(env);
+
+  var result = await env.DB.prepare(
+    "SELECT id, weekday, start_time, end_time, is_available FROM staff_schedules " +
+    "WHERE tenant_id = ?1 AND location_id = ?2 AND staff_id = ?3 " +
+    "AND schedule_type = 'weekly' AND is_active = 1 AND is_available = 1 " +
+    "ORDER BY weekday ASC, start_time ASC"
+  ).bind(env.TENANT_ID, env.LOCATION_ID, env.STAFF_ID).all();
+
+  return (result.results || []).map(slotRowToDto);
+}
+
+/**
+ * 整批取代每週時段（與 notion.js 的 replaceWeeklySlots 行為一致：
+ * 缺 weekday／startTime／endTime 的列直接略過）。
+ * 只影響目前 tenant＋location＋staff 的 weekly rows；date_override 不動。
+ * 刪除＋新增放同一個 D1 batch（單一交易），失敗不留半套資料。
+ */
+export async function replaceWeeklySlots(env, slots) {
+  ensureD1SlotsEnv(env);
+
+  var now = nowIso();
+  var rows = [];
+  var seen = {};
+
+  (slots || []).forEach(function (slot) {
+    if (!slot || !slot.weekday || !slot.startTime || !slot.endTime) {
+      return;
+    }
+
+    var weekday = weekdayLabelToIndex(slot.weekday);
+    var startTime = String(slot.startTime).trim();
+    var endTime = String(slot.endTime).trim();
+
+    if (!TIME_HHMM_PATTERN.test(startTime) || !TIME_HHMM_PATTERN.test(endTime)) {
+      throw makeError("時間格式錯誤，請使用 HH:MM（24 小時制）", 400);
+    }
+    if (endTime <= startTime) {
+      throw makeError("結束時間必須晚於開始時間", 400);
+    }
+
+    var duplicateKey = weekday + "|" + startTime + "|" + endTime;
+    if (seen[duplicateKey]) {
+      throw makeError("時段重複：週" + SLOT_WEEKDAY_LABELS[weekday] + " " + startTime + "~" + endTime, 400);
+    }
+    seen[duplicateKey] = true;
+
+    var isAvailable;
+    if (slot.status === undefined || slot.status === null || slot.status === "") {
+      isAvailable = 1;
+    } else if (slot.status === "開放") {
+      isAvailable = 1;
+    } else if (slot.status === "關閉") {
+      isAvailable = 0;
+    } else {
+      throw makeError("時段狀態僅允許「開放」或「關閉」", 400);
+    }
+
+    rows.push({
+      id: crypto.randomUUID(),
+      weekday: weekday,
+      startTime: startTime,
+      endTime: endTime,
+      isAvailable: isAvailable
+    });
+  });
+
+  var statements = [
+    env.DB.prepare(
+      "DELETE FROM staff_schedules " +
+      "WHERE tenant_id = ?1 AND location_id = ?2 AND staff_id = ?3 " +
+      "AND schedule_type = 'weekly'"
+    ).bind(env.TENANT_ID, env.LOCATION_ID, env.STAFF_ID)
+  ];
+
+  rows.forEach(function (row) {
+    statements.push(
+      env.DB.prepare(
+        "INSERT INTO staff_schedules " +
+        "(id, tenant_id, location_id, staff_id, schedule_type, weekday, " +
+        "start_time, end_time, is_available, is_active, created_at, updated_at) " +
+        "VALUES (?1, ?2, ?3, ?4, 'weekly', ?5, ?6, ?7, ?8, 1, ?9, ?9)"
+      ).bind(
+        row.id,
+        env.TENANT_ID,
+        env.LOCATION_ID,
+        env.STAFF_ID,
+        row.weekday,
+        row.startTime,
+        row.endTime,
+        row.isAvailable,
+        now
+      )
+    );
+  });
+
+  await env.DB.batch(statements);
+
+  return rows.map(function (row) {
+    return slotRowToDto({
+      id: row.id,
+      weekday: row.weekday,
+      start_time: row.startTime,
+      end_time: row.endTime,
+      is_available: row.isAvailable
+    });
+  });
 }
