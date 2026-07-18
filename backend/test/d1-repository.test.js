@@ -21,7 +21,8 @@ import {
   getActiveBookingsByDate,
   getActiveBookingsByUser,
   getUserBookings,
-  upsertCustomer
+  upsertCustomer,
+  createBooking
 } from "../src/d1-repository.js";
 
 var TENANT = "tenant-test-001";
@@ -33,10 +34,17 @@ var STAFF = "staff-test-001";
  * - method 'all'   → rows 陣列
  * - method 'first' → 單列或 null
  * - method 'run'   → { meta: { changes } }（未回傳時預設 changes: 1）
+ *
+ * options.batchResults（選用，向後相容擴充）：
+ * function (statements, batchIndex) → 該次 batch 的結果陣列；
+ * 未提供時預設每筆 { meta: { changes: 1 } }。
+ * db.batches 記錄每一次 batch 的 statements；db.batchedStatements 為最後一次。
  */
-function makeFakeDb(handler) {
+function makeFakeDb(handler, options) {
+  var opts = options || {};
   var db = {
     calls: [],
+    batches: [],
     batchedStatements: null,
     prepare: function (sql) {
       return {
@@ -63,11 +71,16 @@ function makeFakeDb(handler) {
       };
     },
     batch: async function (statements) {
+      var batchIndex = db.batches.length;
+      db.batches.push(statements);
       db.batchedStatements = statements;
       statements.forEach(function (s) {
         db.calls.push({ sql: s.sql, binds: s.binds, method: "batch" });
       });
-      return [];
+      if (typeof opts.batchResults === "function") {
+        return opts.batchResults(statements, batchIndex);
+      }
+      return statements.map(function () { return { meta: { changes: 1 } }; });
     }
   };
   return db;
@@ -943,6 +956,256 @@ test("upsertCustomer DTO 欄位完整且輸入值只出現在 bind、不在 SQL"
   assert.equal(dto.userId, "U-upsert-user");
 
   var inputValues = ["U-upsert-user", "測試客", "0912345678", "1995-05-05", "小美"];
+  db.calls.forEach(function (call) {
+    inputValues.forEach(function (value) {
+      assert.ok(
+        !call.sql.includes(value),
+        "輸入值「" + value + "」不得拼接進 SQL"
+      );
+    });
+  });
+});
+
+// ── createBooking ────────────────────────────────────────────
+
+function bookingPayload(overrides) {
+  return Object.assign({
+    userId: "U-booking-user",
+    name: "測試客",
+    phone: "0912345678",
+    serviceId: "svc-1",
+    date: "2026-07-18",
+    time: "00:30"
+  }, overrides || {});
+}
+
+/**
+ * createBooking 情境用 DB：
+ * - services SELECT → opts.service（預設 active 服務）
+ * - line_accounts SELECT → opts.existingCustomer（預設既有客戶 cust-existing-1）
+ * - opts.batchResults 可指定 batch 結果
+ */
+function makeBookingDb(opts) {
+  var o = opts || {};
+  return makeFakeDb(function (sql, binds, method) {
+    if (method === "first" && /FROM services/.test(sql)) {
+      return o.service !== undefined ? o.service : serviceRow();
+    }
+    if (method === "first" && /FROM line_accounts la/.test(sql)) {
+      return o.existingCustomer !== undefined ? o.existingCustomer : existingCustomerRow();
+    }
+    return null;
+  }, { batchResults: o.batchResults });
+}
+
+function findBookingBatch(db) {
+  return db.batches.find(function (statements) {
+    return /INSERT INTO bookings /.test(statements[0].sql);
+  });
+}
+
+test("createBooking 缺 DB／TENANT_ID／LOCATION_ID／STAFF_ID 回 500", async function () {
+  var db = makeBookingDb();
+  var badEnvs = [
+    { TENANT_ID: TENANT, LOCATION_ID: LOCATION, STAFF_ID: STAFF },
+    { DB: db, LOCATION_ID: LOCATION, STAFF_ID: STAFF },
+    { DB: db, TENANT_ID: TENANT, STAFF_ID: STAFF },
+    { DB: db, TENANT_ID: TENANT, LOCATION_ID: LOCATION }
+  ];
+  for (var i = 0; i < badEnvs.length; i++) {
+    await assert.rejects(
+      createBooking(badEnvs[i], bookingPayload()),
+      function (error) {
+        assert.equal(error.status, 500);
+        return true;
+      }
+    );
+  }
+  assert.equal(db.calls.length, 0);
+});
+
+test("createBooking 輸入驗證逐項拒絕，且不觸發任何 SQL", async function () {
+  var cases = [
+    [{ userId: "" }, /缺少 LINE userId/],
+    [{ name: "   ", customerName: "" }, /請填寫姓名/],
+    [{ phone: "12ab34" }, /電話格式不正確/],
+    [{ birthday: "2026-02-30" }, /生日格式請使用 YYYY-MM-DD/],
+    [{ serviceId: "" }, /請選擇服務項目/],
+    [{ date: "2026-02-30" }, /date 格式錯誤/],
+    [{ time: "24:30" }, /時間格式錯誤/]
+  ];
+  for (var i = 0; i < cases.length; i++) {
+    var db = makeBookingDb();
+    await assert.rejects(
+      createBooking(makeSlotsEnv(db), bookingPayload(cases[i][0])),
+      cases[i][1]
+    );
+    assert.equal(db.calls.length, 0, "驗證失敗不得觸發 SQL：案例 " + i);
+  }
+});
+
+test("createBooking 的 service SELECT 限制 tenant；inactive 不建 customer 與 booking", async function () {
+  var db = makeBookingDb({ service: serviceRow({ status: "inactive" }) });
+  await assert.rejects(
+    createBooking(makeSlotsEnv(db), bookingPayload()),
+    /未開放預約/
+  );
+
+  var serviceSelect = db.calls[0];
+  assert.match(serviceSelect.sql, /FROM services WHERE tenant_id = \?1 AND id = \?2/);
+  assert.deepEqual(serviceSelect.binds, [TENANT, "svc-1"]);
+
+  var customerLookups = db.calls.filter(function (c) { return /FROM line_accounts/.test(c.sql); });
+  assert.equal(customerLookups.length, 0, "inactive 服務不得繼續查／建 customer");
+  assert.equal(db.batches.length, 0, "inactive 服務不得有任何寫入");
+});
+
+test("createBooking 先 upsertCustomer，booking 綁定回傳的 customer_id", async function () {
+  var db = makeBookingDb();
+  await createBooking(makeSlotsEnv(db), bookingPayload());
+
+  var bookingBatch = findBookingBatch(db);
+  assert.ok(bookingBatch, "應有 booking batch");
+  var bookingInsert = bookingBatch[0];
+  assert.equal(bookingInsert.binds[3], "cust-existing-1", "customer_id 必須來自 upsertCustomer");
+
+  var customerSelectIndex = db.calls.findIndex(function (c) { return /FROM line_accounts la/.test(c.sql); });
+  var bookingInsertIndex = db.calls.findIndex(function (c) { return /INSERT INTO bookings /.test(c.sql); });
+  assert.ok(customerSelectIndex < bookingInsertIndex, "upsertCustomer 必須先於 booking 寫入");
+});
+
+test("createBooking 台北時間轉 UTC：start_at／end_at／同日範圍", async function () {
+  var db = makeBookingDb();
+  await createBooking(makeSlotsEnv(db), bookingPayload({ date: "2026-07-18", time: "00:30" }));
+
+  var binds = findBookingBatch(db)[0].binds;
+  // 綁定順序：id, tenant, location, customer, staff, booking_no,
+  //           start_at, end_at, now, dayStart, dayEnd
+  assert.equal(binds[6], "2026-07-17T16:30:00.000Z");
+  assert.equal(binds[7], "2026-07-17T17:30:00.000Z", "end_at 應為 start_at＋60 分鐘");
+  assert.equal(binds[9], "2026-07-17T16:00:00.000Z", "同日下界＝台北 7/18 00:00");
+  assert.equal(binds[10], "2026-07-18T16:00:00.000Z", "同日上界＝台北 7/19 00:00");
+});
+
+test("createBooking 的 bookings INSERT 為條件式且同時檢查同日與重疊", async function () {
+  var db = makeBookingDb();
+  await createBooking(makeSlotsEnv(db), bookingPayload());
+
+  var sql = findBookingBatch(db)[0].sql;
+  assert.match(sql, /^INSERT INTO bookings [\s\S]*SELECT [\s\S]*WHERE NOT EXISTS/);
+  assert.match(sql, /b\.customer_id = \?4/);
+  assert.match(sql, /b\.start_at >= \?10 AND b\.start_at < \?11/);
+  assert.match(sql, /b\.staff_id = \?5/);
+  assert.match(sql, /b\.start_at < \?8 AND b\.end_at > \?7/);
+
+  var statusLists = sql.match(/status IN \([^)]*\)/g) || [];
+  assert.equal(statusLists.length, 2, "同日與重疊檢查各一組 active statuses");
+  statusLists.forEach(function (list) {
+    assert.equal(list, "status IN ('pending', 'confirmed', 'checked_in')");
+  });
+});
+
+test("createBooking 三筆寫入同一 batch 且順序正確，items／log 以 WHERE EXISTS 依附", async function () {
+  var db = makeBookingDb();
+  await createBooking(makeSlotsEnv(db), bookingPayload());
+
+  var bookingBatch = findBookingBatch(db);
+  assert.equal(bookingBatch.length, 3);
+  assert.match(bookingBatch[0].sql, /^INSERT INTO bookings /);
+  assert.match(bookingBatch[1].sql, /^INSERT INTO booking_items /);
+  assert.match(bookingBatch[2].sql, /^INSERT INTO booking_status_logs /);
+
+  var guard = /WHERE EXISTS \(SELECT 1 FROM bookings WHERE tenant_id = \?2 AND id = \?3\)/;
+  assert.match(bookingBatch[1].sql, guard);
+  assert.match(bookingBatch[2].sql, guard);
+
+  var bookingId = bookingBatch[0].binds[0];
+  assert.equal(bookingBatch[1].binds[2], bookingId);
+  assert.equal(bookingBatch[2].binds[2], bookingId);
+});
+
+test("booking_items 保存 service ID、名稱、時長、價格快照", async function () {
+  var db = makeBookingDb();
+  await createBooking(makeSlotsEnv(db), bookingPayload());
+
+  var itemInsert = findBookingBatch(db)[1];
+  // 綁定順序：id, tenant, booking_id, service_id, name, duration, price, now
+  assert.equal(itemInsert.binds[3], "svc-1");
+  assert.equal(itemInsert.binds[4], "基礎護理");
+  assert.equal(itemInsert.binds[5], 60);
+  assert.equal(itemInsert.binds[6], 1200);
+});
+
+test("status log 為 NULL→confirmed、changed_by_type='customer'", async function () {
+  var db = makeBookingDb();
+  await createBooking(makeSlotsEnv(db), bookingPayload());
+
+  var logInsert = findBookingBatch(db)[2];
+  assert.match(logInsert.sql, /SELECT \?1, \?2, \?3, NULL, 'confirmed', 'customer', \?4, \?5/);
+  assert.equal(logInsert.binds[3], "cust-existing-1");
+});
+
+test("bookings changes=0 時回 400 並提示重疊或同日已有預約", async function () {
+  var db = makeBookingDb({
+    batchResults: function (statements) {
+      if (/INSERT INTO bookings /.test(statements[0].sql)) {
+        return statements.map(function () { return { meta: { changes: 0 } }; });
+      }
+      return statements.map(function () { return { meta: { changes: 1 } }; });
+    }
+  });
+
+  await assert.rejects(
+    createBooking(makeSlotsEnv(db), bookingPayload()),
+    function (error) {
+      assert.equal(error.status, 400);
+      assert.match(error.message, /重疊/);
+      assert.match(error.message, /同一天已有預約/);
+      return true;
+    }
+  );
+});
+
+test("changes=1 時回傳 ok、預約成功與完整相容 DTO", async function () {
+  var db = makeBookingDb();
+  var result = await createBooking(makeSlotsEnv(db), bookingPayload({ birthday: "1995-05-05" }));
+
+  assert.equal(result.ok, true);
+  assert.equal(result.message, "預約成功");
+
+  var booking = result.booking;
+  assert.deepEqual(Object.keys(booking).sort(), [
+    "birthday", "cancelReason", "canceledAt", "canceledBy", "createdAt",
+    "customerName", "date", "id", "phone", "serviceId", "serviceName",
+    "status", "time", "title", "userId"
+  ]);
+  assert.match(booking.id, UUID_PATTERN);
+  assert.equal(booking.userId, "U-booking-user");
+  assert.equal(booking.customerName, "測試客");
+  assert.equal(booking.phone, "0912345678");
+  assert.equal(booking.birthday, "1995-05-05");
+  assert.equal(booking.serviceId, "svc-1");
+  assert.equal(booking.serviceName, "基礎護理");
+  assert.equal(booking.date, "2026-07-18");
+  assert.equal(booking.time, "00:30");
+  assert.equal(booking.status, "已確認");
+  assert.equal(booking.cancelReason, "");
+  assert.equal(booking.canceledBy, "");
+  assert.equal(booking.canceledAt, "");
+  assert.ok(booking.createdAt);
+});
+
+test("booking_no 以 BK- 開頭且不含姓名、電話、LINE userId；輸入只在 bind", async function () {
+  var db = makeBookingDb();
+  var result = await createBooking(makeSlotsEnv(db), bookingPayload());
+
+  var bookingNo = result.booking.title;
+  assert.match(bookingNo, /^BK-/);
+  assert.ok(!bookingNo.includes("測試客"));
+  assert.ok(!bookingNo.includes("0912345678"));
+  assert.ok(!bookingNo.includes("U-booking-user"));
+
+  var inputValues = ["U-booking-user", "測試客", "0912345678", "00:30"];
   db.calls.forEach(function (call) {
     inputValues.forEach(function (value) {
       assert.ok(
