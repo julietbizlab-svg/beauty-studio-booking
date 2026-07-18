@@ -1,5 +1,6 @@
 backend/.dev.vars
 backend/.env
 backend/node_modules/
+backend/.wrangler/
 *.pem
 .DS_Store
