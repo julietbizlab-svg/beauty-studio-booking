@@ -14,10 +14,14 @@ import {
   createService,
   updateService,
   getSettings,
-  updateSettings
+  updateSettings,
+  listWeeklySlots,
+  replaceWeeklySlots
 } from "../src/d1-repository.js";
 
 var TENANT = "tenant-test-001";
+var LOCATION = "location-test-001";
+var STAFF = "staff-test-001";
 
 /**
  * handler(sql, binds, method) 依測試情境回傳：
@@ -66,6 +70,10 @@ function makeFakeDb(handler) {
 
 function makeEnv(db) {
   return { DB: db, TENANT_ID: TENANT };
+}
+
+function makeSlotsEnv(db) {
+  return { DB: db, TENANT_ID: TENANT, LOCATION_ID: LOCATION, STAFF_ID: STAFF };
 }
 
 function serviceRow(overrides) {
@@ -345,4 +353,216 @@ test("開啟訂金但金額無效時拒絕", async function () {
     /訂金金額須大於 0/
   );
   assert.equal(db.calls.length, 0);
+});
+
+// ── weekly slots：環境設定 ───────────────────────────────────
+
+test("缺少 LOCATION_ID 時回 500 且不洩漏實際值", async function () {
+  var db = makeFakeDb();
+  await assert.rejects(
+    listWeeklySlots({ DB: db, TENANT_ID: TENANT, STAFF_ID: STAFF }),
+    function (error) {
+      assert.equal(error.status, 500);
+      assert.match(error.message, /LOCATION_ID/);
+      assert.ok(!error.message.includes(TENANT));
+      assert.ok(!error.message.includes(STAFF));
+      return true;
+    }
+  );
+  assert.equal(db.calls.length, 0);
+});
+
+test("缺少 STAFF_ID 時回 500 且不洩漏實際值", async function () {
+  var db = makeFakeDb();
+  await assert.rejects(
+    replaceWeeklySlots({ DB: db, TENANT_ID: TENANT, LOCATION_ID: LOCATION }, []),
+    function (error) {
+      assert.equal(error.status, 500);
+      assert.match(error.message, /STAFF_ID/);
+      assert.ok(!error.message.includes(TENANT));
+      assert.ok(!error.message.includes(LOCATION));
+      return true;
+    }
+  );
+  assert.equal(db.calls.length, 0);
+});
+
+// ── listWeeklySlots ──────────────────────────────────────────
+
+test("listWeeklySlots 綁定 tenant/location/staff、只查 weekly 開放時段、DTO 相容", async function () {
+  var db = makeFakeDb(function (sql, binds, method) {
+    if (method === "all") {
+      return [
+        { id: "slot-sun", weekday: 0, start_time: "10:00", end_time: "12:00", is_available: 1 },
+        { id: "slot-sat", weekday: 6, start_time: "14:00", end_time: "18:00", is_available: 1 }
+      ];
+    }
+    return null;
+  });
+
+  var slots = await listWeeklySlots(makeSlotsEnv(db));
+
+  var call = db.calls[0];
+  assert.deepEqual(call.binds, [TENANT, LOCATION, STAFF]);
+  assert.match(call.sql, /schedule_type = 'weekly'/);
+  assert.match(call.sql, /is_active = 1/);
+  assert.match(call.sql, /is_available = 1/);
+
+  assert.deepEqual(slots, [
+    {
+      id: "slot-sun",
+      name: "週日 10:00~12:00",
+      weekday: "日",
+      startTime: "10:00",
+      endTime: "12:00",
+      status: "開放"
+    },
+    {
+      id: "slot-sat",
+      name: "週六 14:00~18:00",
+      weekday: "六",
+      startTime: "14:00",
+      endTime: "18:00",
+      status: "開放"
+    }
+  ]);
+});
+
+// ── replaceWeeklySlots：範圍與 batch ─────────────────────────
+
+test("replaceWeeklySlots 的 DELETE 限制 tenant/location/staff/weekly，不含 date_override", async function () {
+  var db = makeFakeDb();
+  await replaceWeeklySlots(makeSlotsEnv(db), [
+    { weekday: "一", startTime: "10:00", endTime: "18:00" }
+  ]);
+
+  var deletes = db.batchedStatements.filter(function (s) { return /^DELETE/.test(s.sql); });
+  assert.equal(deletes.length, 1);
+  var del = deletes[0];
+  assert.match(del.sql, /tenant_id = \?\d+/);
+  assert.match(del.sql, /location_id = \?\d+/);
+  assert.match(del.sql, /staff_id = \?\d+/);
+  assert.match(del.sql, /schedule_type = 'weekly'/);
+  assert.ok(!del.sql.includes("date_override"));
+  assert.deepEqual(del.binds, [TENANT, LOCATION, STAFF]);
+});
+
+test("replaceWeeklySlots 的 DELETE 與 INSERT 在同一次 batch", async function () {
+  var db = makeFakeDb();
+  await replaceWeeklySlots(makeSlotsEnv(db), [
+    { weekday: "一", startTime: "10:00", endTime: "12:00" },
+    { weekday: "二", startTime: "13:00", endTime: "18:00" }
+  ]);
+
+  assert.ok(db.batchedStatements, "應使用 batch");
+  assert.equal(db.batchedStatements.length, 3);
+  assert.match(db.batchedStatements[0].sql, /^DELETE/);
+  assert.match(db.batchedStatements[1].sql, /^INSERT INTO staff_schedules/);
+  assert.match(db.batchedStatements[2].sql, /^INSERT INTO staff_schedules/);
+});
+
+test("replaceWeeklySlots 空陣列時只執行 scoped DELETE", async function () {
+  var db = makeFakeDb();
+  var result = await replaceWeeklySlots(makeSlotsEnv(db), []);
+
+  assert.equal(db.batchedStatements.length, 1);
+  assert.match(db.batchedStatements[0].sql, /^DELETE/);
+  assert.deepEqual(db.batchedStatements[0].binds, [TENANT, LOCATION, STAFF]);
+  assert.deepEqual(result, []);
+});
+
+test("replaceWeeklySlots 的 INSERT 正確綁定 weekday、時間、is_available", async function () {
+  var db = makeFakeDb();
+  await replaceWeeklySlots(makeSlotsEnv(db), [
+    { weekday: "三", startTime: "09:00", endTime: "17:30", status: "關閉" }
+  ]);
+
+  var insert = db.batchedStatements[1];
+  // 綁定順序：id, tenant, location, staff, weekday, start, end, is_available, now
+  assert.equal(insert.binds[1], TENANT);
+  assert.equal(insert.binds[2], LOCATION);
+  assert.equal(insert.binds[3], STAFF);
+  assert.equal(insert.binds[4], 3);
+  assert.equal(insert.binds[5], "09:00");
+  assert.equal(insert.binds[6], "17:30");
+  assert.equal(insert.binds[7], 0);
+});
+
+// ── replaceWeeklySlots：驗證拒絕 ─────────────────────────────
+
+test("replaceWeeklySlots 拒絕非法星期", async function () {
+  var db = makeFakeDb();
+  await assert.rejects(
+    replaceWeeklySlots(makeSlotsEnv(db), [
+      { weekday: "週八", startTime: "10:00", endTime: "12:00" }
+    ]),
+    /星期格式錯誤/
+  );
+  assert.equal(db.batchedStatements, null);
+});
+
+test("replaceWeeklySlots 拒絕非 HH:MM 時間", async function () {
+  var db = makeFakeDb();
+  await assert.rejects(
+    replaceWeeklySlots(makeSlotsEnv(db), [
+      { weekday: "一", startTime: "9:00", endTime: "12:00" }
+    ]),
+    /HH:MM/
+  );
+  assert.equal(db.batchedStatements, null);
+});
+
+test("replaceWeeklySlots 拒絕 endTime <= startTime", async function () {
+  var db = makeFakeDb();
+  await assert.rejects(
+    replaceWeeklySlots(makeSlotsEnv(db), [
+      { weekday: "一", startTime: "12:00", endTime: "12:00" }
+    ]),
+    /結束時間必須晚於開始時間/
+  );
+  assert.equal(db.batchedStatements, null);
+});
+
+test("replaceWeeklySlots 拒絕重複時段", async function () {
+  var db = makeFakeDb();
+  await assert.rejects(
+    replaceWeeklySlots(makeSlotsEnv(db), [
+      { weekday: "一", startTime: "10:00", endTime: "12:00" },
+      { weekday: "一", startTime: "10:00", endTime: "12:00" }
+    ]),
+    /時段重複/
+  );
+  assert.equal(db.batchedStatements, null);
+});
+
+test("replaceWeeklySlots 拒絕非法 status", async function () {
+  var db = makeFakeDb();
+  await assert.rejects(
+    replaceWeeklySlots(makeSlotsEnv(db), [
+      { weekday: "一", startTime: "10:00", endTime: "12:00", status: "暫停" }
+    ]),
+    /僅允許「開放」或「關閉」/
+  );
+  assert.equal(db.batchedStatements, null);
+});
+
+// ── replaceWeeklySlots：status 轉換 ──────────────────────────
+
+test("status 開放／關閉／未提供 正確轉成 1／0／1", async function () {
+  var db = makeFakeDb();
+  var result = await replaceWeeklySlots(makeSlotsEnv(db), [
+    { weekday: "一", startTime: "10:00", endTime: "12:00", status: "開放" },
+    { weekday: "二", startTime: "10:00", endTime: "12:00", status: "關閉" },
+    { weekday: "三", startTime: "10:00", endTime: "12:00" }
+  ]);
+
+  var inserts = db.batchedStatements.filter(function (s) { return /^INSERT/.test(s.sql); });
+  assert.deepEqual(
+    inserts.map(function (s) { return s.binds[7]; }),
+    [1, 0, 1]
+  );
+  assert.deepEqual(
+    result.map(function (r) { return r.status; }),
+    ["開放", "關閉", "開放"]
+  );
 });
