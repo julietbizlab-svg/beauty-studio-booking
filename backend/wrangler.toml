@@ -4,3 +4,9 @@ compatibility_date = "2024-01-01"
 
 [vars]
 STUDIO_NAME = "美業工作室"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "juliet-ai-db"
+database_id = "4d680020-e5e7-4719-a0fd-fdd53373f895"
+migrations_dir = "migrations"
