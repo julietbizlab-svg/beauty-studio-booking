@@ -1294,3 +1294,108 @@ export async function getOwnerBookingsForMonth(env, month) {
     days: days
   };
 }
+
+// ──────────────────── bookings（業主客戶目錄） ───────────────────────────
+//
+// 客戶一律經 customers＋line_accounts＋bookings 三表關聯（全部限制
+// tenant_id）；只列出至少有一筆可見 booking（BOOKING_VISIBLE_STATUSES，
+// 排除 no_show／rescheduled）的客戶。彙總查詢不 JOIN booking_items，
+// bookingCount 不會因多筆 items 重複計算。
+
+/**
+ * 業主客戶目錄（與 notion.js 的 getOwnerCustomersFromBookings 相容）。
+ * queryText 搜尋 customerName 或 phone：trim、不分英文大小寫、走 bind；
+ * 用 instr(lower(...), lower(?)) 比對，% 與 _ 都是一般字元，不當萬用字元。
+ */
+export async function getOwnerCustomersFromBookings(env, queryText) {
+  ensureD1Env(env);
+  var query = String(queryText || "").trim();
+
+  var sql =
+    "SELECT la.line_user_id, c.display_name, c.mobile, c.birthday, " +
+    "MAX(b.start_at) AS last_start_at, COUNT(*) AS booking_count " +
+    "FROM bookings b " +
+    "JOIN customers c ON c.tenant_id = b.tenant_id AND c.id = b.customer_id " +
+    "JOIN line_accounts la ON la.tenant_id = b.tenant_id AND la.customer_id = b.customer_id " +
+    "WHERE b.tenant_id = ?1 AND b.status IN " + BOOKING_VISIBLE_STATUSES + " ";
+
+  var binds = [env.TENANT_ID];
+  if (query) {
+    binds.push(query);
+    sql +=
+      "AND (instr(lower(c.display_name), lower(?2)) > 0 " +
+      "OR instr(lower(COALESCE(c.mobile, '')), lower(?2)) > 0) ";
+  }
+
+  sql += "GROUP BY la.line_user_id, c.id, c.display_name, c.mobile, c.birthday";
+
+  var result = await env.DB.prepare(sql).bind(...binds).all();
+
+  var customers = (result.results || []).map(function (row) {
+    return {
+      userId: row.line_user_id,
+      customerName: row.display_name || "",
+      phone: row.mobile || "",
+      birthday: row.birthday || "",
+      lastBookingDate: utcIsoToTaipeiDate(row.last_start_at),
+      bookingCount: Number(row.booking_count) || 0
+    };
+  });
+
+  // 台北日期新到舊；同日依 customerName zh-Hant（與 notion.js 相同，
+  // localeCompare 無法下放 SQL，故在應用層排序）
+  customers.sort(function (a, b) {
+    if (a.lastBookingDate > b.lastBookingDate) return -1;
+    if (a.lastBookingDate < b.lastBookingDate) return 1;
+    return String(a.customerName || "").localeCompare(String(b.customerName || ""), "zh-Hant");
+  });
+
+  return {
+    ok: true,
+    customers: customers
+  };
+}
+
+/**
+ * 指定客戶歷史預約（與 notion.js 的 getOwnerCustomerBookings 相容）。
+ * 以 line_accounts.line_user_id 定位客戶（userId 不當 customer_id 用）；
+ * 已確認（含 completed）在前、已取消在後，各組依 start_at 新到舊。
+ * customerName／phone／birthday 取 customers 目前資料（JOIN 後每列相同）。
+ */
+export async function getOwnerCustomerBookings(env, userId) {
+  ensureD1Env(env);
+  var id = String(userId || "").trim();
+  if (!id) {
+    throw makeError("缺少 userId", 400);
+  }
+
+  var result = await env.DB.prepare(
+    BOOKING_SELECT_SQL +
+    "WHERE b.tenant_id = ?1 AND la.line_user_id = ?2 " +
+    "AND b.status IN " + BOOKING_VISIBLE_STATUSES + " " +
+    "ORDER BY CASE WHEN b.status IN " + BOOKING_ACTIVE_STATUSES + " OR b.status = 'completed' " +
+    "THEN 0 ELSE 1 END ASC, b.start_at DESC"
+  ).bind(env.TENANT_ID, id).all();
+
+  var dtos = (result.results || []).map(bookingRowToDto);
+
+  if (!dtos.length) {
+    return {
+      ok: true,
+      userId: id,
+      customerName: "",
+      phone: "",
+      birthday: "",
+      bookings: []
+    };
+  }
+
+  return {
+    ok: true,
+    userId: id,
+    customerName: dtos[0].customerName,
+    phone: dtos[0].phone || "",
+    birthday: dtos[0].birthday || "",
+    bookings: dtos.map(bookingDtoToOwnerDto)
+  };
+}
