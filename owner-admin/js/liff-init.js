@@ -43,7 +43,11 @@
   }
 
   function getRedirectUri() {
-    return window.location.href;
+    var url = new URL(window.location.href);
+    ["code", "state", "liffRedirectUri", "liffClientId", "liff.state"].forEach(function (key) {
+      url.searchParams.delete(key);
+    });
+    return url.origin + url.pathname + (url.searchParams.toString() ? "?" + url.searchParams.toString() : "");
   }
 
   function clearBeautyToken() {

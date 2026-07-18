@@ -34,6 +34,15 @@
     return error;
   }
 
+  function looksLikeTokenExpiredMessage(message) {
+    var msg = String(message || "").toLowerCase();
+    return msg.indexOf("access token") !== -1 ||
+      msg.indexOf("expired") !== -1 ||
+      msg.indexOf("token") !== -1 ||
+      String(message || "").indexOf("登入過期") !== -1 ||
+      String(message || "").indexOf("憑證") !== -1;
+  }
+
   async function apiFetch(path, options) {
     var baseUrl = getApiBaseUrl();
     if (!baseUrl) {
@@ -65,7 +74,7 @@
 
     if (!response.ok) {
       var message = (body && body.message) ? body.message : "伺服器回應錯誤（" + response.status + "）";
-      if (response.status === 401) {
+      if (response.status === 401 || looksLikeTokenExpiredMessage(message)) {
         if (triggerOwnerReLogin()) {
           throw makeAuthError("登入已過期，正在重新導向 LINE 登入…");
         }
