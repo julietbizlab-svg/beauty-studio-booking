@@ -664,25 +664,47 @@ test("靜態檢查：Demo v1／customer-ui 不含照片功能程式碼", functio
   });
 });
 
-test("靜態檢查：照片以 object-fit: contain 完整顯示，不使用 cover 裁切", function () {
+test("靜態檢查：照片依原始比例自然顯示，不裁切、不用固定比例盒", function () {
   var css = readFileSync(join(repoRoot, "owner-admin/css/style.css"), "utf8");
 
   var photoImgRule = css.match(/\.photo-img\s*\{[^}]*\}/);
   assert.ok(photoImgRule, ".photo-img 樣式必須存在");
   var rule = photoImgRule[0];
-  assert.ok(rule.indexOf("object-fit: contain") !== -1,
-    ".photo-img 必須使用 object-fit: contain");
-  assert.ok(rule.indexOf("object-position: center") !== -1,
-    "照片必須置中顯示");
-  assert.ok(rule.indexOf("aspect-ratio") !== -1,
-    "必須有穩定的顯示盒比例，避免撐破詳情視窗");
-  assert.ok(rule.indexOf("max-width") !== -1 && rule.indexOf("max-height") !== -1,
-    "圖片不得超出容器");
-  assert.ok(rule.indexOf("background") !== -1,
-    "留白區必須有中性背景");
+  assert.ok(rule.indexOf("width: 100%") !== -1, "圖片寬度必須貼齊欄寬");
+  assert.ok(rule.indexOf("max-width: 100%") !== -1, "圖片不得超出容器");
+  assert.ok(rule.indexOf("height: auto") !== -1, "高度必須依原始比例自動推得");
+  assert.ok(rule.indexOf("display: block") !== -1);
+  assert.ok(rule.indexOf("aspect-ratio") === -1,
+    "不得使用固定比例盒（會產生留白）");
+  assert.ok(rule.indexOf("max-height") === -1, "不得以 max-height 截斷照片");
+  assert.ok(!/height:\s*\d/.test(rule), "不得設定固定 height");
+  assert.ok(rule.indexOf("padding") === -1 && rule.indexOf("background") === -1,
+    "不得以背景／padding 產生固定空白盒");
 
   assert.ok(css.indexOf("object-fit: cover") === -1,
     "照片相關樣式不得使用 object-fit: cover 裁切");
+});
+
+test("靜態檢查：手機仍維持 Before／After 左右兩欄，按鈕可讀可點", function () {
+  var css = readFileSync(join(repoRoot, "owner-admin/css/style.css"), "utf8");
+
+  var slotRule = css.match(/\.photo-slot\s*\{[^}]*\}/);
+  assert.ok(slotRule, ".photo-slot 樣式必須存在");
+  assert.ok(/flex:\s*1 1 calc\(50%/.test(slotRule[0]),
+    ".photo-slot 必須維持兩欄各半");
+  assert.ok(slotRule[0].indexOf("min-width: 0") !== -1,
+    ".photo-slot 必須可安全縮小避免溢出");
+
+  assert.ok(!/\.photo-slot[^{]*\{[^}]*flex-basis:\s*100%/.test(css),
+    "不得存在 .photo-slot flex-basis: 100% 的上下排列規則");
+
+  var compareRule = css.match(/\.photo-compare\s*\{[^}]*\}/);
+  assert.ok(compareRule && compareRule[0].indexOf("flex-start") !== -1,
+    "兩欄圖片必須頂端對齊");
+
+  var actionsBtnRule = css.match(/\.photo-slot-actions \.btn\s*\{[^}]*\}/);
+  assert.ok(actionsBtnRule && actionsBtnRule[0].indexOf("min-height: 44px") !== -1,
+    "觸控按鈕高度至少 44px");
 });
 
 test("靜態副本：owner-admin ↔ docs/owner 完全一致", function () {

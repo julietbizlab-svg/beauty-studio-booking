@@ -752,16 +752,18 @@ textarea { min-height: 72px; resize: vertical; }
   color: var(--muted);
 }
 
+/* Before／After 桌機與手機一律左右兩欄；圖片頂端對齊，
+   允許兩張因原始比例不同而高度不同 */
 .photo-compare {
   display: flex;
-  flex-wrap: wrap;
+  align-items: flex-start;
   gap: 10px;
   margin-top: 10px;
 }
 
 .photo-slot {
-  flex: 1 1 calc(50% - 10px);
-  min-width: 140px;
+  flex: 1 1 calc(50% - 5px);
+  min-width: 0;
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 8px;
@@ -774,19 +776,14 @@ textarea { min-height: 72px; resize: vertical; }
   font-weight: 600;
 }
 
-/* 固定 4:3 顯示盒＋contain：橫式、直式、方形照片都完整置中呈現，
-   不裁切、不變形；留白處以中性背景填滿 */
+/* 照片依原始比例自然顯示：寬度貼齊欄寬、高度自動推得，
+   不裁切、不拉伸、不使用固定比例盒，因此不會產生留白 */
 .photo-img {
   display: block;
   width: 100%;
   max-width: 100%;
-  aspect-ratio: 4 / 3;
   height: auto;
-  max-height: 320px;
-  object-fit: contain;
-  object-position: center;
   border-radius: 6px;
-  background: var(--bg);
 }
 
 .photo-empty {
@@ -817,17 +814,25 @@ textarea { min-height: 72px; resize: vertical; }
 }
 
 .photo-slot-actions .btn {
-  min-height: 40px;
+  min-height: 44px;
   flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .photo-file-input[hidden] {
   display: none;
 }
 
+/* 手機仍維持 Before／After 左右兩欄；
+   半欄過窄時操作按鈕改上下排列，維持可讀可點 */
 @media (max-width: 420px) {
-  .photo-slot {
-    flex-basis: 100%;
+  .photo-slot-actions {
+    flex-direction: column;
+  }
+
+  .photo-slot-actions .btn {
+    width: 100%;
   }
 }
 
