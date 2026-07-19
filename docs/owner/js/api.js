@@ -172,6 +172,43 @@
       );
     },
 
+    getCustomerById: function (customerId) {
+      return apiFetch(
+        "/api/owner/customers/by-id/" + encodeURIComponent(customerId || "")
+      );
+    },
+
+    updateCustomerById: function (customerId, data) {
+      return apiFetch(
+        "/api/owner/customers/by-id/" + encodeURIComponent(customerId || ""),
+        {
+          method: "PATCH",
+          body: JSON.stringify(data || {})
+        }
+      );
+    },
+
+    previewCustomerImport: function (csvText, mapping) {
+      return apiFetch("/api/owner/customers/import/preview", {
+        method: "POST",
+        body: JSON.stringify({
+          csvText: csvText,
+          mapping: mapping || {}
+        })
+      });
+    },
+
+    commitCustomerImport: function (csvText, mapping, canonicalHash) {
+      return apiFetch("/api/owner/customers/import/commit", {
+        method: "POST",
+        body: JSON.stringify({
+          csvText: csvText,
+          mapping: mapping || {},
+          canonicalHash: canonicalHash
+        })
+      });
+    },
+
     isConfigured: function () {
       return Boolean(getApiBaseUrl());
     }

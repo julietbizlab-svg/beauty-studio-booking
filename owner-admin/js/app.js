@@ -610,13 +610,13 @@
     if (!customers.length) {
       container.innerHTML = state.customerQuery
         ? '<div class="empty">找不到符合的客戶</div>'
-        : '<div class="empty">目前尚無客戶資料（需有預約紀錄）</div>';
+        : '<div class="empty">目前尚無客戶資料，可從預約或 CSV 匯入建立</div>';
       return;
     }
 
     container.innerHTML = customers.map(function (c) {
       return (
-        '<button type="button" class="card customer-card" data-user-id="' + escapeHtml(c.userId) + '">' +
+        '<button type="button" class="card customer-card" data-customer-id="' + escapeHtml(c.customerId) + '">' +
           '<div class="customer-card-head">' +
             '<span class="customer-name">' + escapeHtml(c.customerName || "客人") + '</span>' +
             '<span class="customer-count">預約 ' + Number(c.bookingCount || 0) + ' 次</span>' +
@@ -634,9 +634,9 @@
       );
     }).join("");
 
-    container.querySelectorAll("[data-user-id]").forEach(function (btn) {
+    container.querySelectorAll("[data-customer-id]").forEach(function (btn) {
       btn.addEventListener("click", function () {
-        openCustomerDetail(btn.getAttribute("data-user-id")).catch(function (e) {
+        openCustomerDetail(btn.getAttribute("data-customer-id")).catch(function (e) {
           setStatus("error", e.message);
         });
       });
@@ -654,8 +654,13 @@
   }
 
   function renderCustomerDetailHeader(detail) {
+    // LINE 狀態只以 linkedLine 布林呈現，不顯示 LINE userId
+    var lineBadge = detail.linkedLine === true
+      ? '<span class="line-status line-status--linked">已綁定 LINE</span>'
+      : '<span class="line-status line-status--unlinked">未綁定 LINE</span>';
     els.customerDetailHeader.innerHTML =
       '<h3 class="customer-name">' + escapeHtml(detail.customerName || "客人") + "</h3>" +
+      '<p class="customer-meta">' + lineBadge + "</p>" +
       (detail.phone
         ? '<p class="customer-meta">電話：' + escapeHtml(detail.phone) + "</p>"
         : '<p class="customer-meta muted">電話：未填寫</p>') +
@@ -713,10 +718,10 @@
     }
   }
 
-  async function openCustomerDetail(userId) {
-    if (!userId) return;
-    setStatus("info", "載入客戶預約…");
-    var data = await window.ownerApi.getCustomerBookings(userId);
+  async function openCustomerDetail(customerId) {
+    if (!customerId) return;
+    setStatus("info", "載入客戶資料…");
+    var data = await window.ownerApi.getCustomerById(customerId);
     state.selectedCustomer = data;
     renderCustomerDetailHeader(data || {});
     fillCustomerEditForm(data || {});
@@ -727,7 +732,7 @@
 
   async function handleSaveCustomerEdit() {
     var detail = state.selectedCustomer;
-    if (!detail || !detail.userId) return;
+    if (!detail || !detail.customerId) return;
     var payload = {
       customerName: els.customerEditName.value.trim(),
       phone: els.customerEditPhone.value.trim(),
@@ -738,23 +743,397 @@
       setStatus("error", "請填寫姓名");
       return;
     }
-    if (!payload.phone) {
-      setStatus("error", "請填寫電話");
-      return;
-    }
+    // 電話允許空白（CSV 匯入客戶可能沒有電話），格式由後端驗證
     if (payload.note.length > CUSTOMER_NOTE_MAX_LENGTH) {
       setStatus("error", "客戶特別事項最長 " + CUSTOMER_NOTE_MAX_LENGTH + " 字");
       return;
     }
     setStatus("info", "儲存客戶資料中…");
     try {
-      await window.ownerApi.updateCustomer(detail.userId, payload);
-      await openCustomerDetail(detail.userId);
+      await window.ownerApi.updateCustomerById(detail.customerId, payload);
+      await openCustomerDetail(detail.customerId);
       await loadCustomers(state.customerQuery);
       showCustomerDetailView();
       setStatus("success", "客戶資料已更新");
     } catch (error) {
       setStatus("error", error.message || "儲存客戶資料失敗，請稍後再試");
+    }
+  }
+
+  // ──────────────── 客戶 CSV 匯入 ────────────────
+  //
+  // 安全規則：CSV 只以 FileReader 在本機讀成文字後直接送 preview／commit API，
+  // 不記錄 CSV 內容；畫面上只渲染後端回傳的 maskedPreview（遮罩電話），
+  // 前端不自行判斷 DB 重複，一律以後端 preview／commit 結果為準。
+
+  var IMPORT_TARGETS = [
+    { key: "name", label: "姓名" },
+    { key: "phone", label: "電話" },
+    { key: "birthday", label: "生日" },
+    { key: "note", label: "備註" },
+    { key: "customer_no", label: "會員／客戶編號" }
+  ];
+
+  // 與後端 customer-import.js 的常見標頭別名一致，只用於預設帶入，
+  // 實際對應仍以使用者選擇＋後端驗證為準
+  var IMPORT_ALIASES = {
+    name: ["name", "姓名", "名字", "客戶姓名"],
+    phone: ["phone", "電話", "手機", "手機號碼", "聯絡電話"],
+    birthday: ["birthday", "生日", "出生日期"],
+    note: ["note", "備註", "特別事項", "客戶備註"],
+    customer_no: ["customer_no", "客戶編號", "會員編號"]
+  };
+
+  var OUTCOME_LABELS = {
+    willCreate: "可建立",
+    skipped: "略過",
+    conflict: "衝突",
+    error: "錯誤"
+  };
+
+  var importState = {
+    csvText: "",
+    header: [],
+    canonicalHash: "",
+    previewErrors: 0,
+    previewing: false,
+    committing: false
+  };
+
+  /** 只解析 CSV 第一個 record 當標頭（支援 BOM、CRLF、quoted 欄位） */
+  function parseCsvHeaderLine(csvText) {
+    var text = String(csvText || "");
+    if (text.charCodeAt(0) === 0xFEFF) {
+      text = text.slice(1);
+    }
+    var header = [];
+    var field = "";
+    var inQuotes = false;
+    for (var i = 0; i < text.length; i++) {
+      var ch = text[i];
+      if (inQuotes) {
+        if (ch === '"') {
+          if (text[i + 1] === '"') { field += '"'; i++; continue; }
+          inQuotes = false;
+          continue;
+        }
+        field += ch;
+        continue;
+      }
+      if (ch === '"' && field === "") { inQuotes = true; continue; }
+      if (ch === ",") { header.push(field.trim()); field = ""; continue; }
+      if (ch === "\r" || ch === "\n") { break; }
+      field += ch;
+    }
+    header.push(field.trim());
+    // 空白標頭無法作為對應來源，直接不列入下拉選單
+    return header.filter(function (h) { return h !== ""; });
+  }
+
+  function importMappingSelects() {
+    return IMPORT_TARGETS.map(function (target) {
+      return { key: target.key, el: $("import-map-" + target.key) };
+    });
+  }
+
+  function resetImportPreviewState() {
+    importState.canonicalHash = "";
+    importState.previewErrors = 0;
+    if (els.importSummary) {
+      els.importSummary.innerHTML = "";
+      els.importSummary.classList.add("hidden");
+    }
+    if (els.importPreviewList) {
+      els.importPreviewList.innerHTML = "";
+    }
+    if (els.importResult) {
+      els.importResult.innerHTML = "";
+      els.importResult.classList.add("hidden");
+    }
+    updateImportButtons();
+  }
+
+  function updateImportButtons() {
+    if (els.importPreviewBtn) {
+      els.importPreviewBtn.disabled =
+        importState.previewing || !importState.csvText;
+    }
+    if (els.importCommitBtn) {
+      els.importCommitBtn.disabled =
+        importState.committing ||
+        !importState.canonicalHash ||
+        importState.previewErrors > 0;
+    }
+  }
+
+  function autoDetectImportColumn(targetKey, header, usedIndexes) {
+    var aliases = IMPORT_ALIASES[targetKey];
+    for (var i = 0; i < header.length; i++) {
+      if (usedIndexes[i]) continue;
+      var normalized = header[i].trim().toLowerCase();
+      if (aliases.indexOf(normalized) !== -1 ||
+          aliases.indexOf(header[i].trim()) !== -1) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  function renderImportMapping(header) {
+    var usedIndexes = {};
+    importMappingSelects().forEach(function (item) {
+      if (!item.el) return;
+      var autoIndex = autoDetectImportColumn(item.key, header, usedIndexes);
+      if (autoIndex !== -1) {
+        usedIndexes[autoIndex] = true;
+      }
+      item.el.innerHTML =
+        '<option value="">不匯入此欄</option>' +
+        header.map(function (h, index) {
+          var selected = index === autoIndex ? " selected" : "";
+          return '<option value="' + escapeHtml(h) + '"' + selected + ">" +
+            escapeHtml(h) + "</option>";
+        }).join("");
+    });
+    if (els.importMapping) {
+      els.importMapping.classList.remove("hidden");
+    }
+  }
+
+  /** 讀取欄位對應；錯誤時回傳 { error }，姓名必選、來源欄不可重複 */
+  function collectImportMapping() {
+    var mapping = {};
+    var usedSource = {};
+    var duplicated = null;
+    importMappingSelects().forEach(function (item) {
+      var value = item.el ? item.el.value : "";
+      mapping[item.key] = value || "";
+      if (value) {
+        if (usedSource[value]) {
+          duplicated = value;
+        }
+        usedSource[value] = true;
+      }
+    });
+    if (!mapping.name) {
+      return { error: "請選擇姓名對應的來源欄位" };
+    }
+    if (duplicated) {
+      return { error: "來源欄「" + duplicated + "」不可同時對應多個目標欄位" };
+    }
+    return { mapping: mapping };
+  }
+
+  function handleImportFileChange() {
+    var input = els.importFile;
+    var file = input && input.files && input.files[0];
+
+    importState.csvText = "";
+    importState.header = [];
+    resetImportPreviewState();
+    if (els.importMapping) {
+      els.importMapping.classList.add("hidden");
+    }
+
+    if (!file) {
+      updateImportButtons();
+      return;
+    }
+    if (!/\.csv$/i.test(file.name)) {
+      setStatus("error", "請選擇 .csv 檔案");
+      input.value = "";
+      updateImportButtons();
+      return;
+    }
+
+    var reader = new FileReader();
+    reader.onload = function () {
+      importState.csvText = String(reader.result || "");
+      importState.header = parseCsvHeaderLine(importState.csvText);
+      if (!importState.header.length) {
+        setStatus("error", "讀不到 CSV 標頭列，請確認檔案內容");
+        importState.csvText = "";
+        updateImportButtons();
+        return;
+      }
+      renderImportMapping(importState.header);
+      updateImportButtons();
+      setStatus("");
+    };
+    reader.onerror = function () {
+      setStatus("error", "讀取檔案失敗，請重新選擇");
+      importState.csvText = "";
+      updateImportButtons();
+    };
+    reader.readAsText(file);
+  }
+
+  function renderImportSummary(summary, options) {
+    if (!els.importSummary) return;
+    var opts = options || {};
+    var items = [
+      { label: "總列數", value: summary.total },
+      { label: opts.committed ? "已建立" : "可建立",
+        value: opts.committed ? summary.created : summary.willCreate,
+        cls: "import-stat--willCreate" },
+      { label: "略過", value: summary.skipped, cls: "import-stat--skipped" },
+      { label: "衝突", value: summary.conflicts, cls: "import-stat--conflict" }
+    ];
+    if (!opts.committed) {
+      items.push({ label: "錯誤", value: summary.errors, cls: "import-stat--error" });
+    }
+    items.push({ label: "警告", value: summary.warnings, cls: "import-stat--warning" });
+
+    els.importSummary.innerHTML = items.map(function (item) {
+      return '<span class="import-stat ' + (item.cls || "") + '">' +
+        item.label + " " + Number(item.value || 0) + "</span>";
+    }).join("");
+    els.importSummary.classList.remove("hidden");
+  }
+
+  function renderImportPreviewRows(rows) {
+    if (!els.importPreviewList) return;
+    els.importPreviewList.innerHTML = (rows || []).map(function (row) {
+      var outcome = row.outcome || "";
+      var label = OUTCOME_LABELS[outcome] || outcome;
+      var preview = row.maskedPreview || {};
+      var messages = []
+        .concat(row.errors || [])
+        .concat(row.conflicts || [])
+        .concat(row.warnings || []);
+      var metaParts = [];
+      if (preview.phone) metaParts.push("電話 " + preview.phone);
+      if (preview.birthday) metaParts.push("生日 " + preview.birthday);
+      if (preview.customerNo) metaParts.push("編號 " + preview.customerNo);
+      if (preview.note) metaParts.push("備註 " + preview.note);
+      return (
+        '<div class="import-row import-row--' + escapeHtml(outcome) + '">' +
+          '<div class="import-row-head">' +
+            '<span class="import-row-no">第 ' + Number(row.rowNumber) + " 列</span>" +
+            '<span class="import-row-name">' + escapeHtml(preview.name || "") + "</span>" +
+            '<span class="import-outcome import-outcome--' + escapeHtml(outcome) + '">' +
+              escapeHtml(label) + "</span>" +
+          "</div>" +
+          (metaParts.length
+            ? '<p class="import-row-meta">' + escapeHtml(metaParts.join("｜")) + "</p>"
+            : "") +
+          messages.map(function (message) {
+            return '<p class="import-row-message">' + escapeHtml(message) + "</p>";
+          }).join("") +
+        "</div>"
+      );
+    }).join("");
+  }
+
+  async function handleImportPreview() {
+    if (!importState.csvText || importState.previewing) return;
+    var collected = collectImportMapping();
+    if (collected.error) {
+      setStatus("error", collected.error);
+      return;
+    }
+    resetImportPreviewState();
+    importState.previewing = true;
+    updateImportButtons();
+    setStatus("info", "產生匯入預覽中…");
+    try {
+      var result = await window.ownerApi.previewCustomerImport(
+        importState.csvText,
+        collected.mapping
+      );
+      importState.canonicalHash = (result && result.canonicalHash) || "";
+      importState.previewErrors =
+        (result && result.summary && result.summary.errors) || 0;
+      renderImportSummary((result && result.summary) || {});
+      renderImportPreviewRows((result && result.rows) || []);
+      if (importState.previewErrors > 0) {
+        setStatus("error",
+          "預覽有 " + importState.previewErrors + " 列錯誤，請修正 CSV 後重新選擇檔案");
+      } else {
+        setStatus("success", "預覽完成，請確認後執行匯入");
+      }
+    } catch (error) {
+      setStatus("error", error.message || "產生預覽失敗，請稍後再試");
+    } finally {
+      importState.previewing = false;
+      updateImportButtons();
+    }
+  }
+
+  async function handleImportCommit() {
+    if (importState.committing) return;
+    if (!importState.canonicalHash || importState.previewErrors > 0) {
+      setStatus("error", "請先產生沒有錯誤的預覽，才能確認匯入");
+      return;
+    }
+    var collected = collectImportMapping();
+    if (collected.error) {
+      setStatus("error", collected.error);
+      return;
+    }
+    var confirmed = confirm(
+      "確定要匯入嗎？\n" +
+      "只會建立「可建立」的客戶；略過與衝突列不會建立。\n" +
+      "匯入後無法由此畫面自動復原。"
+    );
+    if (!confirmed) return;
+
+    importState.committing = true;
+    updateImportButtons();
+    if (els.importCommitBtn) {
+      els.importCommitBtn.textContent = "匯入處理中…";
+    }
+    setStatus("info", "匯入中，請勿關閉頁面…");
+    try {
+      var result = await window.ownerApi.commitCustomerImport(
+        importState.csvText,
+        collected.mapping,
+        importState.canonicalHash
+      );
+      var summary = (result && result.summary) || {};
+      renderImportSummary(summary, { committed: true });
+      if (result && result.rows) {
+        renderImportPreviewRows(result.rows);
+      }
+      if (els.importResult) {
+        var lines = [];
+        if (result && result.alreadyImported) {
+          lines.push("此批次先前已匯入過，本次未重複建立任何客戶。");
+        } else {
+          lines.push("匯入完成，已建立 " + Number(summary.created || 0) + " 位客戶。");
+        }
+        lines.push(
+          "總列數 " + Number(summary.total || 0) +
+          "、略過 " + Number(summary.skipped || 0) +
+          "、衝突 " + Number(summary.conflicts || 0) +
+          "、警告 " + Number(summary.warnings || 0) + "。"
+        );
+        els.importResult.innerHTML = lines.map(function (line) {
+          return "<p>" + escapeHtml(line) + "</p>";
+        }).join("");
+        els.importResult.classList.remove("hidden");
+      }
+      // 已匯入的批次不可重複 commit
+      importState.canonicalHash = "";
+      setStatus("success",
+        result && result.alreadyImported ? "此批次先前已匯入" : "匯入完成");
+      await loadCustomers(state.customerQuery);
+    } catch (error) {
+      setStatus("error", error.message || "匯入失敗，請稍後再試");
+    } finally {
+      importState.committing = false;
+      if (els.importCommitBtn) {
+        els.importCommitBtn.textContent = "確認匯入";
+      }
+      updateImportButtons();
+    }
+  }
+
+  function handleImportMappingChange() {
+    // 對應改變後原 canonicalHash 失效，必須重新預覽
+    if (importState.canonicalHash) {
+      resetImportPreviewState();
+      setStatus("info", "欄位對應已變更，請重新產生預覽");
     }
   }
 
@@ -829,6 +1208,13 @@
     els.customerEditNote = $("customer-edit-note");
     els.customerEditNoteCount = $("customer-edit-note-count");
     els.customerEditSave = $("customer-edit-save");
+    els.importFile = $("import-file");
+    els.importMapping = $("import-mapping");
+    els.importPreviewBtn = $("import-preview-btn");
+    els.importCommitBtn = $("import-commit-btn");
+    els.importSummary = $("import-summary");
+    els.importPreviewList = $("import-preview-list");
+    els.importResult = $("import-result");
   }
 
   function bindEvents() {
@@ -892,6 +1278,24 @@
     if (els.customerEditNote) {
       els.customerEditNote.addEventListener("input", updateCustomerNoteCount);
     }
+    if (els.importFile) {
+      els.importFile.addEventListener("change", handleImportFileChange);
+    }
+    if (els.importPreviewBtn) {
+      els.importPreviewBtn.addEventListener("click", function () {
+        handleImportPreview().catch(function (e) { setStatus("error", e.message); });
+      });
+    }
+    if (els.importCommitBtn) {
+      els.importCommitBtn.addEventListener("click", function () {
+        handleImportCommit().catch(function (e) { setStatus("error", e.message); });
+      });
+    }
+    importMappingSelects().forEach(function (item) {
+      if (item.el) {
+        item.el.addEventListener("change", handleImportMappingChange);
+      }
+    });
   }
 
   async function boot() {

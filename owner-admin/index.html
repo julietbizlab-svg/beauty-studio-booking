@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
   <title>工作室管理</title>
-  <link rel="stylesheet" href="css/style.css?v=20260719001">
+  <link rel="stylesheet" href="css/style.css?v=20260719002">
 </head>
 <body>
   <div class="app">
@@ -43,12 +43,51 @@
     <!-- 客戶資料 -->
     <section class="panel" data-panel="customers">
       <div id="customer-list-view">
-        <p class="panel-hint">從預約紀錄整理客戶名單，可用姓名或電話搜尋。</p>
+        <p class="panel-hint">客戶名單包含預約與 CSV 匯入的客戶，可用姓名、電話或編號搜尋。</p>
         <div class="customer-search-row">
-          <input type="search" id="customer-search" placeholder="搜尋姓名或電話" enterkeyhint="search">
+          <input type="search" id="customer-search" placeholder="搜尋姓名、電話或編號" enterkeyhint="search">
           <button type="button" class="btn btn-small" id="customer-search-btn">搜尋</button>
         </div>
         <div id="customer-list"></div>
+
+        <div class="card import-card">
+          <h3 class="import-title">CSV 匯入客戶</h3>
+          <p class="panel-hint">選擇 CSV 檔案並設定欄位對應，先產生預覽再確認匯入。每批正式匯入最多 100 列（以伺服器驗證為準）。</p>
+          <div class="form-group">
+            <label for="import-file">CSV 檔案</label>
+            <input type="file" id="import-file" accept=".csv">
+          </div>
+          <div id="import-mapping" class="import-mapping hidden">
+            <h4 class="import-subtitle">欄位對應</h4>
+            <div class="form-group import-map-row">
+              <label for="import-map-name">姓名（必填）</label>
+              <select id="import-map-name"></select>
+            </div>
+            <div class="form-group import-map-row">
+              <label for="import-map-phone">電話（選填）</label>
+              <select id="import-map-phone"></select>
+            </div>
+            <div class="form-group import-map-row">
+              <label for="import-map-birthday">生日（選填）</label>
+              <select id="import-map-birthday"></select>
+            </div>
+            <div class="form-group import-map-row">
+              <label for="import-map-note">備註／特別事項（選填）</label>
+              <select id="import-map-note"></select>
+            </div>
+            <div class="form-group import-map-row">
+              <label for="import-map-customer_no">會員／客戶編號（選填）</label>
+              <select id="import-map-customer_no"></select>
+            </div>
+          </div>
+          <div class="import-actions">
+            <button type="button" class="btn btn-primary" id="import-preview-btn" disabled>產生預覽</button>
+            <button type="button" class="btn btn-primary" id="import-commit-btn" disabled>確認匯入</button>
+          </div>
+          <div id="import-summary" class="import-summary hidden" aria-live="polite"></div>
+          <div id="import-preview-list" class="import-preview-list"></div>
+          <div id="import-result" class="import-result hidden" role="status" aria-live="polite"></div>
+        </div>
       </div>
       <div id="customer-detail-view" class="hidden">
         <button type="button" class="btn btn-small" id="customer-back-btn">← 返回客戶名單</button>
@@ -60,7 +99,7 @@
             <input type="text" id="customer-edit-name" maxlength="40" placeholder="客戶真實姓名">
           </div>
           <div class="form-group">
-            <label for="customer-edit-phone">電話（必填）</label>
+            <label for="customer-edit-phone">電話（選填）</label>
             <input type="tel" id="customer-edit-phone" inputmode="tel" maxlength="20" placeholder="例：0912345678">
           </div>
           <div class="form-group">
@@ -205,9 +244,9 @@
     </div>
   </div>
 
-  <script src="js/config.js?v=20260719001"></script>
-  <script src="js/liff-init.js?v=20260719001"></script>
-  <script src="js/api.js?v=20260719001"></script>
-  <script src="js/app.js?v=20260719001"></script>
+  <script src="js/config.js?v=20260719002"></script>
+  <script src="js/liff-init.js?v=20260719002"></script>
+  <script src="js/api.js?v=20260719002"></script>
+  <script src="js/app.js?v=20260719002"></script>
 </body>
 </html>
