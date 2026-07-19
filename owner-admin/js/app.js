@@ -596,8 +596,9 @@
     els.customerListView.classList.remove("hidden");
     els.customerDetailView.classList.add("hidden");
     state.selectedCustomer = null;
-    // 返回名單即丟棄記憶體中的一次性邀請連結
+    // 返回名單即丟棄記憶體中的一次性邀請連結與照片 object URL
     resetClaimInviteState();
+    resetPhotoSection();
   }
 
   function showCustomerDetailView() {
@@ -731,6 +732,10 @@
     // 切換客戶時清除記憶體中的一次性邀請連結
     resetClaimInviteState();
     await refreshClaimInviteSection(data || {});
+    // 切換客戶時 revoke 舊的照片 object URL 再載入新客戶照片
+    resetPhotoSection();
+    photoState.customerId = (data && data.customerId) || "";
+    await refreshPhotoSets();
     showCustomerDetailView();
     setStatus("");
   }
@@ -993,6 +998,352 @@
       return;
     }
     els.claimInviteCopy.textContent = "請長按連結手動複製";
+  }
+
+  // ──────────────── 前後對比照片 ────────────────
+  //
+  // 安全規則：
+  // - 圖片一律以帶 owner Authorization 的 authenticated fetch 取回
+  //   blob，再以 URL.createObjectURL 顯示；不把 token 或 object key
+  //   放進 img src query，不存 localStorage／sessionStorage。
+  // - 離開客戶詳情、切換客戶或重新 render 時 revokeObjectURL。
+  // - 上傳前一律在本機以 Canvas 重新編碼（移除 EXIF／GPS metadata、
+  //   長邊縮至 2000px、JPEG 品質 0.88、透明背景鋪白）；
+  //   無法安全解碼時停止並提示，絕不直接上傳原始檔案。
+
+  var PHOTO_MAX_DIMENSION = 2000;
+  var PHOTO_JPEG_QUALITY = 0.88;
+  var PHOTO_MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+
+  var PHOTO_KIND_LABELS = { before: "Before（施術前）", after: "After（施術後）" };
+
+  var photoState = {
+    customerId: "",
+    sets: [],
+    objectUrls: [],
+    busy: false
+  };
+
+  function revokePhotoObjectUrls() {
+    if (window.URL && typeof window.URL.revokeObjectURL === "function") {
+      photoState.objectUrls.forEach(function (objectUrl) {
+        try {
+          window.URL.revokeObjectURL(objectUrl);
+        } catch (ignore) {}
+      });
+    }
+    photoState.objectUrls = [];
+  }
+
+  function resetPhotoSection() {
+    revokePhotoObjectUrls();
+    photoState.customerId = "";
+    photoState.sets = [];
+    photoState.busy = false;
+    if (els.photoSetList) {
+      els.photoSetList.innerHTML = "";
+    }
+    if (els.photoSetTitle) els.photoSetTitle.value = "";
+    if (els.photoSetDate) els.photoSetDate.value = "";
+  }
+
+  function formatPhotoBytes(bytes) {
+    var n = Number(bytes) || 0;
+    if (n >= 1024 * 1024) {
+      return (n / (1024 * 1024)).toFixed(1) + " MB";
+    }
+    return Math.max(1, Math.round(n / 1024)) + " KB";
+  }
+
+  function renderPhotoSlot(set, kind) {
+    var photo = set[kind];
+    var ref = set.setId + ":" + kind;
+    var html =
+      '<div class="photo-slot">' +
+      '<p class="photo-slot-label">' + PHOTO_KIND_LABELS[kind] + "</p>";
+
+    if (photo) {
+      html +=
+        '<img class="photo-img" data-photo-img="' + escapeHtml(photo.photoId) + '" alt="' +
+        escapeHtml(PHOTO_KIND_LABELS[kind]) + '照片">' +
+        '<p class="photo-load-error" data-photo-error="' + escapeHtml(photo.photoId) + '" hidden>照片載入失敗，請重新整理</p>' +
+        '<p class="photo-meta">' +
+        escapeHtml(formatPhotoBytes(photo.byteSize)) +
+        (photo.width && photo.height
+          ? "・" + photo.width + "×" + photo.height
+          : "") +
+        "</p>" +
+        '<div class="photo-slot-actions">' +
+        '<button type="button" class="btn btn-small" data-photo-select="' + escapeHtml(ref) + '">取代照片</button>' +
+        '<button type="button" class="btn btn-small btn-danger" data-photo-delete="' + escapeHtml(photo.photoId) + '">刪除照片</button>' +
+        "</div>";
+    } else {
+      html +=
+        '<p class="photo-empty">尚未上傳</p>' +
+        '<div class="photo-slot-actions">' +
+        '<button type="button" class="btn btn-small" data-photo-select="' + escapeHtml(ref) + '">選擇照片</button>' +
+        "</div>";
+    }
+
+    html +=
+      '<input type="file" class="photo-file-input" accept="image/jpeg,image/png,image/webp" ' +
+      'data-photo-file="' + escapeHtml(ref) + '" hidden aria-label="' +
+      escapeHtml(PHOTO_KIND_LABELS[kind]) + '選擇檔案">' +
+      "</div>";
+    return html;
+  }
+
+  function renderPhotoSets() {
+    if (!els.photoSetList) return;
+    revokePhotoObjectUrls();
+
+    if (!photoState.sets.length) {
+      els.photoSetList.innerHTML =
+        '<div class="empty">尚未建立前後對比照片</div>';
+      return;
+    }
+
+    els.photoSetList.innerHTML = photoState.sets.map(function (set) {
+      return (
+        '<div class="card photo-set">' +
+        '<div class="photo-set-head">' +
+        '<div class="photo-set-info">' +
+        '<p class="photo-set-title-text">' +
+        escapeHtml(set.title || "未命名照片組") + "</p>" +
+        '<p class="photo-set-meta">' +
+        (set.capturedAt ? "拍攝日期：" + escapeHtml(set.capturedAt) + "　" : "") +
+        "建立於 " + escapeHtml(String(set.createdAt || "").slice(0, 10)) +
+        "</p>" +
+        "</div>" +
+        '<button type="button" class="btn btn-small btn-danger" data-photo-set-delete="' +
+        escapeHtml(set.setId) + '">刪除整組</button>' +
+        "</div>" +
+        '<div class="photo-compare">' +
+        renderPhotoSlot(set, "before") +
+        renderPhotoSlot(set, "after") +
+        "</div>" +
+        "</div>"
+      );
+    }).join("");
+
+    bindPhotoSetEvents();
+    loadPhotoImages();
+  }
+
+  /** 以 authenticated fetch 取 blob → object URL；不在 img src 帶 token */
+  function loadPhotoImages() {
+    if (!els.photoSetList) return;
+    var images = els.photoSetList.querySelectorAll("[data-photo-img]");
+    images.forEach(function (img) {
+      var photoId = img.getAttribute("data-photo-img");
+      window.ownerApi.fetchComparisonPhotoBlob(photoState.customerId, photoId)
+        .then(function (blob) {
+          if (!window.URL || typeof window.URL.createObjectURL !== "function") return;
+          var objectUrl = window.URL.createObjectURL(blob);
+          photoState.objectUrls.push(objectUrl);
+          img.src = objectUrl;
+        })
+        .catch(function () {
+          img.hidden = true;
+          var errors = els.photoSetList.querySelectorAll("[data-photo-error]");
+          errors.forEach(function (errorEl) {
+            if (errorEl.getAttribute("data-photo-error") === photoId) {
+              errorEl.hidden = false;
+            }
+          });
+        });
+    });
+  }
+
+  function findPhotoFileInput(ref) {
+    if (!els.photoSetList) return null;
+    var inputs = els.photoSetList.querySelectorAll("[data-photo-file]");
+    for (var i = 0; i < inputs.length; i++) {
+      if (inputs[i].getAttribute("data-photo-file") === ref) {
+        return inputs[i];
+      }
+    }
+    return null;
+  }
+
+  function bindPhotoSetEvents() {
+    els.photoSetList.querySelectorAll("[data-photo-select]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var input = findPhotoFileInput(btn.getAttribute("data-photo-select"));
+        if (input && typeof input.click === "function") {
+          input.click();
+        }
+      });
+    });
+    els.photoSetList.querySelectorAll("[data-photo-file]").forEach(function (input) {
+      input.addEventListener("change", function () {
+        var ref = String(input.getAttribute("data-photo-file") || "");
+        var parts = ref.split(":");
+        handlePhotoFileChange(parts[0], parts[1], input).catch(function (e) {
+          setStatus("error", e.message);
+        });
+      });
+    });
+    els.photoSetList.querySelectorAll("[data-photo-delete]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        handlePhotoDelete(btn.getAttribute("data-photo-delete")).catch(function (e) {
+          setStatus("error", e.message);
+        });
+      });
+    });
+    els.photoSetList.querySelectorAll("[data-photo-set-delete]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        handlePhotoSetDelete(btn.getAttribute("data-photo-set-delete")).catch(function (e) {
+          setStatus("error", e.message);
+        });
+      });
+    });
+  }
+
+  async function refreshPhotoSets() {
+    if (!els.photoSetList || !photoState.customerId) return;
+    try {
+      var result = await window.ownerApi.listPhotoSets(photoState.customerId);
+      photoState.sets = (result && result.photoSets) || [];
+      renderPhotoSets();
+    } catch (error) {
+      photoState.sets = [];
+      revokePhotoObjectUrls();
+      els.photoSetList.innerHTML =
+        '<div class="empty">照片載入失敗：' + escapeHtml(error.message || "") + "</div>";
+    }
+  }
+
+  /**
+   * 本機 Canvas 重新編碼：解碼 → 縮至長邊 2000px → 白底鋪透明 →
+   * 輸出 JPEG（品質 0.88）。重新編碼後不含 EXIF／GPS metadata。
+   * 無法安全解碼時丟錯，不上傳原始檔案。
+   */
+  async function reencodePhotoForUpload(file) {
+    if (typeof window.createImageBitmap !== "function") {
+      throw new Error("此瀏覽器不支援安全的圖片處理，請改用其他裝置上傳");
+    }
+    var bitmap;
+    try {
+      bitmap = await window.createImageBitmap(file);
+    } catch (ignore) {
+      throw new Error("無法讀取此圖片，請改用 JPEG、PNG 或 WebP 檔案");
+    }
+
+    var scale = Math.min(
+      1,
+      PHOTO_MAX_DIMENSION / Math.max(bitmap.width || 1, bitmap.height || 1)
+    );
+    var width = Math.max(1, Math.round((bitmap.width || 1) * scale));
+    var height = Math.max(1, Math.round((bitmap.height || 1) * scale));
+
+    var canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    var ctx = canvas.getContext("2d");
+    if (!ctx) {
+      throw new Error("圖片處理失敗，請稍後再試");
+    }
+    // 透明背景鋪白後輸出 JPEG
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, width, height);
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    if (typeof bitmap.close === "function") {
+      bitmap.close();
+    }
+
+    var blob = await new Promise(function (resolve) {
+      canvas.toBlob(resolve, "image/jpeg", PHOTO_JPEG_QUALITY);
+    });
+    if (!blob) {
+      throw new Error("圖片處理失敗，請稍後再試");
+    }
+    return { blob: blob, width: width, height: height };
+  }
+
+  async function handlePhotoFileChange(setId, kind, input) {
+    var file = input.files && input.files[0];
+    input.value = "";
+    if (!file || !setId || (kind !== "before" && kind !== "after")) return;
+    if (photoState.busy) return;
+
+    photoState.busy = true;
+    setStatus("info", "處理照片中…");
+    try {
+      var processed = await reencodePhotoForUpload(file);
+      if (processed.blob.size > PHOTO_MAX_UPLOAD_BYTES) {
+        throw new Error("處理後圖片仍超過 5 MB，請改用較小的照片");
+      }
+      setStatus("info", "上傳照片中…");
+      await window.ownerApi.uploadComparisonPhoto(
+        photoState.customerId, setId, kind, processed.blob,
+        { width: processed.width, height: processed.height }
+      );
+      setStatus("success", "照片已上傳");
+      await refreshPhotoSets();
+    } catch (error) {
+      setStatus("error", error.message || "照片上傳失敗，請稍後再試");
+    } finally {
+      photoState.busy = false;
+    }
+  }
+
+  async function handlePhotoDelete(photoId) {
+    if (!photoId || photoState.busy) return;
+    if (!confirm("確定要刪除這張照片嗎？刪除後無法復原。")) return;
+
+    photoState.busy = true;
+    setStatus("info", "刪除照片中…");
+    try {
+      await window.ownerApi.deleteComparisonPhoto(photoState.customerId, photoId);
+      setStatus("success", "照片已刪除");
+      await refreshPhotoSets();
+    } catch (error) {
+      setStatus("error", error.message || "刪除照片失敗，請稍後再試");
+    } finally {
+      photoState.busy = false;
+    }
+  }
+
+  async function handlePhotoSetDelete(setId) {
+    if (!setId || photoState.busy) return;
+    if (!confirm("確定要刪除整組前後對比照片嗎？組內照片會一併刪除，無法復原。")) {
+      return;
+    }
+
+    photoState.busy = true;
+    setStatus("info", "刪除照片組中…");
+    try {
+      await window.ownerApi.deletePhotoSet(photoState.customerId, setId);
+      setStatus("success", "照片組已刪除");
+      await refreshPhotoSets();
+    } catch (error) {
+      setStatus("error", error.message || "刪除照片組失敗，請稍後再試");
+    } finally {
+      photoState.busy = false;
+    }
+  }
+
+  async function handlePhotoSetCreate() {
+    if (!photoState.customerId || photoState.busy) return;
+    photoState.busy = true;
+    if (els.photoSetCreateBtn) els.photoSetCreateBtn.disabled = true;
+    setStatus("info", "建立照片組中…");
+    try {
+      await window.ownerApi.createPhotoSet(photoState.customerId, {
+        title: els.photoSetTitle ? els.photoSetTitle.value.trim() : "",
+        capturedAt: els.photoSetDate ? els.photoSetDate.value.trim() : ""
+      });
+      if (els.photoSetTitle) els.photoSetTitle.value = "";
+      if (els.photoSetDate) els.photoSetDate.value = "";
+      setStatus("success", "照片組已建立");
+      await refreshPhotoSets();
+    } catch (error) {
+      setStatus("error", error.message || "建立照片組失敗，請稍後再試");
+    } finally {
+      photoState.busy = false;
+      if (els.photoSetCreateBtn) els.photoSetCreateBtn.disabled = false;
+    }
   }
 
   async function handleSaveCustomerEdit() {
@@ -1481,6 +1832,11 @@
     els.claimInviteLink = $("claim-invite-link");
     els.claimInviteCopy = $("claim-invite-copy");
     els.claimInviteQr = $("claim-invite-qr");
+    els.photoSetsCard = $("photo-sets-card");
+    els.photoSetTitle = $("photo-set-title");
+    els.photoSetDate = $("photo-set-date");
+    els.photoSetCreateBtn = $("photo-set-create-btn");
+    els.photoSetList = $("photo-set-list");
     els.importFile = $("import-file");
     els.importMapping = $("import-mapping");
     els.importPreviewBtn = $("import-preview-btn");
@@ -1563,6 +1919,11 @@
     }
     if (els.claimInviteCopy) {
       els.claimInviteCopy.addEventListener("click", handleClaimInviteCopy);
+    }
+    if (els.photoSetCreateBtn) {
+      els.photoSetCreateBtn.addEventListener("click", function () {
+        handlePhotoSetCreate().catch(function (e) { setStatus("error", e.message); });
+      });
     }
     if (els.importFile) {
       els.importFile.addEventListener("change", handleImportFileChange);

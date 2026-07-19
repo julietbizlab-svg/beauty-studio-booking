@@ -1719,3 +1719,14 @@ export {
   revokeCustomerClaimInvite,
   claimCustomerInvite
 } from "./d1-claim-invites.js";
+
+// ── 客戶前後對比照片（實作在 d1-customer-photos.js） ──
+export {
+  listCustomerPhotoSets,
+  createCustomerPhotoSet,
+  updateCustomerPhotoSet,
+  deleteCustomerPhotoSet,
+  uploadCustomerComparisonPhoto,
+  getCustomerPhotoContent,
+  deleteCustomerComparisonPhoto
+} from "./d1-customer-photos.js";

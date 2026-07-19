@@ -174,3 +174,37 @@ export function revokeCustomerClaimInvite(env, customerId) {
 export function claimCustomerInvite(env, params) {
   return requireRepositoryFunction(env, "claimCustomerInvite")(env, params);
 }
+
+// ── 客戶前後對比照片（僅 D1 支援；Notion 後端 fail closed） ──
+
+export function listCustomerPhotoSets(env, customerId) {
+  return requireRepositoryFunction(env, "listCustomerPhotoSets")(env, customerId);
+}
+
+export function createCustomerPhotoSet(env, customerId, data) {
+  return requireRepositoryFunction(env, "createCustomerPhotoSet")(env, customerId, data);
+}
+
+export function updateCustomerPhotoSet(env, customerId, setId, data) {
+  return requireRepositoryFunction(env, "updateCustomerPhotoSet")(env, customerId, setId, data);
+}
+
+export function deleteCustomerPhotoSet(env, customerId, setId) {
+  return requireRepositoryFunction(env, "deleteCustomerPhotoSet")(env, customerId, setId);
+}
+
+export function uploadCustomerComparisonPhoto(env, customerId, setId, params) {
+  return requireRepositoryFunction(env, "uploadCustomerComparisonPhoto")(
+    env, customerId, setId, params
+  );
+}
+
+export function getCustomerPhotoContent(env, customerId, photoId) {
+  return requireRepositoryFunction(env, "getCustomerPhotoContent")(env, customerId, photoId);
+}
+
+export function deleteCustomerComparisonPhoto(env, customerId, photoId) {
+  return requireRepositoryFunction(env, "deleteCustomerComparisonPhoto")(
+    env, customerId, photoId
+  );
+}

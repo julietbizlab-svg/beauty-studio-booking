@@ -32,7 +32,14 @@ import {
   createCustomerClaimInvite,
   getCustomerClaimInvite,
   revokeCustomerClaimInvite,
-  claimCustomerInvite
+  claimCustomerInvite,
+  listCustomerPhotoSets,
+  createCustomerPhotoSet,
+  updateCustomerPhotoSet,
+  deleteCustomerPhotoSet,
+  uploadCustomerComparisonPhoto,
+  getCustomerPhotoContent,
+  deleteCustomerComparisonPhoto
 } from "./data-repository.js";
 import { requireOwnerFromRequest } from "./owner-auth.js";
 import { requireCustomerFromRequest } from "./liff-verify.js";
@@ -53,7 +60,7 @@ export default {
     var url = new URL(request.url);
     var corsHeaders = {
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type, Authorization"
     };
 
@@ -420,6 +427,117 @@ export default {
           decodeURIComponent(ownerClaimInviteMatch[1])
         );
         return jsonResponse(revokedInvite, corsHeaders);
+      }
+
+      // 前後對比照片（owner-only、D1-only）：
+      // 圖片 binary 走私有 R2，僅經 Worker 串流，不回公開 URL 或 object key
+      var ownerPhotoSetsMatch = url.pathname.match(
+        /^\/api\/owner\/customers\/by-id\/([^/]+)\/photo-sets$/
+      );
+      if (ownerPhotoSetsMatch && request.method === "GET") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var photoSetList = await listCustomerPhotoSets(
+          env,
+          decodeURIComponent(ownerPhotoSetsMatch[1])
+        );
+        return jsonResponse(photoSetList, corsHeaders);
+      }
+      if (ownerPhotoSetsMatch && request.method === "POST") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var createSetBody = await readJson(request);
+        var createdSet = await createCustomerPhotoSet(
+          env,
+          decodeURIComponent(ownerPhotoSetsMatch[1]),
+          createSetBody
+        );
+        return jsonResponse(createdSet, corsHeaders);
+      }
+
+      var ownerPhotoSetMatch = url.pathname.match(
+        /^\/api\/owner\/customers\/by-id\/([^/]+)\/photo-sets\/([^/]+)$/
+      );
+      if (ownerPhotoSetMatch && request.method === "PATCH") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var patchSetBody = await readJson(request);
+        var patchedSet = await updateCustomerPhotoSet(
+          env,
+          decodeURIComponent(ownerPhotoSetMatch[1]),
+          decodeURIComponent(ownerPhotoSetMatch[2]),
+          patchSetBody
+        );
+        return jsonResponse(patchedSet, corsHeaders);
+      }
+      if (ownerPhotoSetMatch && request.method === "DELETE") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var deletedSet = await deleteCustomerPhotoSet(
+          env,
+          decodeURIComponent(ownerPhotoSetMatch[1]),
+          decodeURIComponent(ownerPhotoSetMatch[2])
+        );
+        return jsonResponse(deletedSet, corsHeaders);
+      }
+
+      var ownerPhotoUploadMatch = url.pathname.match(
+        /^\/api\/owner\/customers\/by-id\/([^/]+)\/photo-sets\/([^/]+)\/photos\/([^/]+)$/
+      );
+      if (ownerPhotoUploadMatch && request.method === "PUT") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        // binary body：不經 JSON 解析；格式與大小由 repository 以
+        // magic bytes 獨立驗證，不信任 Content-Type
+        var uploadBytes = new Uint8Array(await request.arrayBuffer());
+        var uploadedPhoto = await uploadCustomerComparisonPhoto(
+          env,
+          decodeURIComponent(ownerPhotoUploadMatch[1]),
+          decodeURIComponent(ownerPhotoUploadMatch[2]),
+          {
+            kind: decodeURIComponent(ownerPhotoUploadMatch[3]),
+            bytes: uploadBytes,
+            contentType: request.headers.get("Content-Type") || "",
+            width: url.searchParams.get("width"),
+            height: url.searchParams.get("height")
+          }
+        );
+        return jsonResponse(uploadedPhoto, corsHeaders);
+      }
+
+      var ownerPhotoContentMatch = url.pathname.match(
+        /^\/api\/owner\/customers\/by-id\/([^/]+)\/photos\/([^/]+)\/content$/
+      );
+      if (ownerPhotoContentMatch && request.method === "GET") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var photoContent = await getCustomerPhotoContent(
+          env,
+          decodeURIComponent(ownerPhotoContentMatch[1]),
+          decodeURIComponent(ownerPhotoContentMatch[2])
+        );
+        return new Response(photoContent.body, {
+          status: 200,
+          headers: Object.assign({}, corsHeaders, {
+            "Content-Type": photoContent.mimeType,
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, no-store"
+          })
+        });
+      }
+
+      var ownerPhotoMatch = url.pathname.match(
+        /^\/api\/owner\/customers\/by-id\/([^/]+)\/photos\/([^/]+)$/
+      );
+      if (ownerPhotoMatch && request.method === "DELETE") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var deletedPhoto = await deleteCustomerComparisonPhoto(
+          env,
+          decodeURIComponent(ownerPhotoMatch[1]),
+          decodeURIComponent(ownerPhotoMatch[2])
+        );
+        return jsonResponse(deletedPhoto, corsHeaders);
       }
 
       // customerId 版客戶詳情／更新：必須先於舊的 /:userId 動態比對，

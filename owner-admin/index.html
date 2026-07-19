@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
   <title>工作室管理</title>
-  <link rel="stylesheet" href="css/style.css?v=20260719003">
+  <link rel="stylesheet" href="css/style.css?v=20260719004">
 </head>
 <body>
   <div class="app">
@@ -136,6 +136,26 @@
               <canvas id="claim-invite-qr" width="0" height="0" aria-label="LINE 認領邀請 QR Code"></canvas>
             </div>
           </div>
+        </div>
+        <div class="card photo-sets-card" id="photo-sets-card">
+          <h3 class="photo-sets-title">前後對比照片</h3>
+          <p class="panel-hint">
+            照片僅供業主查看，不會提供公開網址。
+            上傳前會在您的裝置上重新處理，自動移除位置（GPS）等隱私資訊；
+            單張上限 5 MB。
+          </p>
+          <div class="photo-set-create">
+            <div class="form-group">
+              <label for="photo-set-title">標題／療程名稱（選填）</label>
+              <input type="text" id="photo-set-title" maxlength="100" placeholder="例：臉部護理第 3 次">
+            </div>
+            <div class="form-group">
+              <label for="photo-set-date">拍攝日期（選填）</label>
+              <input type="date" id="photo-set-date">
+            </div>
+            <button type="button" class="btn btn-primary" id="photo-set-create-btn">建立照片組</button>
+          </div>
+          <div id="photo-set-list" class="photo-set-list" aria-live="polite"></div>
         </div>
         <h3 class="customer-history-title">歷史預約</h3>
         <div id="customer-booking-list"></div>
@@ -269,10 +289,10 @@
 
   <!-- 本機 QR 產生器：qrcode-generator 1.4.4（MIT, Kazuhiko Arase），
        本機託管，不使用 CDN 或第三方 QR 服務 -->
-  <script src="js/vendor/qrcode.js?v=20260719003"></script>
-  <script src="js/config.js?v=20260719003"></script>
-  <script src="js/liff-init.js?v=20260719003"></script>
-  <script src="js/api.js?v=20260719003"></script>
-  <script src="js/app.js?v=20260719003"></script>
+  <script src="js/vendor/qrcode.js?v=20260719004"></script>
+  <script src="js/config.js?v=20260719004"></script>
+  <script src="js/liff-init.js?v=20260719004"></script>
+  <script src="js/api.js?v=20260719004"></script>
+  <script src="js/app.js?v=20260719004"></script>
 </body>
 </html>

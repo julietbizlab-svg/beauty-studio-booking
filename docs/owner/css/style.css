@@ -707,6 +707,124 @@ textarea { min-height: 72px; resize: vertical; }
   background: #ffffff;
 }
 
+/* 前後對比照片 */
+.photo-sets-card {
+  margin-top: 12px;
+}
+
+.photo-sets-title {
+  margin: 0 0 4px;
+  font-size: 1.05rem;
+}
+
+.photo-set-create {
+  margin: 10px 0 4px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.photo-set-create .btn {
+  width: 100%;
+  min-height: 44px;
+}
+
+.photo-set {
+  margin-top: 12px;
+  padding: 12px;
+}
+
+.photo-set-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.photo-set-title-text {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.photo-set-meta {
+  margin: 4px 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.photo-compare {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.photo-slot {
+  flex: 1 1 calc(50% - 10px);
+  min-width: 140px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  text-align: center;
+}
+
+.photo-slot-label {
+  margin: 0 0 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.photo-img {
+  width: 100%;
+  height: auto;
+  max-height: 320px;
+  object-fit: contain;
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.photo-empty {
+  margin: 14px 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.photo-load-error {
+  margin: 14px 0;
+  color: #C45C5C;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.photo-meta {
+  margin: 6px 0 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.photo-slot-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+  margin-top: 8px;
+}
+
+.photo-slot-actions .btn {
+  min-height: 40px;
+  flex: 1 1 auto;
+}
+
+.photo-file-input[hidden] {
+  display: none;
+}
+
+@media (max-width: 420px) {
+  .photo-slot {
+    flex-basis: 100%;
+  }
+}
+
 /* 客戶 CSV 匯入 */
 .import-card {
   margin-top: 20px;

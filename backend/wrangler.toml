@@ -29,3 +29,11 @@ binding = "DB"
 database_name = "beauty-studio-booking-v2"
 database_id = "58e5f639-221d-4b7e-bc74-27dc83664d43"
 migrations_dir = "migrations"
+
+# 前後對比照片私有儲存（設定草稿）：
+# bucket 尚未建立，deploy 前需先以 wrangler r2 bucket create 建立，
+# 並保持 private（不開啟 public access、不設 custom domain）。
+# 只綁在 env.v2-test，不影響頂層 Demo v1／Notion Worker。
+[[env.v2-test.r2_buckets]]
+binding = "PHOTO_BUCKET"
+bucket_name = "beauty-studio-photos-v2"
