@@ -596,6 +596,8 @@
     els.customerListView.classList.remove("hidden");
     els.customerDetailView.classList.add("hidden");
     state.selectedCustomer = null;
+    // 返回名單即丟棄記憶體中的一次性邀請連結
+    resetClaimInviteState();
   }
 
   function showCustomerDetailView() {
@@ -726,8 +728,271 @@
     renderCustomerDetailHeader(data || {});
     fillCustomerEditForm(data || {});
     renderCustomerBookings((data && data.bookings) || []);
+    // 切換客戶時清除記憶體中的一次性邀請連結
+    resetClaimInviteState();
+    await refreshClaimInviteSection(data || {});
     showCustomerDetailView();
     setStatus("");
+  }
+
+  // ──────────────── LINE 認領邀請 ────────────────
+  //
+  // 安全規則：原始邀請 token 只存在本畫面的記憶體狀態
+  // （claimInviteState.claimUrl），不寫入 localStorage、sessionStorage、
+  // console 或 data attribute；離開詳情或切換客戶即清除。
+  // GET 只回狀態，永遠拿不回原始 token。QR Code 以本機 vendored
+  // qrcode-generator 於 canvas 繪製，不呼叫任何第三方 QR 服務。
+
+  var claimInviteState = {
+    customerId: "",
+    claimUrl: "",
+    invite: null,
+    busy: false
+  };
+
+  var CLAIM_STATUS_LABELS = {
+    active: "邀請有效",
+    claimed: "已完成認領",
+    revoked: "邀請已撤銷",
+    expired: "邀請已過期"
+  };
+
+  function getClaimBaseUrl() {
+    var config = window.BEAUTY_CONFIG || {};
+    if (!config.CLAIM_ENABLED || !config.CUSTOMER_APP_URL) {
+      return null;
+    }
+    return String(config.CUSTOMER_APP_URL);
+  }
+
+  function resetClaimInviteState() {
+    claimInviteState.customerId = "";
+    claimInviteState.claimUrl = "";
+    claimInviteState.invite = null;
+    claimInviteState.busy = false;
+    if (els.claimInviteResult) {
+      els.claimInviteResult.hidden = true;
+    }
+    if (els.claimInviteLink) {
+      els.claimInviteLink.value = "";
+    }
+    if (els.claimInviteCopy) {
+      els.claimInviteCopy.textContent = "複製連結";
+    }
+    clearClaimQr();
+  }
+
+  function clearClaimQr() {
+    var canvas = els.claimInviteQr;
+    if (!canvas || typeof canvas.getContext !== "function") return;
+    var ctx = canvas.getContext("2d");
+    if (ctx && canvas.width && canvas.height) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    canvas.width = 0;
+    canvas.height = 0;
+  }
+
+  /** 以本機 qrcode-generator 在 canvas 繪製 QR（含 4 模組 quiet zone） */
+  function drawClaimQr(url) {
+    var canvas = els.claimInviteQr;
+    if (typeof window.qrcode !== "function" ||
+        !canvas || typeof canvas.getContext !== "function") {
+      return;
+    }
+    var qr = window.qrcode(0, "M");
+    qr.addData(url);
+    qr.make();
+    var count = qr.getModuleCount();
+    var scale = 6;
+    var margin = 4;
+    var size = (count + margin * 2) * scale;
+    canvas.width = size;
+    canvas.height = size;
+    var ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, size, size);
+    ctx.fillStyle = "#000000";
+    for (var row = 0; row < count; row++) {
+      for (var col = 0; col < count; col++) {
+        if (qr.isDark(row, col)) {
+          ctx.fillRect((col + margin) * scale, (row + margin) * scale, scale, scale);
+        }
+      }
+    }
+  }
+
+  function formatClaimExpiry(expiresAt) {
+    if (!expiresAt) return "";
+    var date = new Date(expiresAt);
+    if (isNaN(date.getTime())) return "";
+    return new Intl.DateTimeFormat("zh-TW", {
+      timeZone: "Asia/Taipei",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    }).format(date);
+  }
+
+  function renderClaimInviteStatus(detail) {
+    if (!els.claimInviteStatus) return;
+    var invite = claimInviteState.invite;
+
+    if (detail && detail.linkedLine === true) {
+      els.claimInviteStatus.innerHTML =
+        '<p class="claim-status-line"><span class="line-status line-status--linked">已綁定 LINE</span>' +
+        " 此客戶已完成綁定，無需認領邀請。</p>";
+      if (els.claimInviteCreate) els.claimInviteCreate.hidden = true;
+      if (els.claimInviteRevoke) els.claimInviteRevoke.hidden = true;
+      return;
+    }
+
+    if (!getClaimBaseUrl()) {
+      els.claimInviteStatus.innerHTML =
+        '<p class="claim-status-line muted">此環境未啟用 LINE 認領邀請。</p>';
+      if (els.claimInviteCreate) els.claimInviteCreate.hidden = true;
+      if (els.claimInviteRevoke) els.claimInviteRevoke.hidden = true;
+      return;
+    }
+
+    var statusHtml;
+    var hasActive = invite && invite.status === "active";
+    if (!invite) {
+      statusHtml = '<p class="claim-status-line muted">目前沒有邀請。</p>';
+    } else {
+      var label = CLAIM_STATUS_LABELS[invite.status] || invite.status;
+      var expiry = invite.status === "active" && invite.expiresAt
+        ? "，有效期限至 " + escapeHtml(formatClaimExpiry(invite.expiresAt))
+        : "";
+      statusHtml =
+        '<p class="claim-status-line">' +
+        '<span class="claim-status claim-status--' + escapeHtml(invite.status) + '">' +
+        escapeHtml(label) + "</span>" + expiry + "</p>";
+    }
+    els.claimInviteStatus.innerHTML = statusHtml;
+
+    if (els.claimInviteCreate) {
+      els.claimInviteCreate.hidden = false;
+      els.claimInviteCreate.disabled = claimInviteState.busy;
+      els.claimInviteCreate.textContent = hasActive ? "重新產生邀請連結" : "建立邀請連結";
+    }
+    if (els.claimInviteRevoke) {
+      els.claimInviteRevoke.hidden = !hasActive;
+      els.claimInviteRevoke.disabled = claimInviteState.busy;
+    }
+  }
+
+  async function refreshClaimInviteSection(detail) {
+    if (!els.claimInviteCard) return;
+    claimInviteState.customerId = (detail && detail.customerId) || "";
+
+    if (detail && detail.linkedLine === true) {
+      renderClaimInviteStatus(detail);
+      return;
+    }
+    if (!getClaimBaseUrl()) {
+      renderClaimInviteStatus(detail);
+      return;
+    }
+    try {
+      var result = await window.ownerApi.getClaimInvite(claimInviteState.customerId);
+      claimInviteState.invite = (result && result.invite) || null;
+    } catch (error) {
+      claimInviteState.invite = null;
+    }
+    renderClaimInviteStatus(detail);
+  }
+
+  async function handleClaimInviteCreate() {
+    var customerId = claimInviteState.customerId;
+    var baseUrl = getClaimBaseUrl();
+    if (!customerId || !baseUrl || claimInviteState.busy) return;
+
+    var hasActive = claimInviteState.invite &&
+      claimInviteState.invite.status === "active";
+    if (hasActive) {
+      var ok = confirm(
+        "確定要重新產生邀請連結嗎？\n" +
+        "舊的邀請連結與 QR Code 會立即失效，客戶必須改用新連結。"
+      );
+      if (!ok) return;
+    }
+
+    claimInviteState.busy = true;
+    renderClaimInviteStatus(state.selectedCustomer);
+    setStatus("info", "建立邀請連結中…");
+    try {
+      var result = await window.ownerApi.createClaimInvite(customerId);
+      claimInviteState.invite = (result && result.invite) || null;
+      // 原始 token 只在此刻取得，僅存在記憶體中的完整連結。
+      // 一律放在 URL fragment（#claim=）：fragment 不會送到伺服器，
+      // 不進 Pages 存取紀錄，也不會出現在 Referer。
+      var token = (result && result.claimToken) || "";
+      claimInviteState.claimUrl = token
+        ? baseUrl + "#claim=" + encodeURIComponent(token)
+        : "";
+      if (els.claimInviteLink) {
+        els.claimInviteLink.value = claimInviteState.claimUrl;
+      }
+      if (els.claimInviteResult) {
+        els.claimInviteResult.hidden = !claimInviteState.claimUrl;
+      }
+      if (els.claimInviteCopy) {
+        els.claimInviteCopy.textContent = "複製連結";
+      }
+      if (claimInviteState.claimUrl) {
+        drawClaimQr(claimInviteState.claimUrl);
+      }
+      setStatus("success", "邀請連結已建立，請於期限內提供給客戶");
+    } catch (error) {
+      setStatus("error", error.message || "建立邀請失敗，請稍後再試");
+    } finally {
+      claimInviteState.busy = false;
+      renderClaimInviteStatus(state.selectedCustomer);
+    }
+  }
+
+  async function handleClaimInviteRevoke() {
+    var customerId = claimInviteState.customerId;
+    if (!customerId || claimInviteState.busy) return;
+    if (!confirm("確定要撤銷邀請嗎？已發出的連結與 QR Code 將立即失效。")) {
+      return;
+    }
+    claimInviteState.busy = true;
+    renderClaimInviteStatus(state.selectedCustomer);
+    setStatus("info", "撤銷邀請中…");
+    try {
+      await window.ownerApi.revokeClaimInvite(customerId);
+      claimInviteState.claimUrl = "";
+      if (els.claimInviteLink) els.claimInviteLink.value = "";
+      if (els.claimInviteResult) els.claimInviteResult.hidden = true;
+      clearClaimQr();
+      claimInviteState.busy = false;
+      await refreshClaimInviteSection(state.selectedCustomer);
+      setStatus("success", "邀請已撤銷");
+    } catch (error) {
+      claimInviteState.busy = false;
+      renderClaimInviteStatus(state.selectedCustomer);
+      setStatus("error", error.message || "撤銷邀請失敗，請稍後再試");
+    }
+  }
+
+  function handleClaimInviteCopy() {
+    var url = claimInviteState.claimUrl;
+    if (!url || !els.claimInviteCopy) return;
+    var clipboard = window.navigator && window.navigator.clipboard;
+    if (clipboard && clipboard.writeText) {
+      clipboard.writeText(url).then(function () {
+        els.claimInviteCopy.textContent = "已複製";
+      }).catch(function () {
+        els.claimInviteCopy.textContent = "請長按連結手動複製";
+      });
+      return;
+    }
+    els.claimInviteCopy.textContent = "請長按連結手動複製";
   }
 
   async function handleSaveCustomerEdit() {
@@ -1208,6 +1473,14 @@
     els.customerEditNote = $("customer-edit-note");
     els.customerEditNoteCount = $("customer-edit-note-count");
     els.customerEditSave = $("customer-edit-save");
+    els.claimInviteCard = $("claim-invite-card");
+    els.claimInviteStatus = $("claim-invite-status");
+    els.claimInviteCreate = $("claim-invite-create");
+    els.claimInviteRevoke = $("claim-invite-revoke");
+    els.claimInviteResult = $("claim-invite-result");
+    els.claimInviteLink = $("claim-invite-link");
+    els.claimInviteCopy = $("claim-invite-copy");
+    els.claimInviteQr = $("claim-invite-qr");
     els.importFile = $("import-file");
     els.importMapping = $("import-mapping");
     els.importPreviewBtn = $("import-preview-btn");
@@ -1277,6 +1550,19 @@
     }
     if (els.customerEditNote) {
       els.customerEditNote.addEventListener("input", updateCustomerNoteCount);
+    }
+    if (els.claimInviteCreate) {
+      els.claimInviteCreate.addEventListener("click", function () {
+        handleClaimInviteCreate().catch(function (e) { setStatus("error", e.message); });
+      });
+    }
+    if (els.claimInviteRevoke) {
+      els.claimInviteRevoke.addEventListener("click", function () {
+        handleClaimInviteRevoke().catch(function (e) { setStatus("error", e.message); });
+      });
+    }
+    if (els.claimInviteCopy) {
+      els.claimInviteCopy.addEventListener("click", handleClaimInviteCopy);
     }
     if (els.importFile) {
       els.importFile.addEventListener("change", handleImportFileChange);

@@ -838,3 +838,25 @@ input[type="date"] {
     font-size: 1.3rem;
   }
 }
+
+/* LINE 認領邀請 */
+.claim-card h2 {
+  margin: 0 0 10px;
+  font-size: 1.3rem;
+}
+
+.claim-body p {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+  overflow-wrap: anywhere;
+}
+
+.claim-hint {
+  color: var(--muted, #7A758C);
+  font-size: 0.85rem;
+}
+
+.claim-error {
+  color: #C45C5C;
+  font-weight: 600;
+}

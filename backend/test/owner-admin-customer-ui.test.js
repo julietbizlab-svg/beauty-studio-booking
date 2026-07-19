@@ -777,8 +777,9 @@ test("owner-admin 與 docs/owner 四個檔案完全一致", function () {
 test("index.html：cache-busting 已更新、電話標示選填、空名單文案不再要求預約", function () {
   var html = readFileSync(join(repoRoot, "owner-admin/index.html"), "utf8");
   assert.ok(!html.includes("v=20260719001"), "舊版本號必須全部更新");
-  assert.ok(html.includes("css/style.css?v=20260719002"));
-  assert.ok(html.includes("js/app.js?v=20260719002"));
+  assert.ok(!html.includes("v=20260719002"), "舊版本號必須全部更新");
+  assert.ok(html.includes("css/style.css?v=20260719003"));
+  assert.ok(html.includes("js/app.js?v=20260719003"));
   assert.ok(html.includes("電話（選填）"), "電話欄位必須標示選填");
   assert.ok(html.includes("accept=\".csv\""), "檔案選擇必須限制 .csv");
 

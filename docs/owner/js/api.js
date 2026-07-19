@@ -188,6 +188,31 @@
       );
     },
 
+    // LINE 認領邀請：POST 回應含一次性原始 token（僅該次），
+    // GET／DELETE 永不涉及原始 token；一律不記錄 request／response body
+    createClaimInvite: function (customerId) {
+      return apiFetch(
+        "/api/owner/customers/by-id/" + encodeURIComponent(customerId || "") +
+        "/claim-invite",
+        { method: "POST" }
+      );
+    },
+
+    getClaimInvite: function (customerId) {
+      return apiFetch(
+        "/api/owner/customers/by-id/" + encodeURIComponent(customerId || "") +
+        "/claim-invite"
+      );
+    },
+
+    revokeClaimInvite: function (customerId) {
+      return apiFetch(
+        "/api/owner/customers/by-id/" + encodeURIComponent(customerId || "") +
+        "/claim-invite",
+        { method: "DELETE" }
+      );
+    },
+
     previewCustomerImport: function (csvText, mapping) {
       return apiFetch("/api/owner/customers/import/preview", {
         method: "POST",

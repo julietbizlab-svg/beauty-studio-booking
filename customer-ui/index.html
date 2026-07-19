@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
   <title>線上預約</title>
-  <link rel="stylesheet" href="css/style.css?v=20260719001">
+  <link rel="stylesheet" href="css/style.css?v=20260719003">
 </head>
 <body>
   <div class="app">
@@ -80,6 +80,20 @@
     </section>
   </div>
 
+  <div id="claim-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="claim-title">
+    <div class="modal-card claim-card">
+      <h2 id="claim-title">綁定 LINE 會員資料</h2>
+      <div id="claim-body" class="claim-body">
+        <p>店家邀請您將這個 LINE 帳號與您的客戶資料完成綁定。</p>
+        <p class="claim-hint">綁定後即可直接查看與預約，無需重新填寫資料。</p>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-primary" id="claim-confirm-btn">確認綁定</button>
+        <button type="button" class="btn btn-secondary" id="claim-dismiss-btn">先不要</button>
+      </div>
+    </div>
+  </div>
+
   <div id="booking-success-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="booking-success-title">
     <div class="modal-card booking-success-card">
       <div class="booking-success-icon" aria-hidden="true">
@@ -139,9 +153,9 @@
     </div>
   </div>
 
-  <script src="js/config.js?v=20260719001"></script>
-  <script src="js/liff-init.js?v=20260719001"></script>
-  <script src="js/api.js?v=20260719001"></script>
-  <script src="js/app.js?v=20260719001"></script>
+  <script src="js/config.js?v=20260719003"></script>
+  <script src="js/liff-init.js?v=20260719003"></script>
+  <script src="js/api.js?v=20260719003"></script>
+  <script src="js/app.js?v=20260719003"></script>
 </body>
 </html>

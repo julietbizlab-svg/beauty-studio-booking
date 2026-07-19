@@ -20,14 +20,21 @@ var CONFIG_FILES = [
   "docs/owner/js/config.js"
 ];
 
-var V2_TEST = {
-  LIFF_ID: "2010530394-orSKMGcU",
-  API_BASE_URL: "https://beauty-studio-api-v2-test.gosu-chill-book.workers.dev"
-};
+function v2TestConfig(hostname) {
+  return {
+    LIFF_ID: "2010530394-orSKMGcU",
+    API_BASE_URL: "https://beauty-studio-api-v2-test.gosu-chill-book.workers.dev",
+    CLAIM_ENABLED: true,
+    // 以目前 hostname 組合，保持 preview 子網域彼此隔離
+    CUSTOMER_APP_URL: "https://" + hostname + "/"
+  };
+}
 
 var DEMO_V1 = {
   LIFF_ID: "2010678480-dKQ3afnw",
-  API_BASE_URL: "https://beauty-studio-api.gosu-chill-book.workers.dev"
+  API_BASE_URL: "https://beauty-studio-api.gosu-chill-book.workers.dev",
+  CLAIM_ENABLED: false,
+  CUSTOMER_APP_URL: null
 };
 
 function evalConfig(relativePath, hostname) {
@@ -47,9 +54,23 @@ test("juliet-studio.pages.dev 與 preview 子網域取得 v2-test 設定（四�
     v2Hostnames.forEach(function (hostname) {
       assert.deepEqual(
         evalConfig(file, hostname),
-        V2_TEST,
+        v2TestConfig(hostname),
         file + " @ " + hostname + " 應取得 v2-test 設定"
       );
+    });
+  });
+});
+
+test("只有 v2 hostname 啟用 LINE 認領（Demo v1 一律停用）", function () {
+  CONFIG_FILES.forEach(function (file) {
+    assert.equal(
+      evalConfig(file, "juliet-studio.pages.dev").CLAIM_ENABLED, true,
+      file + " v2 hostname 應啟用認領"
+    );
+    ["julietbizlab-svg.github.io", "localhost"].forEach(function (hostname) {
+      var config = evalConfig(file, hostname);
+      assert.equal(config.CLAIM_ENABLED, false, file + " @ " + hostname + " 不得啟用認領");
+      assert.equal(config.CUSTOMER_APP_URL, null);
     });
   });
 });

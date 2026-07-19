@@ -112,6 +112,14 @@
       return authedFetch("/api/customer/me");
     },
 
+    // 一次性認領邀請：token 只放在 request body，不進 URL、log 或儲存
+    claimInvite: function (claimToken) {
+      return authedFetch("/api/customer/claim-invite", {
+        method: "POST",
+        body: JSON.stringify({ claimToken: claimToken })
+      });
+    },
+
     isConfigured: function () {
       return Boolean(getApiBaseUrl());
     }

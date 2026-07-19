@@ -28,7 +28,11 @@ import {
   getOwnerCustomerById,
   updateCustomerByOwnerById,
   previewCustomerImport,
-  commitCustomerImport
+  commitCustomerImport,
+  createCustomerClaimInvite,
+  getCustomerClaimInvite,
+  revokeCustomerClaimInvite,
+  claimCustomerInvite
 } from "./data-repository.js";
 import { requireOwnerFromRequest } from "./owner-auth.js";
 import { requireCustomerFromRequest } from "./liff-verify.js";
@@ -49,7 +53,7 @@ export default {
     var url = new URL(request.url);
     var corsHeaders = {
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type, Authorization"
     };
 
@@ -243,6 +247,21 @@ export default {
         return jsonResponse(cancelResult, corsHeaders);
       }
 
+      // 客戶一次性認領邀請：身分一律以驗證後 token 的 sub 為準，
+      // body 內任何 userId／lineUserId 一律忽略；原始 token 不落 log
+      if (url.pathname === "/api/customer/claim-invite" && request.method === "POST") {
+        ensureDataEnv(env);
+        var claimVerified = await requireCustomerFromRequest(request, env);
+        var claimBody = await readJson(request);
+        var claimResult = await claimCustomerInvite(env, {
+          claimToken: claimBody.claimToken,
+          lineUserId: claimVerified.userId,
+          displayName: claimVerified.name,
+          pictureUrl: claimVerified.picture
+        });
+        return jsonResponse(claimResult, corsHeaders);
+      }
+
       if (url.pathname === "/api/customer/me" && request.method === "GET") {
         ensureDataEnv(env);
         var profileCustomer = await requireCustomerFromRequest(request, env);
@@ -368,6 +387,39 @@ export default {
         var importCommitBody = await readJson(request);
         var importCommit = await commitCustomerImport(env, importCommitBody);
         return jsonResponse(importCommit, corsHeaders);
+      }
+
+      // 業主一次性認領邀請：POST 建立（僅該次回應含原始 token）、
+      // GET 查狀態（永不回 token）、DELETE 撤銷
+      var ownerClaimInviteMatch = url.pathname.match(
+        /^\/api\/owner\/customers\/by-id\/([^/]+)\/claim-invite$/
+      );
+      if (ownerClaimInviteMatch && request.method === "POST") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var createdInvite = await createCustomerClaimInvite(
+          env,
+          decodeURIComponent(ownerClaimInviteMatch[1])
+        );
+        return jsonResponse(createdInvite, corsHeaders);
+      }
+      if (ownerClaimInviteMatch && request.method === "GET") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var inviteStatus = await getCustomerClaimInvite(
+          env,
+          decodeURIComponent(ownerClaimInviteMatch[1])
+        );
+        return jsonResponse(inviteStatus, corsHeaders);
+      }
+      if (ownerClaimInviteMatch && request.method === "DELETE") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var revokedInvite = await revokeCustomerClaimInvite(
+          env,
+          decodeURIComponent(ownerClaimInviteMatch[1])
+        );
+        return jsonResponse(revokedInvite, corsHeaders);
       }
 
       // customerId 版客戶詳情／更新：必須先於舊的 /:userId 動態比對，

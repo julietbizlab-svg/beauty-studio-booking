@@ -826,6 +826,134 @@
     }
   }
 
+  // ──────────────── LINE 認領邀請（一次性 token） ────────────────
+  //
+  // 安全規則：claim token 只保存在此記憶體狀態，不寫入
+  // localStorage／sessionStorage／console，也不帶到其他請求；
+  // 只有 v2 設定（BEAUTY_CONFIG.CLAIM_ENABLED）才處理 claim 參數，
+  // Demo v1 hostname 完全不啟動認領流程。
+  //
+  // token 一律放在 URL fragment（#claim=）：fragment 不會送到伺服器，
+  // 不進 Pages 存取紀錄，也不會出現在 Referer。
+  // 刻意不支援 ?claim= query 參數，避免保留洩漏路徑。
+
+  var claimState = { token: "", busy: false, done: false };
+
+  function isClaimEnabled() {
+    var config = window.BEAUTY_CONFIG || {};
+    return config.CLAIM_ENABLED === true;
+  }
+
+  function readClaimTokenFromUrl() {
+    var hash = String(window.location.hash || "");
+    var match = /[#&]claim=([^&]+)/.exec(hash);
+    if (!match) return "";
+    try {
+      return decodeURIComponent(match[1]);
+    } catch (ignore) {
+      return "";
+    }
+  }
+
+  /**
+   * 以 replaceState 移除 fragment 中的 claim token，不留在瀏覽紀錄；
+   * 保留 pathname 與既有非 claim 的 query parameters 及其他 hash 內容。
+   */
+  function clearClaimTokenFromUrl() {
+    if (!window.history || !window.history.replaceState) return;
+    var hash = String(window.location.hash || "")
+      .replace(/([#&])claim=[^&]*&?/, "$1")
+      .replace(/[#&]$/, "");
+    window.history.replaceState(
+      null,
+      "",
+      window.location.pathname + (window.location.search || "") + hash
+    );
+  }
+
+  function hideClaimModal() {
+    if (els.claimModal) {
+      els.claimModal.classList.add("hidden");
+    }
+  }
+
+  function showClaimModal() {
+    if (!els.claimModal) return;
+    if (els.claimBody) {
+      els.claimBody.innerHTML =
+        "<p>店家邀請您將這個 LINE 帳號與您的客戶資料完成綁定。</p>" +
+        '<p class="claim-hint">綁定後即可直接查看與預約，無需重新填寫資料。</p>';
+    }
+    if (els.claimConfirmBtn) {
+      els.claimConfirmBtn.hidden = false;
+      els.claimConfirmBtn.disabled = false;
+      els.claimConfirmBtn.textContent = "確認綁定";
+    }
+    if (els.claimDismissBtn) {
+      els.claimDismissBtn.disabled = false;
+      els.claimDismissBtn.textContent = "先不要";
+    }
+    els.claimModal.classList.remove("hidden");
+  }
+
+  function showClaimError(message) {
+    if (els.claimBody) {
+      els.claimBody.innerHTML =
+        '<p class="claim-error">' + escapeHtml(message || "邀請連結無效或已失效") + "</p>";
+    }
+    if (els.claimConfirmBtn) {
+      els.claimConfirmBtn.hidden = true;
+    }
+    if (els.claimDismissBtn) {
+      els.claimDismissBtn.disabled = false;
+      els.claimDismissBtn.textContent = "關閉";
+    }
+  }
+
+  function initClaimFlow() {
+    if (!isClaimEnabled()) return;
+    var token = readClaimTokenFromUrl();
+    if (!token) return;
+    claimState.token = token;
+    showClaimModal();
+  }
+
+  async function confirmClaimInvite() {
+    if (!claimState.token || claimState.busy || claimState.done) return;
+    claimState.busy = true;
+    if (els.claimConfirmBtn) {
+      els.claimConfirmBtn.disabled = true;
+      els.claimConfirmBtn.textContent = "綁定中…";
+    }
+    if (els.claimDismissBtn) {
+      els.claimDismissBtn.disabled = true;
+    }
+    try {
+      await window.beautyApi.claimInvite(claimState.token);
+      claimState.done = true;
+      claimState.token = "";
+      clearClaimTokenFromUrl();
+      hideClaimModal();
+      setStatus("success", "已完成 LINE 綁定，資料已為您帶入");
+      try {
+        await loadServerProfile();
+        await loadBookings();
+      } catch (ignore) {}
+    } catch (error) {
+      claimState.busy = false;
+      showClaimError(error && error.message);
+      return;
+    }
+    claimState.busy = false;
+  }
+
+  function dismissClaimModal() {
+    if (claimState.busy) return;
+    claimState.token = "";
+    clearClaimTokenFromUrl();
+    hideClaimModal();
+  }
+
   function switchTab(tabName) {
     document.querySelectorAll(".tab").forEach(function (t) {
       t.classList.toggle("active", t.getAttribute("data-tab") === tabName);
@@ -892,6 +1020,14 @@
         }
       });
     }
+    if (els.claimConfirmBtn) {
+      els.claimConfirmBtn.addEventListener("click", function () {
+        confirmClaimInvite().catch(function (e) { setStatus("error", e.message); });
+      });
+    }
+    if (els.claimDismissBtn) {
+      els.claimDismissBtn.addEventListener("click", dismissClaimModal);
+    }
   }
 
   function cacheElements() {
@@ -931,6 +1067,10 @@
     els.cancelConfirmNo = $("cancel-confirm-no");
     els.userName = $("user-name");
     els.userAvatar = $("user-avatar");
+    els.claimModal = $("claim-modal");
+    els.claimBody = $("claim-body");
+    els.claimConfirmBtn = $("claim-confirm-btn");
+    els.claimDismissBtn = $("claim-dismiss-btn");
   }
 
   async function boot() {
@@ -962,6 +1102,8 @@
       await loadServerProfile();
       await loadBookings();
       setStatus("");
+      // LIFF 與資料就緒後才處理一次性認領邀請（僅 v2 設定啟用）
+      initClaimFlow();
     } catch (error) {
       setStatus("error", error.message || "發生未知錯誤");
     }

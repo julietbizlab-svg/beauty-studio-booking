@@ -156,3 +156,21 @@ export function previewCustomerImport(env, payload) {
 export function commitCustomerImport(env, payload) {
   return requireRepositoryFunction(env, "commitCustomerImport")(env, payload);
 }
+
+// ── 客戶 LINE 認領邀請（僅 D1 支援；Notion 後端 fail closed） ──
+
+export function createCustomerClaimInvite(env, customerId) {
+  return requireRepositoryFunction(env, "createCustomerClaimInvite")(env, customerId);
+}
+
+export function getCustomerClaimInvite(env, customerId) {
+  return requireRepositoryFunction(env, "getCustomerClaimInvite")(env, customerId);
+}
+
+export function revokeCustomerClaimInvite(env, customerId) {
+  return requireRepositoryFunction(env, "revokeCustomerClaimInvite")(env, customerId);
+}
+
+export function claimCustomerInvite(env, params) {
+  return requireRepositoryFunction(env, "claimCustomerInvite")(env, params);
+}

@@ -599,6 +599,114 @@ textarea { min-height: 72px; resize: vertical; }
   border: 1px solid var(--border);
 }
 
+/* LINE 認領邀請 */
+.claim-invite-card {
+  margin-top: 12px;
+}
+
+.claim-invite-title {
+  margin: 0 0 4px;
+  font-size: 1.05rem;
+}
+
+.claim-status-line {
+  margin: 8px 0;
+  font-size: 0.9rem;
+}
+
+.claim-status-line.muted {
+  color: var(--muted);
+}
+
+.claim-status {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.claim-status--active {
+  background: #E8F5EC;
+  color: var(--success);
+}
+
+.claim-status--claimed {
+  background: #E8F5EC;
+  color: var(--success);
+}
+
+.claim-status--revoked {
+  background: var(--bg);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+.claim-status--expired {
+  background: #FBF1E4;
+  color: #A9752F;
+}
+
+.claim-invite-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.claim-invite-actions .btn {
+  flex: 1 1 calc(50% - 8px);
+  min-height: 44px;
+}
+
+.claim-invite-actions .btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.claim-invite-result {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.claim-invite-result label {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.claim-invite-link {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-family: inherit;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+#claim-invite-copy {
+  margin-top: 8px;
+  min-height: 40px;
+}
+
+.claim-invite-qr-wrap {
+  margin-top: 12px;
+  text-align: center;
+}
+
+.claim-invite-qr-wrap canvas {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
 /* 客戶 CSV 匯入 */
 .import-card {
   margin-top: 20px;

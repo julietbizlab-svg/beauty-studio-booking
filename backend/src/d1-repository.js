@@ -1711,3 +1711,11 @@ export {
   previewCustomerImport,
   commitCustomerImport
 } from "./d1-customer-import.js";
+
+// ── 客戶 LINE 認領邀請（實作在 d1-claim-invites.js） ──
+export {
+  createCustomerClaimInvite,
+  getCustomerClaimInvite,
+  revokeCustomerClaimInvite,
+  claimCustomerInvite
+} from "./d1-claim-invites.js";
