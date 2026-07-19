@@ -774,11 +774,17 @@ textarea { min-height: 72px; resize: vertical; }
   font-weight: 600;
 }
 
+/* 固定 4:3 顯示盒＋contain：橫式、直式、方形照片都完整置中呈現，
+   不裁切、不變形；留白處以中性背景填滿 */
 .photo-img {
+  display: block;
   width: 100%;
+  max-width: 100%;
+  aspect-ratio: 4 / 3;
   height: auto;
   max-height: 320px;
   object-fit: contain;
+  object-position: center;
   border-radius: 6px;
   background: var(--bg);
 }

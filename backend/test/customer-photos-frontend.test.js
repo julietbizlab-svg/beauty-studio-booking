@@ -664,6 +664,27 @@ test("靜態檢查：Demo v1／customer-ui 不含照片功能程式碼", functio
   });
 });
 
+test("靜態檢查：照片以 object-fit: contain 完整顯示，不使用 cover 裁切", function () {
+  var css = readFileSync(join(repoRoot, "owner-admin/css/style.css"), "utf8");
+
+  var photoImgRule = css.match(/\.photo-img\s*\{[^}]*\}/);
+  assert.ok(photoImgRule, ".photo-img 樣式必須存在");
+  var rule = photoImgRule[0];
+  assert.ok(rule.indexOf("object-fit: contain") !== -1,
+    ".photo-img 必須使用 object-fit: contain");
+  assert.ok(rule.indexOf("object-position: center") !== -1,
+    "照片必須置中顯示");
+  assert.ok(rule.indexOf("aspect-ratio") !== -1,
+    "必須有穩定的顯示盒比例，避免撐破詳情視窗");
+  assert.ok(rule.indexOf("max-width") !== -1 && rule.indexOf("max-height") !== -1,
+    "圖片不得超出容器");
+  assert.ok(rule.indexOf("background") !== -1,
+    "留白區必須有中性背景");
+
+  assert.ok(css.indexOf("object-fit: cover") === -1,
+    "照片相關樣式不得使用 object-fit: cover 裁切");
+});
+
 test("靜態副本：owner-admin ↔ docs/owner 完全一致", function () {
   ["index.html", "js/api.js", "js/app.js", "css/style.css"].forEach(function (file) {
     var ownerAdmin = readFileSync(join(repoRoot, "owner-admin", file), "utf8");
