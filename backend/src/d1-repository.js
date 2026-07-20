@@ -736,6 +736,7 @@ function bookingRowToDto(row, nowUtc) {
     date: utcIsoToTaipeiDate(row.start_at),
     time: utcIsoToTaipeiTime(row.start_at),
     status: legacyStatus,
+    internalStatus: statusExt.internalStatus,
     publicStatus: statusExt.publicStatus,
     statusLabel: statusExt.statusLabel,
     isConfirmed: statusExt.isConfirmed,
@@ -1383,6 +1384,7 @@ export async function createBooking(env, payload) {
       date: date,
       time: time,
       status: "已確認",
+      internalStatus: confirmedExt.internalStatus,
       publicStatus: confirmedExt.publicStatus,
       statusLabel: confirmedExt.statusLabel,
       isConfirmed: confirmedExt.isConfirmed,
@@ -1786,6 +1788,7 @@ function bookingDtoToOwnerDto(dto) {
     date: dto.date,
     time: dto.time,
     status: dto.status,
+    internalStatus: dto.internalStatus,
     cancelReason: dto.cancelReason || "",
     canceledBy: dto.canceledBy || "",
     canceledAt: dto.canceledAt || ""
