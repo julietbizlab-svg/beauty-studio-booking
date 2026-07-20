@@ -1068,6 +1068,102 @@
     busy: false
   };
 
+  var photoLightboxState = {
+    objectUrl: null,
+    savedBodyOverflow: ""
+  };
+
+  function revokeLightboxObjectUrl() {
+    if (photoLightboxState.objectUrl && window.URL &&
+        typeof window.URL.revokeObjectURL === "function") {
+      try {
+        window.URL.revokeObjectURL(photoLightboxState.objectUrl);
+      } catch (ignore) {}
+    }
+    photoLightboxState.objectUrl = null;
+  }
+
+  function closePhotoLightbox() {
+    if (els.photoLightbox) {
+      els.photoLightbox.classList.add("hidden");
+    }
+    revokeLightboxObjectUrl();
+    if (document.body) {
+      document.body.style.overflow = photoLightboxState.savedBodyOverflow || "";
+    }
+    photoLightboxState.savedBodyOverflow = "";
+    if (els.photoLightboxImg) {
+      els.photoLightboxImg.src = "";
+      els.photoLightboxImg.hidden = true;
+      els.photoLightboxImg.alt = "";
+    }
+    if (els.photoLightboxStatus) {
+      els.photoLightboxStatus.hidden = false;
+      els.photoLightboxStatus.textContent = "照片載入中…";
+    }
+    if (els.photoLightboxTitle) {
+      els.photoLightboxTitle.textContent = "";
+    }
+  }
+
+  function openPhotoLightbox(photoId, kindShort) {
+    if (!photoId || !photoState.customerId || !els.photoLightbox) return;
+    var openingFresh = els.photoLightbox.classList.contains("hidden");
+    revokeLightboxObjectUrl();
+
+    var titleText = "查看 " + kindShort + " 完整照片";
+    if (els.photoLightboxTitle) {
+      els.photoLightboxTitle.textContent = titleText;
+    }
+    if (els.photoLightboxStatus) {
+      els.photoLightboxStatus.hidden = false;
+      els.photoLightboxStatus.textContent = "照片載入中…";
+    }
+    if (els.photoLightboxImg) {
+      els.photoLightboxImg.hidden = true;
+      els.photoLightboxImg.src = "";
+      els.photoLightboxImg.alt = titleText;
+    }
+    els.photoLightbox.classList.remove("hidden");
+    if (openingFresh && document.body) {
+      photoLightboxState.savedBodyOverflow = document.body.style.overflow || "";
+      document.body.style.overflow = "hidden";
+    }
+    if (els.photoLightboxClose && typeof els.photoLightboxClose.focus === "function") {
+      els.photoLightboxClose.focus();
+    }
+
+    window.ownerApi.fetchComparisonPhotoBlob(photoState.customerId, photoId)
+      .then(function (blob) {
+        if (!els.photoLightbox || els.photoLightbox.classList.contains("hidden")) return;
+        if (!window.URL || typeof window.URL.createObjectURL !== "function") {
+          if (els.photoLightboxStatus) {
+            els.photoLightboxStatus.textContent = "照片載入失敗，請稍後再試";
+          }
+          return;
+        }
+        var objectUrl = window.URL.createObjectURL(blob);
+        photoLightboxState.objectUrl = objectUrl;
+        if (els.photoLightboxImg) {
+          els.photoLightboxImg.src = objectUrl;
+          els.photoLightboxImg.hidden = false;
+        }
+        if (els.photoLightboxStatus) {
+          els.photoLightboxStatus.hidden = true;
+        }
+      })
+      .catch(function () {
+        if (!els.photoLightbox || els.photoLightbox.classList.contains("hidden")) return;
+        if (els.photoLightboxStatus) {
+          els.photoLightboxStatus.hidden = false;
+          els.photoLightboxStatus.textContent = "照片載入失敗，請稍後再試";
+        }
+        if (els.photoLightboxImg) {
+          els.photoLightboxImg.hidden = true;
+        }
+      });
+  }
+
   function revokePhotoObjectUrls() {
     if (window.URL && typeof window.URL.revokeObjectURL === "function") {
       photoState.objectUrls.forEach(function (objectUrl) {
@@ -1080,6 +1176,7 @@
   }
 
   function resetPhotoSection() {
+    closePhotoLightbox();
     revokePhotoObjectUrls();
     photoState.customerId = "";
     photoState.sets = [];
@@ -1102,14 +1199,18 @@
   function renderPhotoSlot(set, kind) {
     var photo = set[kind];
     var ref = set.setId + ":" + kind;
+    var kindShort = kind === "before" ? "Before" : "After";
     var html =
       '<div class="photo-slot">' +
       '<p class="photo-slot-label">' + PHOTO_KIND_LABELS[kind] + "</p>";
 
     if (photo) {
       html +=
-        '<img class="photo-img" data-photo-img="' + escapeHtml(photo.photoId) + '" alt="' +
-        escapeHtml(PHOTO_KIND_LABELS[kind]) + '照片">' +
+        '<button type="button" class="photo-view-btn" data-photo-view="' + escapeHtml(photo.photoId) + '" ' +
+        'data-photo-kind="' + escapeHtml(kindShort) + '" ' +
+        'aria-label="查看 ' + escapeHtml(kindShort) + ' 完整照片">' +
+        '<img class="photo-img" data-photo-img="' + escapeHtml(photo.photoId) + '" alt="" aria-hidden="true">' +
+        "</button>" +
         '<p class="photo-load-error" data-photo-error="' + escapeHtml(photo.photoId) + '" hidden>照片載入失敗，請重新整理</p>' +
         '<p class="photo-meta">' +
         escapeHtml(formatPhotoBytes(photo.byteSize)) +
@@ -1139,6 +1240,7 @@
 
   function renderPhotoSets() {
     if (!els.photoSetList) return;
+    closePhotoLightbox();
     revokePhotoObjectUrls();
 
     if (!photoState.sets.length) {
@@ -1189,6 +1291,20 @@
         })
         .catch(function () {
           img.hidden = true;
+          var viewBtn = img.closest
+            ? img.closest(".photo-view-btn")
+            : null;
+          if (!viewBtn && els.photoSetList) {
+            var buttons = els.photoSetList.querySelectorAll("[data-photo-view]");
+            buttons.forEach(function (btn) {
+              if (btn.getAttribute("data-photo-view") === photoId) {
+                viewBtn = btn;
+              }
+            });
+          }
+          if (viewBtn) {
+            viewBtn.disabled = true;
+          }
           var errors = els.photoSetList.querySelectorAll("[data-photo-error]");
           errors.forEach(function (errorEl) {
             if (errorEl.getAttribute("data-photo-error") === photoId) {
@@ -1211,6 +1327,15 @@
   }
 
   function bindPhotoSetEvents() {
+    els.photoSetList.querySelectorAll("[data-photo-view]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (btn.disabled) return;
+        openPhotoLightbox(
+          btn.getAttribute("data-photo-view"),
+          btn.getAttribute("data-photo-kind") || "照片"
+        );
+      });
+    });
     els.photoSetList.querySelectorAll("[data-photo-select]").forEach(function (btn) {
       btn.addEventListener("click", function () {
         var input = findPhotoFileInput(btn.getAttribute("data-photo-select"));
@@ -1884,6 +2009,12 @@
     els.photoSetDate = $("photo-set-date");
     els.photoSetCreateBtn = $("photo-set-create-btn");
     els.photoSetList = $("photo-set-list");
+    els.photoLightbox = $("photo-lightbox");
+    els.photoLightboxClose = $("photo-lightbox-close");
+    els.photoLightboxBody = $("photo-lightbox-body");
+    els.photoLightboxStatus = $("photo-lightbox-status");
+    els.photoLightboxImg = $("photo-lightbox-img");
+    els.photoLightboxTitle = $("photo-lightbox-title");
     els.importFile = $("import-file");
     els.importMapping = $("import-mapping");
     els.importPreviewBtn = $("import-preview-btn");
@@ -1928,6 +2059,24 @@
         closeOwnerCancelModal();
       }
     });
+    if (els.photoLightboxClose) {
+      els.photoLightboxClose.addEventListener("click", closePhotoLightbox);
+    }
+    if (els.photoLightbox) {
+      els.photoLightbox.addEventListener("click", function (event) {
+        if (event.target === els.photoLightbox || event.target === els.photoLightboxBody) {
+          closePhotoLightbox();
+        }
+      });
+    }
+    if (document.addEventListener) {
+      document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape" && els.photoLightbox &&
+            !els.photoLightbox.classList.contains("hidden")) {
+          closePhotoLightbox();
+        }
+      });
+    }
     $("customer-search-btn").addEventListener("click", function () {
       loadCustomers(els.customerSearch.value).catch(function (e) {
         setStatus("error", e.message);

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
   <title>工作室管理</title>
-  <link rel="stylesheet" href="css/style.css?v=20260719006">
+  <link rel="stylesheet" href="css/style.css?v=20260720002">
 </head>
 <body>
   <div class="app">
@@ -302,12 +302,21 @@
     </div>
   </div>
 
+  <div id="photo-lightbox" class="photo-lightbox hidden" role="dialog" aria-modal="true" aria-labelledby="photo-lightbox-title">
+    <button type="button" class="photo-lightbox-close" id="photo-lightbox-close" aria-label="關閉照片檢視">×</button>
+    <p id="photo-lightbox-title" class="photo-lightbox-title"></p>
+    <div class="photo-lightbox-body" id="photo-lightbox-body">
+      <p class="photo-lightbox-status" id="photo-lightbox-status">照片載入中…</p>
+      <img class="photo-lightbox-img" id="photo-lightbox-img" alt="" hidden>
+    </div>
+  </div>
+
   <!-- 本機 QR 產生器：qrcode-generator 1.4.4（MIT, Kazuhiko Arase），
        本機託管，不使用 CDN 或第三方 QR 服務 -->
-  <script src="js/vendor/qrcode.js?v=20260719006"></script>
-  <script src="js/config.js?v=20260719006"></script>
-  <script src="js/liff-init.js?v=20260719006"></script>
-  <script src="js/api.js?v=20260719006"></script>
-  <script src="js/app.js?v=20260719006"></script>
+  <script src="js/vendor/qrcode.js?v=20260720002"></script>
+  <script src="js/config.js?v=20260720002"></script>
+  <script src="js/liff-init.js?v=20260720002"></script>
+  <script src="js/api.js?v=20260720002"></script>
+  <script src="js/app.js?v=20260720002"></script>
 </body>
 </html>

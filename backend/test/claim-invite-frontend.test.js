@@ -115,7 +115,15 @@ function makeElement(id) {
 
 function makeFakeDom() {
   var elements = {};
+  var docListeners = {};
   var fakeDocument = {
+    addEventListener: function (type, fn) {
+      if (!docListeners[type]) docListeners[type] = [];
+      docListeners[type].push(fn);
+    },
+    fireDocument: function (type, event) {
+      (docListeners[type] || []).forEach(function (fn) { fn(event || {}); });
+    },
     getElementById: function (elementId) {
       if (!elements[elementId]) {
         elements[elementId] = makeElement(elementId);

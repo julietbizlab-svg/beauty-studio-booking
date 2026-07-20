@@ -791,6 +791,103 @@ textarea { min-height: 72px; resize: vertical; }
   max-width: 100%;
   height: auto;
   border-radius: 6px;
+  pointer-events: none;
+}
+
+.photo-view-btn {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 6px;
+  text-align: center;
+}
+
+.photo-view-btn:focus-visible {
+  outline: 2px solid var(--primary-dark);
+  outline-offset: 2px;
+}
+
+.photo-view-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* 全螢幕檢視：私有 R2 完整安全版本（object-fit: contain，不裁切不拉伸） */
+.photo-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(0, 0, 0, 0.92);
+  display: flex;
+  flex-direction: column;
+}
+
+.photo-lightbox.hidden {
+  display: none !important;
+}
+
+.photo-lightbox-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  font-size: 1.75rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.photo-lightbox-close:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+.photo-lightbox-title {
+  margin: 0;
+  padding: 14px 56px 0 16px;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.photo-lightbox-body {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x pan-y pinch-zoom;
+  padding: 8px 12px 16px;
+  min-height: 0;
+}
+
+.photo-lightbox-status {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 1rem;
+  text-align: center;
+}
+
+.photo-lightbox-img {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100dvh - 72px);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  object-position: center;
 }
 
 .photo-empty {

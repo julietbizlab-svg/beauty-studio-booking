@@ -120,7 +120,18 @@ function makeElement(id) {
 function makeFakeDom() {
   var elements = {};
   var createdCanvases = [];
+  var docListeners = {};
+  var fakeBody = makeElement("body");
+  fakeBody.style = { overflow: "" };
   var fakeDocument = {
+    body: fakeBody,
+    addEventListener: function (type, fn) {
+      if (!docListeners[type]) docListeners[type] = [];
+      docListeners[type].push(fn);
+    },
+    fireDocument: function (type, event) {
+      (docListeners[type] || []).forEach(function (fn) { fn(event || {}); });
+    },
     getElementById: function (elementId) {
       if (!elements[elementId]) {
         elements[elementId] = makeElement(elementId);
@@ -431,6 +442,7 @@ async function bootOwnerApp(options) {
 
   return {
     els: dom.elements,
+    document: dom.document,
     spy: spy,
     state: state,
     storage: storage,
@@ -642,6 +654,140 @@ test("owner：object key 不出現在 DOM，console 無 blob／key 內容", asyn
   });
 });
 
+test("owner：有照片時可點擊開啟全螢幕檢視器，使用 owner auth fetch", async function () {
+  var app = await bootOwnerApp({
+    photoSets: [photoSetDto({ before: photoDto() })]
+  });
+  await openDetail(app);
+  await tick(2);
+
+  var viewBtn = findByAttr(app, "data-photo-view", "photo-1");
+  assert.ok(viewBtn, "必須有可點擊的檢視按鈕");
+  assert.ok(
+    app.els["photo-set-list"].innerHTML.indexOf('aria-label="查看 Before 完整照片"') !== -1,
+    "必須有 aria-label"
+  );
+
+  viewBtn.fire("click");
+  await tick(2);
+
+  assert.equal(app.els["photo-lightbox"].classList.contains("hidden"), false);
+  assert.equal(app.spy.blobFetches.length, 2, "縮圖與 lightbox 各 fetch 一次");
+  assert.equal(app.spy.blobFetches[1].photoId, "photo-1");
+  assert.equal(app.els["photo-lightbox-img"].src, "blob:fake-2");
+  assert.equal(app.els["photo-lightbox-status"].hidden, true);
+});
+
+test("owner：尚未上傳的空白照片格不可開啟檢視器", async function () {
+  var app = await bootOwnerApp({ photoSets: [photoSetDto()] });
+  await openDetail(app);
+
+  var viewButtons = app.els["photo-set-list"].querySelectorAll("[data-photo-view]");
+  assert.equal(viewButtons.length, 0, "空白格不得有檢視按鈕");
+  assert.ok(app.els["photo-set-list"].innerHTML.indexOf("尚未上傳") !== -1);
+});
+
+test("owner：lightbox 關閉按鈕、背景點擊及 Escape 均可關閉", async function () {
+  var app = await bootOwnerApp({
+    photoSets: [photoSetDto({ before: photoDto() })]
+  });
+  await openDetail(app);
+  await tick(2);
+
+  findByAttr(app, "data-photo-view", "photo-1").fire("click");
+  await tick(2);
+  assert.equal(app.els["photo-lightbox"].classList.contains("hidden"), false);
+
+  app.els["photo-lightbox-close"].fire("click");
+  assert.equal(app.els["photo-lightbox"].classList.contains("hidden"), true);
+  assert.deepEqual(app.spy.revokedObjectUrls, ["blob:fake-2"]);
+
+  findByAttr(app, "data-photo-view", "photo-1").fire("click");
+  await tick(2);
+  app.els["photo-lightbox"].fire("click", { target: app.els["photo-lightbox-body"] });
+  assert.equal(app.els["photo-lightbox"].classList.contains("hidden"), true);
+
+  findByAttr(app, "data-photo-view", "photo-1").fire("click");
+  await tick(2);
+  app.document.fireDocument("keydown", { key: "Escape" });
+  assert.equal(app.els["photo-lightbox"].classList.contains("hidden"), true);
+});
+
+test("owner：lightbox 開啟時鎖定背景捲動，關閉後恢復", async function () {
+  var app = await bootOwnerApp({
+    photoSets: [photoSetDto({ before: photoDto() })]
+  });
+  await openDetail(app);
+  await tick(2);
+
+  app.document.body.style.overflow = "auto";
+  findByAttr(app, "data-photo-view", "photo-1").fire("click");
+  await tick(1);
+  assert.equal(app.document.body.style.overflow, "hidden");
+
+  app.els["photo-lightbox-close"].fire("click");
+  assert.equal(app.document.body.style.overflow, "auto");
+});
+
+test("owner：lightbox 關閉後 revokeObjectURL；切換客戶／返回名單／重新 render 同樣清除", async function () {
+  var app = await bootOwnerApp({
+    photoSets: [photoSetDto({ before: photoDto() })]
+  });
+  await openDetail(app);
+  await tick(2);
+
+  findByAttr(app, "data-photo-view", "photo-1").fire("click");
+  await tick(2);
+  var lightboxUrl = app.els["photo-lightbox-img"].src;
+  assert.ok(lightboxUrl.indexOf("blob:fake-") === 0);
+
+  app.els["photo-lightbox-close"].fire("click");
+  assert.ok(app.spy.revokedObjectUrls.indexOf(lightboxUrl) !== -1);
+
+  findByAttr(app, "data-photo-view", "photo-1").fire("click");
+  await tick(2);
+  app.els["customer-back-btn"].fire("click");
+  await tick(1);
+  assert.ok(app.spy.revokedObjectUrls.indexOf("blob:fake-3") !== -1,
+    "返回名單必須 revoke lightbox object URL");
+
+  await openDetail(app);
+  await tick(2);
+  findByAttr(app, "data-photo-view", "photo-1").fire("click");
+  await tick(2);
+  var beforeRerender = app.spy.revokedObjectUrls.length;
+  app.state.photoSets = [photoSetDto({ before: photoDto({ photoId: "photo-9" }) })];
+  app.els["photo-set-create-btn"].fire("click");
+  await tick(3);
+  assert.ok(app.spy.revokedObjectUrls.length > beforeRerender,
+    "重新 render 必須 revoke 開啟中的 lightbox URL");
+});
+
+test("owner：lightbox 載入失敗顯示安全提示，不洩漏 object key", async function () {
+  var fetchCount = 0;
+  var app = await bootOwnerApp({
+    photoSets: [photoSetDto({ before: photoDto() })],
+    api: {
+      fetchComparisonPhotoBlob: async function (customerId, photoId) {
+        fetchCount += 1;
+        if (fetchCount >= 2) {
+          throw new Error("載入失敗");
+        }
+        return { size: 2048, type: "image/jpeg", _photoBlob: photoId };
+      }
+    }
+  });
+  await openDetail(app);
+  await tick(2);
+
+  findByAttr(app, "data-photo-view", "photo-1").fire("click");
+  await tick(2);
+
+  assert.ok(app.els["photo-lightbox-status"].textContent.indexOf("照片載入失敗") !== -1);
+  assert.equal(app.els["photo-lightbox-img"].hidden, true);
+  assert.ok(String(app.els["photo-lightbox"].innerHTML).indexOf("customer-photos/") === -1);
+});
+
 // ──────────────────────── 靜態安全檢查 ────────────────────────
 
 test("靜態檢查：不使用第三方圖片／QR 服務，圖片處理完全本機", function () {
@@ -683,6 +829,12 @@ test("靜態檢查：照片依原始比例自然顯示，不裁切、不用固�
 
   assert.ok(css.indexOf("object-fit: cover") === -1,
     "照片相關樣式不得使用 object-fit: cover 裁切");
+
+  var lightboxImgRule = css.match(/\.photo-lightbox-img\s*\{[^}]*\}/);
+  assert.ok(lightboxImgRule, ".photo-lightbox-img 樣式必須存在");
+  assert.ok(lightboxImgRule[0].indexOf("object-fit: contain") !== -1,
+    "全螢幕檢視必須使用 object-fit: contain");
+  assert.ok(lightboxImgRule[0].indexOf("object-fit: cover") === -1);
 });
 
 test("靜態檢查：手機仍維持 Before／After 左右兩欄，按鈕可讀可點", function () {
