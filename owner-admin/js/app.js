@@ -423,6 +423,14 @@
     els.primaryColor.value = s.primaryColor || "#E8B4B8";
     els.announcement.value = s.announcement || "";
     els.cancelPolicy.value = s.cancelPolicy || "";
+    if (els.bookingMinNoticeDays) {
+      els.bookingMinNoticeDays.value = s.bookingMinNoticeDays != null ? String(s.bookingMinNoticeDays) : "1";
+    }
+    if (els.cancellationMinNoticeDays) {
+      els.cancellationMinNoticeDays.value = s.cancellationMinNoticeDays != null
+        ? String(s.cancellationMinNoticeDays)
+        : "1";
+    }
     els.depositEnabled.checked = Boolean(s.depositEnabled);
     els.depositAmount.value = s.depositAmount != null && s.depositAmount !== "" ? s.depositAmount : "";
     els.bankName.value = s.bankName || "";
@@ -551,6 +559,18 @@
     }
   }
 
+  function parseNoticeDaysInput(raw, label) {
+    var text = String(raw == null ? "" : raw).trim();
+    if (text === "") {
+      throw new Error("請填寫「" + label + "」");
+    }
+    var n = Number(text);
+    if (!Number.isInteger(n) || n < 0 || n > 30) {
+      throw new Error("「" + label + "」須為 0～30 的整數");
+    }
+    return n;
+  }
+
   async function handleSaveSettings() {
     var depositEnabled = els.depositEnabled.checked;
     var payload = {
@@ -567,6 +587,20 @@
       depositNote: els.depositNote.value.trim()
     };
 
+    try {
+      payload.bookingMinNoticeDays = parseNoticeDaysInput(
+        els.bookingMinNoticeDays ? els.bookingMinNoticeDays.value : "",
+        "客戶最晚預約時間"
+      );
+      payload.cancellationMinNoticeDays = parseNoticeDaysInput(
+        els.cancellationMinNoticeDays ? els.cancellationMinNoticeDays.value : "",
+        "客戶最晚取消時間"
+      );
+    } catch (validationError) {
+      setStatus("error", validationError.message);
+      return;
+    }
+
     if (depositEnabled) {
       if (!payload.bankAccount || !payload.bankAccountName) {
         setStatus("error", "開啟訂金時請填寫帳號與戶名");
@@ -579,6 +613,11 @@
     }
 
     setStatus("info", "儲存設定中…");
+    if (els.saveSettings) {
+      if (els.saveSettings._savingInProgress) return;
+      els.saveSettings._savingInProgress = true;
+      els.saveSettings.disabled = true;
+    }
     try {
       await window.ownerApi.updateSettings(state.user.userId, payload);
       await loadSettings();
@@ -589,6 +628,11 @@
         message = "儲存設定失敗：" + message + "。請確認已填寫必填訂金欄位（金額、帳號、戶名），或稍後再試。";
       }
       setStatus("error", message);
+    } finally {
+      if (els.saveSettings) {
+        els.saveSettings._savingInProgress = false;
+        els.saveSettings.disabled = false;
+      }
     }
   }
 
@@ -1793,6 +1837,9 @@
     els.primaryColor = $("primary-color");
     els.announcement = $("announcement");
     els.cancelPolicy = $("cancel-policy");
+    els.bookingMinNoticeDays = $("booking-min-notice-days");
+    els.cancellationMinNoticeDays = $("cancellation-min-notice-days");
+    els.saveSettings = $("save-settings");
     els.depositEnabled = $("deposit-enabled");
     els.depositFields = $("deposit-fields");
     els.depositAmount = $("deposit-amount");

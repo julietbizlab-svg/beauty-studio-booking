@@ -49,10 +49,12 @@ import {
   computeDayAvailability,
   buildMonthAvailability,
   filterAvailableSlots,
+  filterSlotsByBookingNotice,
   buildBusyIntervalsFromBookings,
   CONSERVATIVE_BUSY_DURATION_MINUTES,
   getNowMinutesInTaipei
 } from "./slots.js";
+import { parseNoticeDays, DEFAULT_NOTICE_DAYS } from "./booking-notice-policy.js";
 import { getTaipeiDateString, getTaipeiWeekdayIndex } from "./owner-auth.js";
 
 export default {
@@ -128,6 +130,12 @@ export default {
 
         var monthTodayStr = getTaipeiDateString();
         var monthNowMinutes = getNowMinutesInTaipei();
+        var monthNowUtc = new Date();
+        var monthSettings = await getSettings(env);
+        var monthMinNoticeDays = parseNoticeDays(
+          monthSettings.bookingMinNoticeDays,
+          DEFAULT_NOTICE_DAYS
+        );
         var monthDays = buildMonthAvailability(
           monthParam,
           monthWeeklySlots,
@@ -137,7 +145,9 @@ export default {
           monthNowMinutes,
           function (d) { return weekdayLabelFromIndex(getTaipeiWeekdayIndex(d)); },
           monthDurationMap,
-          monthFallbackBusy
+          monthFallbackBusy,
+          monthMinNoticeDays,
+          monthNowUtc
         );
 
         return jsonResponse({
@@ -145,6 +155,7 @@ export default {
           month: monthBookingsResult.range.month,
           serviceId: monthServiceId,
           durationMinutes: monthService.durationMinutes,
+          bookingMinNoticeDays: monthMinNoticeDays,
           days: monthDays
         }, corsHeaders);
       }
@@ -184,13 +195,21 @@ export default {
 
         var todayStr = getTaipeiDateString();
         var nowMinutes = getNowMinutesInTaipei();
+        var nowUtc = new Date();
+        var slotSettings = await getSettings(env);
+        var minNoticeDays = parseNoticeDays(
+          slotSettings.bookingMinNoticeDays,
+          DEFAULT_NOTICE_DAYS
+        );
         var daySummary = computeDayAvailability({
           date: date,
           todayStr: todayStr,
           nowMinutes: nowMinutes,
           daySlots: daySlots,
           durationMinutes: service.durationMinutes,
-          busyIntervals: busyIntervals
+          busyIntervals: busyIntervals,
+          minNoticeDays: minNoticeDays,
+          nowUtc: nowUtc
         });
 
         if (!daySlots.length) {
@@ -198,8 +217,9 @@ export default {
         }
 
         var allTimes = buildAllSlotTimesForDay(daySlots, service.durationMinutes);
+        var afterNotice = filterSlotsByBookingNotice(allTimes, date, minNoticeDays, nowUtc);
         var available = filterAvailableSlots(
-          allTimes,
+          afterNotice,
           service.durationMinutes,
           busyIntervals,
           date === todayStr ? todayStr : null,
@@ -210,6 +230,7 @@ export default {
           date: date,
           serviceId: serviceId,
           durationMinutes: service.durationMinutes,
+          bookingMinNoticeDays: minNoticeDays,
           slots: available,
           bookable: daySummary.bookable,
           reason: daySummary.reason

@@ -22,6 +22,16 @@
  * - archived（D1 保留的封存狀態）不出現在列表，也不可經由本 API 寫入。
  */
 
+import {
+  parseNoticeDays,
+  validateNoticeDaysInput,
+  computeCancellationDeadlineAt,
+  meetsBookingMinNotice,
+  evaluateCustomerCancelPermission,
+  formatDeadlineTaipei,
+  DEFAULT_NOTICE_DAYS
+} from "./booking-notice-policy.js";
+
 function makeError(message, status) {
   var error = new Error(message);
   error.status = status || 400;
@@ -265,6 +275,8 @@ var SETTINGS_FIELDS = [
   { dto: "primaryColor", key: "theme_color", type: "string" },
   { dto: "announcement", key: "announcement", type: "string" },
   { dto: "cancelPolicy", key: "cancellation_policy_text", type: "string" },
+  { dto: "bookingMinNoticeDays", key: "booking_min_notice_days", type: "number" },
+  { dto: "cancellationMinNoticeDays", key: "cancellation_min_notice_days", type: "number" },
   { dto: "depositEnabled", key: "deposit_enabled", type: "boolean" },
   { dto: "depositAmount", key: "deposit_amount", type: "number" },
   { dto: "bankName", key: "bank_name", type: "string" },
@@ -282,6 +294,8 @@ function defaultSettings() {
     primaryColor: "#E8B4B8",
     announcement: "",
     cancelPolicy: "預約日前 24 小時可免費取消。",
+    bookingMinNoticeDays: DEFAULT_NOTICE_DAYS,
+    cancellationMinNoticeDays: DEFAULT_NOTICE_DAYS,
     depositEnabled: false,
     depositAmount: null,
     bankName: "",
@@ -366,6 +380,9 @@ export async function updateSettings(env, patch) {
       throw makeError("開啟訂金時訂金金額須大於 0", 400);
     }
   }
+
+  validateNoticeDaysInput(input.bookingMinNoticeDays, "客戶最晚預約時間");
+  validateNoticeDaysInput(input.cancellationMinNoticeDays, "客戶最晚取消時間");
 
   var now = nowIso();
   var statements = [];
@@ -664,8 +681,9 @@ function validateBookingDateParam(date) {
  * 服務資訊取 booking_items 中 sort_order 最前的一筆（單服務 DTO 相容）。
  */
 var BOOKING_SELECT_SQL =
-  "SELECT b.id, b.booking_no, b.start_at, b.status, " +
+  "SELECT b.id, b.booking_no, b.start_at, b.end_at, b.status, " +
   "b.cancellation_reason_code, b.cancellation_note, b.cancelled_at, b.created_at, " +
+  "b.cancellation_notice_days_snapshot, b.cancellation_deadline_at, " +
   "c.display_name, c.mobile, c.birthday, c.notes, " +
   "la.line_user_id, " +
   "bi.service_id, bi.service_name_snapshot " +
@@ -678,7 +696,36 @@ var BOOKING_SELECT_SQL =
   "ORDER BY bi2.sort_order ASC, bi2.created_at ASC LIMIT 1" +
   ") ";
 
-function bookingRowToDto(row) {
+function bookingRowToCustomerCancelDto(row, nowUtc) {
+  var now = nowUtc || new Date();
+  var status = row.status;
+  var apiStatus = BOOKING_STATUS_TO_API[status] || "已取消";
+  var isActiveCustomerStatus = status === "pending" || status === "confirmed" ||
+    status === "checked_in";
+  var cancelEval = evaluateCustomerCancelPermission(
+    row.start_at,
+    row.cancellation_deadline_at,
+    row.cancellation_notice_days_snapshot,
+    now,
+    status
+  );
+  return {
+    canCancel: isActiveCustomerStatus && cancelEval.canCancel,
+    cancellationDeadlineAt: cancelEval.cancellationDeadlineAt ||
+      (row.cancellation_deadline_at || null),
+    cancellationDeadlineDisplay: formatDeadlineTaipei(
+      cancelEval.cancellationDeadlineAt || row.cancellation_deadline_at
+    ),
+    cancellationNoticeDays: cancelEval.cancellationNoticeDays != null
+      ? cancelEval.cancellationNoticeDays
+      : parseNoticeDays(row.cancellation_notice_days_snapshot, DEFAULT_NOTICE_DAYS),
+    cancelBlockedReason: cancelEval.canCancel ? "" : (cancelEval.reasonMessage || ""),
+    cancelBlockedReasonCode: cancelEval.canCancel ? "" : (cancelEval.reasonCode || "")
+  };
+}
+
+function bookingRowToDto(row, nowUtc) {
+  var cancelDto = bookingRowToCustomerCancelDto(row, nowUtc);
   return {
     id: row.id,
     title: row.booking_no || "",
@@ -694,7 +741,13 @@ function bookingRowToDto(row) {
     cancelReason: row.cancellation_note || row.cancellation_reason_code || "",
     canceledBy: BOOKING_CANCELED_BY[row.status] || "",
     canceledAt: utcIsoToTaipeiDate(row.cancelled_at),
-    createdAt: row.created_at || ""
+    createdAt: row.created_at || "",
+    canCancel: cancelDto.canCancel,
+    cancellationDeadlineAt: cancelDto.cancellationDeadlineAt,
+    cancellationDeadlineDisplay: cancelDto.cancellationDeadlineDisplay,
+    cancellationNoticeDays: cancelDto.cancellationNoticeDays,
+    cancelBlockedReason: cancelDto.cancelBlockedReason,
+    cancelBlockedReasonCode: cancelDto.cancelBlockedReasonCode
   };
 }
 
@@ -713,7 +766,7 @@ export async function getActiveBookingsForMonth(env, month) {
 
   return {
     range: { month: range.month, start: range.start, end: range.end },
-    bookings: (result.results || []).map(bookingRowToDto)
+    bookings: (result.results || []).map(function (row) { return bookingRowToDto(row); })
   };
 }
 
@@ -730,7 +783,7 @@ export async function getActiveBookingsByDate(env, date) {
     "ORDER BY b.start_at ASC"
   ).bind(env.TENANT_ID, startUtc, endUtc).all();
 
-  return (result.results || []).map(bookingRowToDto);
+  return (result.results || []).map(function (row) { return bookingRowToDto(row); });
 }
 
 export async function getActiveBookingsByUser(env, userId) {
@@ -746,7 +799,7 @@ export async function getActiveBookingsByUser(env, userId) {
     "ORDER BY b.start_at ASC"
   ).bind(env.TENANT_ID, String(userId)).all();
 
-  return (result.results || []).map(bookingRowToDto);
+  return (result.results || []).map(function (row) { return bookingRowToDto(row); });
 }
 
 /**
@@ -767,7 +820,7 @@ export async function getUserBookings(env, userId) {
     "THEN 0 ELSE 1 END ASC, b.start_at DESC"
   ).bind(env.TENANT_ID, String(userId)).all();
 
-  return (result.results || []).map(bookingRowToDto);
+  return (result.results || []).map(function (row) { return bookingRowToDto(row); });
 }
 
 // ────────────────────────────── customers ────────────────────────────────
@@ -1213,6 +1266,28 @@ export async function createBooking(env, payload) {
   var dayStartUtc = taipeiDateToUtcIso(date);
   var dayEndUtc = new Date(new Date(dayStartUtc).getTime() + 24 * 60 * 60 * 1000).toISOString();
 
+  var settings = await getSettings(env);
+  var bookingMinNoticeDays = parseNoticeDays(settings.bookingMinNoticeDays, DEFAULT_NOTICE_DAYS);
+  var cancellationMinNoticeDays = parseNoticeDays(
+    settings.cancellationMinNoticeDays,
+    DEFAULT_NOTICE_DAYS
+  );
+  var nowDate = new Date(now);
+  if (!meetsBookingMinNotice(startUtc, bookingMinNoticeDays, nowDate)) {
+    if (new Date(startUtc).getTime() <= nowDate.getTime()) {
+      throw makeError("無法預約已開始或已過去的時段", 400);
+    }
+    throw makeError(
+      "需至少提前 " + bookingMinNoticeDays + " 天預約，請選擇較晚的日期或時段",
+      400
+    );
+  }
+
+  var cancellationDeadlineAt = computeCancellationDeadlineAt(
+    startUtc,
+    cancellationMinNoticeDays
+  );
+
   var bookingId = crypto.randomUUID();
   var bookingNo = "BK-" + crypto.randomUUID();
   var itemId = crypto.randomUUID();
@@ -1224,8 +1299,10 @@ export async function createBooking(env, payload) {
       "INSERT INTO bookings " +
       "(id, tenant_id, location_id, customer_id, staff_id, booking_no, " +
       "start_at, end_at, status, source, created_by_type, created_by_id, " +
+      "cancellation_notice_days_snapshot, cancellation_deadline_at, " +
       "created_at, updated_at) " +
-      "SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'confirmed', 'line', 'customer', ?4, ?9, ?9 " +
+      "SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'confirmed', 'line', 'customer', ?4, " +
+      "?12, ?13, ?9, ?9 " +
       "WHERE NOT EXISTS (" +
       "SELECT 1 FROM bookings b WHERE b.tenant_id = ?2 " +
       "AND b.customer_id = ?4 " +
@@ -1248,7 +1325,9 @@ export async function createBooking(env, payload) {
       endUtc,
       now,
       dayStartUtc,
-      dayEndUtc
+      dayEndUtc,
+      cancellationMinNoticeDays,
+      cancellationDeadlineAt
     ),
     // booking_items 依附 booking 實際存在才插入
     env.DB.prepare(
@@ -1302,7 +1381,13 @@ export async function createBooking(env, payload) {
       cancelReason: "",
       canceledBy: "",
       canceledAt: "",
-      createdAt: now
+      createdAt: now,
+      canCancel: true,
+      cancellationDeadlineAt: cancellationDeadlineAt,
+      cancellationDeadlineDisplay: formatDeadlineTaipei(cancellationDeadlineAt),
+      cancellationNoticeDays: cancellationMinNoticeDays,
+      cancelBlockedReason: "",
+      cancelBlockedReasonCode: ""
     }
   };
 }
@@ -1331,7 +1416,9 @@ export async function cancelBooking(env, userId, bookingId) {
   if (!bookingId) throw makeError("缺少預約編號");
 
   var existing = await env.DB.prepare(
-    "SELECT b.id, b.status, b.customer_id, la.line_user_id " +
+    "SELECT b.id, b.status, b.customer_id, b.start_at, " +
+    "b.cancellation_deadline_at, b.cancellation_notice_days_snapshot, " +
+    "la.line_user_id " +
     "FROM bookings b " +
     "LEFT JOIN line_accounts la ON la.tenant_id = b.tenant_id AND la.customer_id = b.customer_id " +
     "WHERE b.tenant_id = ?1 AND b.id = ?2"
@@ -1343,7 +1430,17 @@ export async function cancelBooking(env, userId, bookingId) {
   if (existing.line_user_id !== String(userId)) {
     throw makeError("無法取消他人的預約", 403);
   }
-  assertCancellableStatus(existing.status);
+
+  var cancelEval = evaluateCustomerCancelPermission(
+    existing.start_at,
+    existing.cancellation_deadline_at,
+    existing.cancellation_notice_days_snapshot,
+    new Date(),
+    existing.status
+  );
+  if (!cancelEval.canCancel) {
+    throw makeError(cancelEval.reasonMessage || "此預約無法取消", 400);
+  }
 
   // batch 內再次驗證所有權：log 與 UPDATE 都以 line_accounts
   // （tenant＋customer_id＋line_user_id，userId 走 bind）重查，
@@ -1487,7 +1584,7 @@ export async function getTodayBookingsForOwner(env, date) {
     "ORDER BY b.start_at ASC"
   ).bind(env.TENANT_ID, startUtc, endUtc).all();
 
-  return (result.results || []).map(bookingRowToDto);
+  return (result.results || []).map(function (row) { return bookingRowToDto(row); });
 }
 
 export async function getOwnerBookingsForMonth(env, month) {
@@ -1504,7 +1601,7 @@ export async function getOwnerBookingsForMonth(env, month) {
   ).bind(env.TENANT_ID, startUtc, endUtc).all();
 
   var days = {};
-  (result.results || []).map(bookingRowToDto).forEach(function (dto) {
+  (result.results || []).map(function (row) { return bookingRowToDto(row); }).forEach(function (dto) {
     if (!dto.date) {
       return;
     }
@@ -1653,7 +1750,7 @@ export async function getOwnerCustomerById(env, customerId) {
     birthday: customer.birthday || "",
     note: customer.notes || "",
     source: customer.source || "",
-    bookings: (result.results || []).map(bookingRowToDto).map(bookingDtoToOwnerDto)
+    bookings: (result.results || []).map(function (row) { return bookingRowToDto(row); }).map(bookingDtoToOwnerDto)
   };
 }
 
@@ -1680,7 +1777,7 @@ export async function getOwnerCustomerBookings(env, userId) {
   ).bind(env.TENANT_ID, id).all();
 
   var rows = result.results || [];
-  var dtos = rows.map(bookingRowToDto);
+  var dtos = rows.map(function (row) { return bookingRowToDto(row); });
 
   if (!dtos.length) {
     return {

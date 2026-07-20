@@ -228,7 +228,10 @@ test("POST /api/bookings/cancel：body 偽造 userId 被忽略，所有權檢查
         id: "bk-1",
         status: "confirmed",
         customer_id: "cust-existing-1",
-        line_user_id: "U-token-user"
+        line_user_id: "U-token-user",
+        start_at: "2027-06-15T02:00:00.000Z",
+        cancellation_deadline_at: "2027-06-14T02:00:00.000Z",
+        cancellation_notice_days_snapshot: 1
       };
     }
     return null;

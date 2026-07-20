@@ -569,6 +569,26 @@ input[type="date"] {
   color: var(--muted);
 }
 
+.booking-notice-hint {
+  margin: 8px 0 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.booking-cancel-deadline {
+  margin: 8px 0 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.booking-cancel-blocked {
+  margin: 8px 0 0;
+  font-size: 0.85rem;
+  color: var(--danger);
+  font-weight: 600;
+}
+
 .btn-secondary {
   background: #fff;
   color: var(--text);

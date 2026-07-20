@@ -11,6 +11,7 @@
  */
 import * as notionRepository from "./notion.js";
 import * as d1Repository from "./d1-repository.js";
+import { DEFAULT_NOTICE_DAYS } from "./booking-notice-policy.js";
 
 function makeError(message, status) {
   var error = new Error(message);
@@ -105,12 +106,24 @@ export function getOwnerCustomerBookings(env, userId) {
   return resolveRepository(env).getOwnerCustomerBookings(env, userId);
 }
 
-export function getSettings(env) {
-  return resolveRepository(env).getSettings(env);
+export async function getSettings(env) {
+  var settings = await resolveRepository(env).getSettings(env);
+  if (resolveRepository(env) === notionRepository) {
+    settings.bookingMinNoticeDays = DEFAULT_NOTICE_DAYS;
+    settings.cancellationMinNoticeDays = DEFAULT_NOTICE_DAYS;
+  }
+  return settings;
 }
 
-export function updateSettings(env, patch) {
-  return resolveRepository(env).updateSettings(env, patch);
+export async function updateSettings(env, patch) {
+  var input = patch || {};
+  if (resolveRepository(env) === notionRepository) {
+    if (input.bookingMinNoticeDays !== undefined ||
+        input.cancellationMinNoticeDays !== undefined) {
+      throw makeError("目前資料後端不支援此功能", 501);
+    }
+  }
+  return resolveRepository(env).updateSettings(env, input);
 }
 
 export function getServiceById(env, serviceId) {

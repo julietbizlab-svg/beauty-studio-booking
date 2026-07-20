@@ -65,6 +65,18 @@
     } else {
       els.announcement.style.display = "none";
     }
+    renderBookingNotice(settings);
+  }
+
+  function renderBookingNotice(settings) {
+    if (!els.bookingNoticeHint) return;
+    var days = settings && settings.bookingMinNoticeDays != null
+      ? Number(settings.bookingMinNoticeDays) : 1;
+    if (!Number.isInteger(days) || days < 0) {
+      days = 1;
+    }
+    els.bookingNoticeHint.textContent = "本工作室需至少提前 " + days + " 天預約。";
+    els.bookingNoticeHint.hidden = !state.selectedService;
   }
 
   function formatDateZh(iso) {
@@ -139,6 +151,9 @@
     }
     if (els.calendarPlaceholder) {
       els.calendarPlaceholder.style.display = hasService ? "none" : "block";
+    }
+    if (els.bookingNoticeHint) {
+      els.bookingNoticeHint.hidden = !hasService;
     }
   }
 
@@ -411,8 +426,16 @@
       var isConfirmed = b.status === "已確認";
       var statusClass = isConfirmed ? "confirmed" : "cancelled";
       var cardClass = isConfirmed ? "card booking-card booking-card--confirmed" : "card booking-card booking-card--cancelled";
-      var cancelBtn = isConfirmed
+      var canCancel = isConfirmed && b.canCancel === true;
+      var cancelBtn = canCancel
         ? '<button type="button" class="btn btn-danger" data-cancel="' + b.id + '">取消預約</button>'
+        : "";
+      var deadlineLine = canCancel && b.cancellationDeadlineDisplay
+        ? '<p class="booking-cancel-deadline">取消截止：' +
+          escapeHtml(b.cancellationDeadlineDisplay) + "（台北時間）</p>"
+        : "";
+      var blockedLine = isConfirmed && !canCancel && b.cancelBlockedReason
+        ? '<p class="booking-cancel-blocked">' + escapeHtml(b.cancelBlockedReason) + "</p>"
         : "";
       var reasonLine = b.status === "已取消" && b.cancelReason
         ? '<p class="booking-cancel-reason">取消原因：' + escapeHtml(b.cancelReason) + "</p>"
@@ -424,6 +447,8 @@
           '<h3>' + escapeHtml(b.serviceName) + '</h3>' +
           '<p>' + formatDateZh(b.date) + ' ' + escapeHtml(b.time) + '</p>' +
           '<span class="booking-status ' + statusClass + '">' + escapeHtml(b.status) + '</span>' +
+          deadlineLine +
+          blockedLine +
           reasonLine +
           cancelBtn +
         '</div>'
@@ -770,8 +795,20 @@
 
   function openCancelConfirmModal(bookingId) {
     if (!els.cancelConfirmModal || !bookingId) return;
+    var booking = (state.bookings || []).find(function (b) { return b.id === bookingId; });
+    if (booking && booking.canCancel !== true) {
+      setStatus("error", booking.cancelBlockedReason || "此預約無法取消");
+      return;
+    }
     cancelModalState.bookingId = bookingId;
     cancelModalState.submitting = false;
+    if (els.cancelConfirmBody) {
+      var base = "取消後這個時段會釋出，若要重新預約需重新選擇服務與時段。";
+      if (booking && booking.cancellationDeadlineDisplay) {
+        base += " 取消截止時間：" + booking.cancellationDeadlineDisplay + "（台北時間）。";
+      }
+      els.cancelConfirmBody.textContent = base;
+    }
     if (els.cancelConfirmYes) {
       els.cancelConfirmYes.disabled = false;
       els.cancelConfirmYes.textContent = "確認取消";
@@ -1036,6 +1073,7 @@
     els.announcement = $("announcement");
     els.serviceList = $("service-list");
     els.calendarSection = $("calendar-section");
+    els.bookingNoticeHint = $("booking-notice-hint");
     els.calendarPlaceholder = $("calendar-placeholder");
     els.calendarGrid = $("calendar-grid");
     els.calendarMonthLabel = $("calendar-month-label");
@@ -1063,6 +1101,7 @@
     els.bookingFailBody = $("booking-fail-body");
     els.bookingFailAck = $("booking-fail-ack");
     els.cancelConfirmModal = $("cancel-confirm-modal");
+    els.cancelConfirmBody = $("cancel-confirm-body");
     els.cancelConfirmYes = $("cancel-confirm-yes");
     els.cancelConfirmNo = $("cancel-confirm-no");
     els.userName = $("user-name");

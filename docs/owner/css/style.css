@@ -193,6 +193,13 @@ textarea { min-height: 72px; resize: vertical; }
 .badge.on { background: #E8F5EC; color: var(--success); }
 .badge.off { background: #F0F0F0; color: var(--muted); }
 
+.field-hint {
+  margin: 4px 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
 .panel-hint {
   font-size: 0.85rem;
   color: var(--muted);

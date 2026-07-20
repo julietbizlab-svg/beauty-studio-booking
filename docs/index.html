@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
   <title>線上預約</title>
-  <link rel="stylesheet" href="css/style.css?v=20260719003">
+  <link rel="stylesheet" href="css/style.css?v=20260720001">
 </head>
 <body>
   <div class="app">
@@ -43,6 +43,7 @@
           <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
         </div>
         <div class="calendar-grid" id="calendar-grid"></div>
+        <p class="booking-notice-hint" id="booking-notice-hint" hidden></p>
         <p class="selected-date-summary" id="selected-date-summary"></p>
       </div>
       <div id="calendar-placeholder" class="empty">請先選擇服務</div>
@@ -145,7 +146,7 @@
     <div class="modal-card cancel-confirm-card">
       <div class="cancel-confirm-icon" aria-hidden="true">!</div>
       <h2 id="cancel-confirm-title">確認取消預約？</h2>
-      <p class="cancel-confirm-body">取消後這個時段會釋出，若要重新預約需重新選擇服務與時段。</p>
+      <p class="cancel-confirm-body" id="cancel-confirm-body">取消後這個時段會釋出，若要重新預約需重新選擇服務與時段。</p>
       <div class="modal-actions">
         <button type="button" class="btn btn-primary btn-cancel-confirm" id="cancel-confirm-yes">確認取消</button>
         <button type="button" class="btn btn-secondary" id="cancel-confirm-no">先不要取消</button>
@@ -153,9 +154,9 @@
     </div>
   </div>
 
-  <script src="js/config.js?v=20260719003"></script>
-  <script src="js/liff-init.js?v=20260719003"></script>
-  <script src="js/api.js?v=20260719003"></script>
-  <script src="js/app.js?v=20260719003"></script>
+  <script src="js/config.js?v=20260720001"></script>
+  <script src="js/liff-init.js?v=20260720001"></script>
+  <script src="js/api.js?v=20260720001"></script>
+  <script src="js/app.js?v=20260720001"></script>
 </body>
 </html>

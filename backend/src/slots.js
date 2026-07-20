@@ -3,6 +3,8 @@
  * 並以時間區間排除與現有預約重疊的開始時間（長時服務連續空檔）。
  */
 
+import { isSlotStartBookable } from "./booking-notice-policy.js";
+
 var WEEKDAY_LABELS = ["日", "一", "二", "三", "四", "五", "六"];
 
 /** 既有預約查不到服務時長時的保守占用（分鐘） */
@@ -155,8 +157,21 @@ export function buildAllSlotTimesForDay(daySlots, durationMinutes) {
 }
 
 /**
+ * 依業主設定的提前預約天數過濾時段（精確天數 × 24h）。
+ * days=0 仍排除已開始／已過去時段。
+ */
+export function filterSlotsByBookingNotice(allSlots, dateStr, noticeDays, nowUtc) {
+  var now = nowUtc || new Date();
+  return (allSlots || []).filter(function (slot) {
+    return isSlotStartBookable(dateStr, slot, noticeDays, now);
+  });
+}
+
+/**
  * 單日可預約摘要（與 GET /api/slots 計算邏輯一致）
  * params.busyIntervals: [{ start, end }, ...]
+ * params.minNoticeDays: 業主設定提前預約天數（可選）
+ * params.nowUtc: 用於 min notice 計算的現在時間（可選，預設 new Date()）
  */
 export function computeDayAvailability(params) {
   var date = params.date;
@@ -165,6 +180,8 @@ export function computeDayAvailability(params) {
   var daySlots = params.daySlots || [];
   var durationMinutes = params.durationMinutes;
   var busyIntervals = params.busyIntervals || [];
+  var minNoticeDays = params.minNoticeDays;
+  var nowUtc = params.nowUtc || new Date();
 
   if (date < todayStr) {
     return { bookable: false, slotCount: 0, reason: "past" };
@@ -175,8 +192,11 @@ export function computeDayAvailability(params) {
   }
 
   var allTimes = buildAllSlotTimesForDay(daySlots, durationMinutes);
+  var afterNotice = minNoticeDays != null
+    ? filterSlotsByBookingNotice(allTimes, date, minNoticeDays, nowUtc)
+    : allTimes;
   var available = filterAvailableSlots(
-    allTimes,
+    afterNotice,
     durationMinutes,
     busyIntervals,
     date === todayStr ? todayStr : null,
@@ -189,7 +209,7 @@ export function computeDayAvailability(params) {
 
   if (date === todayStr) {
     var withoutTimeFilter = filterAvailableSlots(
-      allTimes,
+      afterNotice,
       durationMinutes,
       busyIntervals,
       null,
@@ -198,6 +218,10 @@ export function computeDayAvailability(params) {
     if (withoutTimeFilter.length > 0) {
       return { bookable: false, slotCount: 0, reason: "today_past" };
     }
+  }
+
+  if (minNoticeDays != null && afterNotice.length === 0 && allTimes.length > 0) {
+    return { bookable: false, slotCount: 0, reason: "min_notice" };
   }
 
   return { bookable: false, slotCount: 0, reason: "full" };
@@ -215,7 +239,9 @@ export function buildMonthAvailability(
   nowMinutes,
   getWeekdayLabelForDate,
   durationByServiceId,
-  fallbackBusyDuration
+  fallbackBusyDuration,
+  minNoticeDays,
+  nowUtc
 ) {
   var parts = month.split("-");
   var year = Number(parts[0]);
@@ -225,6 +251,7 @@ export function buildMonthAvailability(
   var fallback = fallbackBusyDuration != null
     ? fallbackBusyDuration
     : Math.max(Number(durationMinutes) || 60, CONSERVATIVE_BUSY_DURATION_MINUTES);
+  var now = nowUtc || new Date();
 
   for (var day = 1; day <= daysInMonth; day++) {
     var date = year + "-" + String(mon).padStart(2, "0") + "-" + String(day).padStart(2, "0");
@@ -243,7 +270,9 @@ export function buildMonthAvailability(
       nowMinutes: nowMinutes,
       daySlots: daySlots,
       durationMinutes: durationMinutes,
-      busyIntervals: busyIntervals
+      busyIntervals: busyIntervals,
+      minNoticeDays: minNoticeDays,
+      nowUtc: now
     });
   }
 
