@@ -242,9 +242,43 @@ test("預約清單：依 internalStatus 顯示允許的下一步按鈕", async f
   var app = await bootBookingApp();
   var html = app.els["today-list"].innerHTML;
   assert.ok(html.includes('data-transition-to="checked_in"'), "confirmed 應顯示報到");
+  assert.ok(html.includes('data-transition-to="no_show"'), "confirmed 應顯示未到");
   assert.ok(html.includes('data-transition-to="confirmed"'), "pending 應顯示升級");
   assert.ok(html.includes('data-transition-to="completed"'), "checked_in 應顯示完成");
   assert.ok(html.includes("取消預約"), "取消按鈕仍保留");
+});
+
+test("預約清單：no_show 終態只顯示未到，無取消／transition 按鈕", async function () {
+  var today = new Date();
+  var monthKey = today.getFullYear() + "-" + String(today.getMonth() + 1).padStart(2, "0");
+  var dateKey = monthKey + "-" + String(today.getDate()).padStart(2, "0");
+  var monthLoads = [];
+  var app = await bootBookingApp({
+    getBookingsForMonth: async function (month) {
+      monthLoads.push(month);
+      var days = {};
+      days[dateKey] = {
+        confirmedCount: 0,
+        bookings: [{
+          id: "bk-noshow",
+          time: "10:00",
+          status: "未到",
+          internalStatus: "no_show",
+          statusLabel: "未到",
+          serviceName: "霧眉",
+          customerName: "未到客",
+          date: dateKey
+        }]
+      };
+      return { month: month, days: days };
+    }
+  });
+  assert.ok(monthLoads.length >= 1, "應載入月曆資料");
+  var html = app.els["today-list"].innerHTML;
+  assert.ok(html.includes("未到"), "應顯示未到");
+  assert.ok(!html.includes("data-cancel-id"), "no_show 不得有取消按鈕");
+  assert.ok(!html.includes("data-transition-id"), "no_show 不得有 transition 按鈕");
+  assert.ok(!html.includes("取消預約"));
 });
 
 test("預約清單：完成操作需 confirm、成功後重新載入、loading 防重複", async function () {

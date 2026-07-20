@@ -818,13 +818,13 @@ test("bookings SQL 以 booking_items sort_order 最前一筆子查詢取服務",
   assert.match(sql, /ORDER BY bi2\.sort_order ASC, bi2\.created_at ASC LIMIT 1/);
 });
 
-test("getUserBookings 排除 rescheduled／no_show，已確認在前、已取消在後", async function () {
+test("getUserBookings 排除 rescheduled、含 no_show，已確認在前、已取消在後", async function () {
   var db = makeFakeDb(function () { return []; });
   await getUserBookings(makeEnv(db), "U-test-user");
 
   var sql = db.calls[0].sql;
   assert.ok(!sql.includes("rescheduled"), "查詢不得包含 rescheduled");
-  assert.ok(!sql.includes("no_show"), "查詢不得包含 no_show");
+  assert.ok(sql.includes("no_show"), "查詢應包含 no_show");
   assert.match(
     sql,
     /ORDER BY CASE WHEN b\.status IN \('pending', 'confirmed', 'checked_in', 'completed'\) THEN 0 ELSE 1 END ASC, b\.start_at DESC/
@@ -1805,14 +1805,14 @@ test("getTodayBookingsForOwner 的 UTC bind 範圍對應台北日界", async fun
   assert.match(call.sql, /b\.start_at >= \?2 AND b\.start_at < \?3/);
 });
 
-test("getTodayBookingsForOwner SQL 限 tenant、含六種可見狀態、排除 no_show／rescheduled、start_at ASC", async function () {
+test("getTodayBookingsForOwner SQL 限 tenant、含可見狀態（含 no_show）、排除 rescheduled、start_at ASC", async function () {
   var db = makeFakeDb(function () { return []; });
   await getTodayBookingsForOwner(makeEnv(db), "2026-07-18");
 
   var sql = db.calls[0].sql;
   assert.match(sql, /b\.tenant_id = \?1/);
   assert.ok(sql.includes("b.status IN " + VISIBLE_STATUS_LIST));
-  assert.ok(!sql.includes("no_show"));
+  assert.ok(sql.includes("no_show"));
   assert.ok(!sql.includes("rescheduled"));
   assert.match(sql, /ORDER BY b\.start_at ASC/);
 });
@@ -2050,13 +2050,13 @@ test("getOwnerCustomersFromBookings 排序：無預約者排最後", async funct
   assert.equal(result.customers[1].customerId, "cust-no-booking", "無預約者必須排最後");
 });
 
-test("getOwnerCustomersFromBookings 只含六種可見狀態，排除 no_show／rescheduled", async function () {
+test("getOwnerCustomersFromBookings 含可見狀態（含 no_show），排除 rescheduled", async function () {
   var db = makeFakeDb(function () { return []; });
   await getOwnerCustomersFromBookings(makeEnv(db));
 
   var sql = db.calls[0].sql;
   assert.ok(sql.includes("b.status IN " + VISIBLE_STATUS_LIST));
-  assert.ok(!sql.includes("no_show"), "查詢不得包含 no_show");
+  assert.ok(sql.includes("no_show"), "查詢應包含 no_show");
   assert.ok(!sql.includes("rescheduled"), "查詢不得包含 rescheduled");
 });
 
@@ -2239,13 +2239,13 @@ test("getOwnerCustomerBookings 的 TENANT_ID 與 userId 都走 bind，不拼接 
   assert.ok(!call.sql.includes(TENANT), "TENANT_ID 不得拼接進 SQL");
 });
 
-test("getOwnerCustomerBookings 只含六種可見狀態，排除 no_show／rescheduled", async function () {
+test("getOwnerCustomerBookings 含可見狀態（含 no_show），排除 rescheduled", async function () {
   var db = makeFakeDb(function () { return []; });
   await getOwnerCustomerBookings(makeEnv(db), "U-owner-query");
 
   var sql = db.calls[0].sql;
   assert.ok(sql.includes("b.status IN " + VISIBLE_STATUS_LIST));
-  assert.ok(!sql.includes("no_show"), "查詢不得包含 no_show");
+  assert.ok(sql.includes("no_show"), "查詢應包含 no_show");
   assert.ok(!sql.includes("rescheduled"), "查詢不得包含 rescheduled");
 });
 

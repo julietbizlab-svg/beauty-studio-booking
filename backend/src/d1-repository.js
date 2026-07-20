@@ -50,7 +50,8 @@ import {
   isStaffCancellableStatus,
   isCancellationStatus,
   buildStatusInClause,
-  assertOwnerGeneralStatusRouteTransition
+  assertOwnerGeneralStatusRouteTransition,
+  OWNER_NO_SHOW_REASON_CODE
 } from "./booking-state-machine.js";
 
 function makeError(message, status) {
@@ -590,7 +591,7 @@ export async function replaceWeeklySlots(env, slots) {
 // 狀態轉換：集中於 booking-state-machine.js。
 // 對外 DTO 的 status 欄位維持既有中文（已確認／已取消等）以向後相容；
 // 另附 publicStatus、statusLabel、isConfirmed 等擴充欄位。
-// rescheduled／no_show 不出現在客戶／業主列表。
+// rescheduled 不出現在客戶／業主列表；no_show 可見（顯示「未到」）。
 //
 // 時間規則：start_at／cancelled_at 以 UTC ISO 儲存；輸出 date／time／
 // canceledAt 一律轉 Asia/Taipei；月／日查詢先把台北日界換算成 UTC 範圍
@@ -1460,6 +1461,9 @@ function buildTransitionUpdateBindings(toStatus, now, options) {
  */
 export async function applyOwnerGeneralBookingStatusTransition(env, params) {
   ensureD1Env(env);
+  if (!env.STAFF_ID) {
+    throw makeError("缺少 STAFF_ID 設定", 500);
+  }
   var input = params || {};
   var bookingId = String(input.bookingId || "");
   var toStatus = input.toStatus;
@@ -1472,21 +1476,33 @@ export async function applyOwnerGeneralBookingStatusTransition(env, params) {
   }
 
   var existing = await env.DB.prepare(
-    "SELECT id, status FROM bookings WHERE tenant_id = ?1 AND id = ?2"
+    "SELECT id, status, start_at FROM bookings WHERE tenant_id = ?1 AND id = ?2"
   ).bind(env.TENANT_ID, bookingId).first();
 
   if (!existing) {
     throw makeError("找不到此預約", 404);
   }
 
-  assertOwnerGeneralStatusRouteTransition(existing.status, toStatus);
+  var now = nowIso();
+  assertOwnerGeneralStatusRouteTransition(existing.status, toStatus, {
+    startAt: existing.start_at,
+    nowIso: now
+  });
 
-  return applyBookingStatusTransition(env, Object.assign({}, input, {
+  var reasonCode = input.reasonCode != null ? String(input.reasonCode) : "";
+  var note = input.note != null ? String(input.note) : "";
+  if (toStatus === BOOKING_STATUSES.NO_SHOW) {
+    reasonCode = OWNER_NO_SHOW_REASON_CODE;
+  }
+
+  return applyBookingStatusTransition(env, {
     bookingId: bookingId,
     toStatus: toStatus,
     actor: BOOKING_ACTORS.STAFF,
-    actorId: input.actorId != null ? String(input.actorId) : ""
-  }));
+    actorId: String(env.STAFF_ID),
+    reasonCode: reasonCode,
+    note: note
+  });
 }
 
 export async function applyBookingStatusTransition(env, params) {
@@ -1778,8 +1794,8 @@ export async function cancelBookingByOwner(env, bookingId, cancelReason) {
 // ──────────────────────── bookings（業主查詢） ───────────────────────────
 //
 // 業主看得到全部可見狀態（pending／confirmed／checked_in／completed／
-// cancelled_by_customer／cancelled_by_store＝CUSTOMER_VISIBLE_STATUS_SQL），
-// 排除 no_show／rescheduled；狀態與取消者轉換沿用 bookingRowToDto。
+// cancelled_by_customer／cancelled_by_store／no_show＝CUSTOMER_VISIBLE_STATUS_SQL），
+// 排除 rescheduled；狀態與取消者轉換沿用 bookingRowToDto。
 
 /** 與 notion.js 的 bookingToOwnerDto 相同的欄位子集 */
 function bookingDtoToOwnerDto(dto) {
@@ -1860,7 +1876,7 @@ export async function getOwnerBookingsForMonth(env, month) {
 //
 // 客戶一律經 customers＋line_accounts＋bookings 三表關聯（全部限制
 // tenant_id）；只列出至少有一筆可見 booking（CUSTOMER_VISIBLE_STATUS_SQL，
-// 排除 no_show／rescheduled）的客戶。彙總查詢不 JOIN booking_items，
+// 排除 rescheduled）的客戶。彙總查詢不 JOIN booking_items，
 // bookingCount 不會因多筆 items 重複計算。
 
 /**

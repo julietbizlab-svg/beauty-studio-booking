@@ -424,8 +424,17 @@
     var sorted = sortBookingsForDisplay(state.bookings);
     container.innerHTML = sorted.map(function (b) {
       var isConfirmed = b.status === "已確認";
-      var statusClass = isConfirmed ? "confirmed" : "cancelled";
-      var cardClass = isConfirmed ? "card booking-card booking-card--confirmed" : "card booking-card booking-card--cancelled";
+      var isNoShow = b.status === "未到" ||
+        b.internalStatus === "no_show" ||
+        b.publicStatus === "no_show";
+      var statusClass = isConfirmed
+        ? "confirmed"
+        : (isNoShow ? "noshow" : "cancelled");
+      var cardClass = isConfirmed
+        ? "card booking-card booking-card--confirmed"
+        : (isNoShow
+          ? "card booking-card booking-card--noshow"
+          : "card booking-card booking-card--cancelled");
       var canCancel = isConfirmed && b.canCancel === true;
       var cancelBtn = canCancel
         ? '<button type="button" class="btn btn-danger" data-cancel="' + b.id + '">取消預約</button>'
@@ -442,11 +451,12 @@
         : (b.status === "已取消" && b.canceledBy === "業主"
           ? '<p class="booking-cancel-reason">此預約由業主取消</p>'
           : "");
+      var displayStatus = b.statusLabel || b.status;
       return (
         '<div class="' + cardClass + '">' +
           '<h3>' + escapeHtml(b.serviceName) + '</h3>' +
           '<p>' + formatDateZh(b.date) + ' ' + escapeHtml(b.time) + '</p>' +
-          '<span class="booking-status ' + statusClass + '">' + escapeHtml(b.status) + '</span>' +
+          '<span class="booking-status ' + statusClass + '">' + escapeHtml(displayStatus) + '</span>' +
           deadlineLine +
           blockedLine +
           reasonLine +

@@ -182,12 +182,18 @@
       label: "升級為正式確認",
       requiresConfirm: false,
       successMessage: "已升級為正式確認"
+    },
+    no_show: {
+      label: "未到",
+      requiresConfirm: true,
+      confirmMessage: "確定將此預約標記為未到？",
+      successMessage: "已標記客人未到"
     }
   };
 
   function getOwnerStaffTransitionActions(internalStatus) {
     var allowedByStatus = {
-      confirmed: ["checked_in"],
+      confirmed: ["checked_in", "no_show"],
       checked_in: ["completed"],
       pending: ["confirmed", "checked_in"]
     };
@@ -206,12 +212,18 @@
 
   function ownerBookingCardClass(booking) {
     if (booking.status === "已取消") return "booking-card--cancelled";
+    if (booking.internalStatus === "no_show" || booking.status === "未到") {
+      return "booking-card--noshow";
+    }
     if (booking.internalStatus === "completed") return "booking-card--completed";
     return "booking-card--confirmed";
   }
 
   function ownerBookingStatusClass(booking) {
     if (booking.status === "已取消") return "booking-status cancelled";
+    if (booking.internalStatus === "no_show" || booking.status === "未到") {
+      return "booking-status noshow";
+    }
     if (booking.internalStatus === "completed") return "booking-status completed";
     if (booking.internalStatus === "checked_in") return "booking-status checked-in";
     return "booking-status confirmed";
@@ -262,16 +274,17 @@
     var sorted = sortOwnerDayBookings(bookings);
     container.innerHTML = sorted.map(function (b) {
       var isCancelled = b.status === "已取消";
+      var isNoShow = b.internalStatus === "no_show" || b.status === "未到";
       var cardClass = "card booking-card " + ownerBookingCardClass(b);
       var statusClass = ownerBookingStatusClass(b);
       var reasonLine = isCancelled && b.cancelReason
         ? '<p class="booking-cancel-reason">取消原因：' + escapeHtml(b.cancelReason) + "</p>"
         : "";
-      var cancelBtn = !isCancelled
+      var cancelBtn = (!isCancelled && !isNoShow)
         ? '<button type="button" class="btn btn-danger btn-cancel-booking" data-cancel-id="' +
           escapeHtml(b.id) + '">取消預約</button>'
         : "";
-      var transitionActions = !isCancelled
+      var transitionActions = (!isCancelled && !isNoShow)
         ? getOwnerStaffTransitionActions(b.internalStatus)
         : [];
       var transitionBtns = transitionActions.map(function (action) {
@@ -337,6 +350,7 @@
     return (bookings || []).slice().sort(function (a, b) {
       function rank(booking) {
         if (booking.status === "已取消") return 2;
+        if (booking.internalStatus === "no_show" || booking.status === "未到") return 2;
         if (booking.internalStatus === "completed") return 1;
         return 0;
       }

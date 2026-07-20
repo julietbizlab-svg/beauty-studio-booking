@@ -210,7 +210,7 @@ var TRANSITIONS = Object.freeze({
   }
 });
 
-/** 客戶列表可見（排除 legacy rescheduled／no_show） */
+/** 客戶列表可見（含 no_show 唯讀顯示；仍排除 legacy rescheduled） */
 export var CUSTOMER_VISIBLE_STATUSES = Object.freeze([
   S.DRAFT,
   S.HELD,
@@ -222,10 +222,11 @@ export var CUSTOMER_VISIBLE_STATUSES = Object.freeze([
   S.CANCELLED_BY_STORE,
   S.EXPIRED,
   S.PENDING,
-  S.CHECKED_IN
+  S.CHECKED_IN,
+  S.NO_SHOW
 ]);
 
-/** 業主列表可見（同客戶；legacy rescheduled／no_show 仍隱藏） */
+/** 業主列表可見（同客戶；含 no_show，仍排除 rescheduled） */
 export var OWNER_VISIBLE_STATUSES = CUSTOMER_VISIBLE_STATUSES;
 
 /** 排序：已確認群組（含 legacy active + completed） */
@@ -430,8 +431,10 @@ export function listAllowedTransitions(fromStatus, actor) {
 }
 
 /** 業主 Phase 2 一般狀態操作 route／UI 明確白名單（不含取消） */
+export var OWNER_NO_SHOW_REASON_CODE = "owner_no_show";
+
 var OWNER_GENERAL_STATUS_ROUTE_TARGETS = Object.freeze({
-  confirmed: Object.freeze([S.CHECKED_IN]),
+  confirmed: Object.freeze([S.CHECKED_IN, S.NO_SHOW]),
   checked_in: Object.freeze([S.COMPLETED]),
   pending: Object.freeze([S.CONFIRMED, S.CHECKED_IN])
 });
@@ -454,7 +457,22 @@ export function canOwnerGeneralStatusRouteTransition(fromStatus, toStatus) {
   return allowed.indexOf(toStatus) !== -1;
 }
 
-export function assertOwnerGeneralStatusRouteTransition(fromStatus, toStatus) {
+/**
+ * no_show 僅允許預約開始時間已到（start_at <= now）。
+ * 時間一律由伺服器傳入，不信任前端；以毫秒比較，不直接比 ISO 字串。
+ */
+export function assertOwnerNoShowStartAtReached(startAt, nowIso) {
+  var startMillis = Date.parse(String(startAt || ""));
+  var nowMillis = Date.parse(String(nowIso || ""));
+  if (!Number.isFinite(startMillis) || !Number.isFinite(nowMillis)) {
+    throw makeError("無法驗證預約時間", 400);
+  }
+  if (startMillis > nowMillis) {
+    throw makeError("預約尚未開始，無法標記未到", 400);
+  }
+}
+
+export function assertOwnerGeneralStatusRouteTransition(fromStatus, toStatus, options) {
   assertKnownBookingStatus(fromStatus);
   assertKnownBookingStatus(toStatus);
   if (isCancellationStatus(toStatus)) {
@@ -462,6 +480,12 @@ export function assertOwnerGeneralStatusRouteTransition(fromStatus, toStatus) {
   }
   if (!canOwnerGeneralStatusRouteTransition(fromStatus, toStatus)) {
     throw makeError("不允許的預約狀態轉換", 400);
+  }
+  if (toStatus === S.NO_SHOW) {
+    assertOwnerNoShowStartAtReached(
+      options && options.startAt,
+      options && options.nowIso
+    );
   }
 }
 

@@ -390,6 +390,11 @@ textarea { min-height: 72px; resize: vertical; }
   color: #4A667A;
 }
 
+.booking-status.noshow {
+  background: #F3EDE7;
+  color: #8A6B4A;
+}
+
 .booking-card--confirmed {
   border-color: #D7EBD9;
   background: var(--card);
@@ -407,6 +412,17 @@ textarea { min-height: 72px; resize: vertical; }
 
 .booking-card--completed .booking-time {
   color: #4A667A;
+  font-weight: 700;
+}
+
+.booking-card--noshow {
+  border-color: #E8DFD5;
+  background: #FBF8F5;
+  opacity: 0.9;
+}
+
+.booking-card--noshow .booking-time {
+  color: #8A6B4A;
   font-weight: 700;
 }
 

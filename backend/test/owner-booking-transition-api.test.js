@@ -30,8 +30,8 @@ var LOCATION = "location-transition-001";
 var STAFF = "staff-transition-001";
 var API = "https://example.com";
 var NOW = "2026-07-20T00:00:00.000Z";
-var FUTURE_START = "2026-08-01T02:00:00.000Z";
-var FUTURE_END = "2026-08-01T03:00:00.000Z";
+var FUTURE_START = "2099-08-01T02:00:00.000Z";
+var FUTURE_END = "2099-08-01T03:00:00.000Z";
 
 var OWNER_TOKEN = "token-owner";
 var STRANGER_TOKEN = "token-stranger";
@@ -250,8 +250,8 @@ function assertBookingUnchanged(db, bookingId, expectedStatus) {
   );
 }
 
-test("PATCH status：confirmed→completed／rescheduled／no_show 回 400 且 DB 零變更", async function () {
-  var blockedTargets = [S.COMPLETED, S.RESCHEDULED, S.NO_SHOW];
+test("PATCH status：confirmed→completed／rescheduled 回 400 且 DB 零變更", async function () {
+  var blockedTargets = [S.COMPLETED, S.RESCHEDULED];
   for (var i = 0; i < blockedTargets.length; i++) {
     var toStatus = blockedTargets[i];
     var db = makeReadyDb(S.CONFIRMED, "bk-block-" + i);
@@ -268,6 +268,24 @@ test("PATCH status：confirmed→completed／rescheduled／no_show 回 400 且 D
     assert.equal(response.status, 400, toStatus + " 應回 400");
     assertBookingUnchanged(db, "bk-block-" + i, S.CONFIRMED);
   }
+});
+
+test("PATCH status：confirmed→no_show 且 start_at 未到 → 400 零寫入", async function () {
+  var db = makeReadyDb(S.CONFIRMED, "bk-noshow-future");
+  var env = makeEnv(db);
+  var response = await worker.fetch(
+    jsonRequest(
+      "PATCH",
+      "/api/owner/bookings/bk-noshow-future/status",
+      { toStatus: S.NO_SHOW, now: "2099-01-01T00:00:00.000Z" },
+      OWNER_TOKEN
+    ),
+    env
+  );
+  assert.equal(response.status, 400);
+  var body = await response.json();
+  assert.match(body.message, /尚未開始|無法標記未到/);
+  assertBookingUnchanged(db, "bk-noshow-future", S.CONFIRMED);
 });
 
 test("PATCH status：checked_in→completed 成功", async function () {

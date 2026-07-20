@@ -24,7 +24,8 @@ import {
   isCustomerCancellableStatus,
   bookingStatusToLegacyApiLabel,
   bookingStatusToDtoExtensions,
-  listOwnerStaffTransitionTargets
+  listOwnerStaffTransitionTargets,
+  assertOwnerNoShowStartAtReached
 } from "../src/booking-state-machine.js";
 
 var ALL_STATUSES = [
@@ -118,12 +119,76 @@ test("staff 可 confirmed→checked_in、checked_in→completed、pending→conf
 });
 
 test("listOwnerStaffTransitionTargets 僅含 Phase 2 一般操作白名單", function () {
-  assert.deepEqual(listOwnerStaffTransitionTargets(S.CONFIRMED), [S.CHECKED_IN]);
+  assert.deepEqual(listOwnerStaffTransitionTargets(S.CONFIRMED), [S.CHECKED_IN, S.NO_SHOW]);
   assert.deepEqual(listOwnerStaffTransitionTargets(S.CHECKED_IN), [S.COMPLETED]);
   assert.deepEqual(listOwnerStaffTransitionTargets(S.PENDING), [S.CONFIRMED, S.CHECKED_IN]);
   assert.deepEqual(listOwnerStaffTransitionTargets(S.DRAFT), []);
   assert.ok(listOwnerStaffTransitionTargets(S.CONFIRMED).indexOf(S.COMPLETED) === -1);
   assert.ok(listOwnerStaffTransitionTargets(S.CONFIRMED).indexOf(S.RESCHEDULED) === -1);
+  assert.ok(listOwnerStaffTransitionTargets(S.CHECKED_IN).indexOf(S.NO_SHOW) === -1);
+});
+
+test("assertOwnerNoShowStartAtReached：毫秒比較與 fail closed", function () {
+  assert.doesNotThrow(function () {
+    assertOwnerNoShowStartAtReached(
+      "2026-07-20T10:00:00.000Z",
+      "2026-07-20T10:00:00.000Z"
+    );
+  }, "相同時間應允許");
+
+  assert.doesNotThrow(function () {
+    assertOwnerNoShowStartAtReached(
+      "2026-07-20T18:00:00+08:00",
+      "2026-07-20T10:00:00.000Z"
+    );
+  }, "不同合法 timezone offset 應按真實時間比較");
+
+  assert.throws(
+    function () {
+      assertOwnerNoShowStartAtReached(
+        "2026-07-20T10:00:01.000Z",
+        "2026-07-20T10:00:00.000Z"
+      );
+    },
+    function (error) {
+      assert.equal(error.status, 400);
+      assert.match(error.message, /尚未開始|無法標記未到/);
+      return true;
+    }
+  );
+
+  assert.throws(
+    function () {
+      assertOwnerNoShowStartAtReached("not-a-date", "2026-07-20T10:00:00.000Z");
+    },
+    function (error) {
+      assert.equal(error.status, 400);
+      assert.match(error.message, /無法驗證預約時間/);
+      return true;
+    }
+  );
+
+  assert.throws(
+    function () {
+      assertOwnerNoShowStartAtReached("2026-07-20T10:00:00.000Z", "invalid");
+    },
+    function (error) {
+      assert.equal(error.status, 400);
+      assert.match(error.message, /無法驗證預約時間/);
+      return true;
+    }
+  );
+
+  assert.throws(
+    function () {
+      assertOwnerNoShowStartAtReached("", "2026-07-20T10:00:00.000Z");
+    },
+    function (error) {
+      assert.equal(error.status, 400);
+      assert.match(error.message, /無法驗證預約時間/);
+      return true;
+    }
+  );
 });
 
 test("legacy slot blocking 含 pending／checked_in／confirmed", function () {
