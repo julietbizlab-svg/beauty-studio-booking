@@ -380,6 +380,16 @@ textarea { min-height: 72px; resize: vertical; }
   color: #9A7B7B;
 }
 
+.booking-status.checked-in {
+  background: #E8F0EA;
+  color: #3F6B4A;
+}
+
+.booking-status.completed {
+  background: #E7EEF3;
+  color: #4A667A;
+}
+
 .booking-card--confirmed {
   border-color: #D7EBD9;
   background: var(--card);
@@ -387,6 +397,16 @@ textarea { min-height: 72px; resize: vertical; }
 
 .booking-card--confirmed .booking-time {
   color: var(--primary);
+  font-weight: 700;
+}
+
+.booking-card--completed {
+  border-color: #D5E0E8;
+  background: #FAFCFD;
+}
+
+.booking-card--completed .booking-time {
+  color: #4A667A;
   font-weight: 700;
 }
 
@@ -417,6 +437,19 @@ textarea { min-height: 72px; resize: vertical; }
 
 .btn-cancel-booking {
   margin-top: 10px;
+  width: 100%;
+}
+
+.booking-card-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.booking-card-actions .btn-transition-booking,
+.booking-card-actions .btn-cancel-booking {
+  margin-top: 0;
   width: 100%;
 }
 

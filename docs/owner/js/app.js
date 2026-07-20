@@ -163,6 +163,86 @@
     });
   }
 
+  var cancelModalState = { bookingId: "" };
+  var transitionBusy = false;
+
+  var OWNER_STAFF_TRANSITION_UI = {
+    checked_in: {
+      label: "客人報到",
+      requiresConfirm: false,
+      successMessage: "已標記客人報到"
+    },
+    completed: {
+      label: "標記完成",
+      requiresConfirm: true,
+      confirmMessage: "確定將此預約標記為已完成？",
+      successMessage: "已標記預約完成"
+    },
+    confirmed: {
+      label: "升級為正式確認",
+      requiresConfirm: false,
+      successMessage: "已升級為正式確認"
+    }
+  };
+
+  function getOwnerStaffTransitionActions(internalStatus) {
+    var allowedByStatus = {
+      confirmed: ["checked_in"],
+      checked_in: ["completed"],
+      pending: ["confirmed", "checked_in"]
+    };
+    var targets = allowedByStatus[internalStatus] || [];
+    return targets.map(function (toStatus) {
+      var ui = OWNER_STAFF_TRANSITION_UI[toStatus] || { label: toStatus };
+      return {
+        toStatus: toStatus,
+        label: ui.label,
+        requiresConfirm: !!ui.requiresConfirm,
+        confirmMessage: ui.confirmMessage || "",
+        successMessage: ui.successMessage || "已更新預約狀態"
+      };
+    });
+  }
+
+  function ownerBookingCardClass(booking) {
+    if (booking.status === "已取消") return "booking-card--cancelled";
+    if (booking.internalStatus === "completed") return "booking-card--completed";
+    return "booking-card--confirmed";
+  }
+
+  function ownerBookingStatusClass(booking) {
+    if (booking.status === "已取消") return "booking-status cancelled";
+    if (booking.internalStatus === "completed") return "booking-status completed";
+    if (booking.internalStatus === "checked_in") return "booking-status checked-in";
+    return "booking-status confirmed";
+  }
+
+  function ownerBookingStatusLabel(booking) {
+    if (booking.statusLabel) return booking.statusLabel;
+    return booking.status || "已確認";
+  }
+
+  async function submitBookingTransition(bookingId, action) {
+    if (transitionBusy || !bookingId || !action) return;
+    if (action.requiresConfirm &&
+        !confirm(action.confirmMessage || "確定要更新此預約狀態？")) {
+      return;
+    }
+    transitionBusy = true;
+    renderDayBookings();
+    setStatus("info", "更新狀態中…");
+    try {
+      await window.ownerApi.transitionBookingStatus(bookingId, action.toStatus);
+      setStatus("success", action.successMessage || "已更新預約狀態");
+      await refreshCalendarBookings();
+    } catch (error) {
+      setStatus("error", error.message);
+    } finally {
+      transitionBusy = false;
+      renderDayBookings();
+    }
+  }
+
   function renderDayBookings() {
     var container = els.todayList;
     var date = state.selectedDate;
@@ -182,8 +262,8 @@
     var sorted = sortOwnerDayBookings(bookings);
     container.innerHTML = sorted.map(function (b) {
       var isCancelled = b.status === "已取消";
-      var cardClass = "card booking-card" + (isCancelled ? " booking-card--cancelled" : " booking-card--confirmed");
-      var statusClass = isCancelled ? "booking-status cancelled" : "booking-status confirmed";
+      var cardClass = "card booking-card " + ownerBookingCardClass(b);
+      var statusClass = ownerBookingStatusClass(b);
       var reasonLine = isCancelled && b.cancelReason
         ? '<p class="booking-cancel-reason">取消原因：' + escapeHtml(b.cancelReason) + "</p>"
         : "";
@@ -191,11 +271,28 @@
         ? '<button type="button" class="btn btn-danger btn-cancel-booking" data-cancel-id="' +
           escapeHtml(b.id) + '">取消預約</button>'
         : "";
+      var transitionActions = !isCancelled
+        ? getOwnerStaffTransitionActions(b.internalStatus)
+        : [];
+      var transitionBtns = transitionActions.map(function (action) {
+        var disabledAttr = transitionBusy ? " disabled" : "";
+        return (
+          '<button type="button" class="btn btn-primary btn-small btn-transition-booking"' +
+          disabledAttr +
+          ' data-transition-id="' + escapeHtml(b.id) + '"' +
+          ' data-transition-to="' + escapeHtml(action.toStatus) + '">' +
+          escapeHtml(action.label) +
+          "</button>"
+        );
+      }).join("");
+      var actionRow = (transitionBtns || cancelBtn)
+        ? '<div class="booking-card-actions">' + transitionBtns + cancelBtn + "</div>"
+        : "";
       return (
         '<div class="' + cardClass + '">' +
           '<div class="booking-card-head">' +
             '<span class="booking-time">' + escapeHtml(b.time) + '</span>' +
-            '<span class="' + statusClass + '">' + escapeHtml(b.status || "已確認") + '</span>' +
+            '<span class="' + statusClass + '">' + escapeHtml(ownerBookingStatusLabel(b)) + '</span>' +
           '</div>' +
           '<h3 class="booking-service">' + escapeHtml(b.serviceName || "服務") + '</h3>' +
           '<p class="booking-customer">' + escapeHtml(b.customerName || "客人") + '</p>' +
@@ -207,7 +304,7 @@
             : "") +
           '<p class="booking-date-line">' + formatDateZh(b.date || date) + '</p>' +
           reasonLine +
-          cancelBtn +
+          actionRow +
         '</div>'
       );
     }).join("");
@@ -219,12 +316,32 @@
         openOwnerCancelModal(booking || { id: id, date: date });
       });
     });
+
+    container.querySelectorAll("[data-transition-id]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (transitionBusy || btn.disabled) return;
+        var id = btn.getAttribute("data-transition-id");
+        var toStatus = btn.getAttribute("data-transition-to");
+        var booking = sorted.find(function (b) { return b.id === id; });
+        var actions = getOwnerStaffTransitionActions(
+          booking && booking.internalStatus ? booking.internalStatus : ""
+        );
+        var action = actions.find(function (item) { return item.toStatus === toStatus; });
+        if (!action) return;
+        submitBookingTransition(id, action);
+      });
+    });
   }
 
   function sortOwnerDayBookings(bookings) {
     return (bookings || []).slice().sort(function (a, b) {
-      var aRank = a.status === "已確認" ? 0 : (a.status === "已取消" ? 1 : 2);
-      var bRank = b.status === "已確認" ? 0 : (b.status === "已取消" ? 1 : 2);
+      function rank(booking) {
+        if (booking.status === "已取消") return 2;
+        if (booking.internalStatus === "completed") return 1;
+        return 0;
+      }
+      var aRank = rank(a);
+      var bRank = rank(b);
       if (aRank !== bRank) return aRank - bRank;
 
       var aTime = String(a.time || "");

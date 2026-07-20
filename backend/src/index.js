@@ -39,10 +39,12 @@ import {
   deleteCustomerPhotoSet,
   uploadCustomerComparisonPhoto,
   getCustomerPhotoContent,
-  deleteCustomerComparisonPhoto
+  deleteCustomerComparisonPhoto,
+  applyOwnerGeneralBookingStatusTransition
 } from "./data-repository.js";
 import { requireOwnerFromRequest } from "./owner-auth.js";
 import { requireCustomerFromRequest } from "./liff-verify.js";
+import { isKnownBookingStatus } from "./booking-state-machine.js";
 import {
   weekdayLabelFromIndex,
   buildAllSlotTimesForDay,
@@ -311,6 +313,36 @@ export default {
           ownerCancelBody.reason || ownerCancelBody.cancelReason
         );
         return jsonResponse(ownerCancelResult, corsHeaders);
+      }
+
+      var ownerBookingStatusMatch = url.pathname.match(
+        /^\/api\/owner\/bookings\/([^/]+)\/status$/
+      );
+      if (ownerBookingStatusMatch && request.method === "PATCH") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        if (!env.STAFF_ID) {
+          throw Object.assign(new Error("缺少 STAFF_ID 設定"), { status: 500 });
+        }
+        var ownerStatusBookingId = decodeURIComponent(ownerBookingStatusMatch[1]);
+        var ownerStatusBody = await readJson(request);
+        var ownerToStatus = ownerStatusBody.toStatus;
+        if (!ownerToStatus) {
+          return jsonResponse({ ok: false, message: "缺少 toStatus" }, corsHeaders, 400);
+        }
+        if (!isKnownBookingStatus(ownerToStatus)) {
+          return jsonResponse({ ok: false, message: "未知的目標狀態" }, corsHeaders, 400);
+        }
+        var ownerTransitionResult = await applyOwnerGeneralBookingStatusTransition(env, {
+          bookingId: ownerStatusBookingId,
+          toStatus: ownerToStatus,
+          actorId: env.STAFF_ID,
+          reasonCode: ownerStatusBody.reasonCode != null
+            ? String(ownerStatusBody.reasonCode)
+            : "",
+          note: ownerStatusBody.note != null ? String(ownerStatusBody.note) : ""
+        });
+        return jsonResponse(Object.assign({ ok: true }, ownerTransitionResult), corsHeaders);
       }
 
       if (url.pathname === "/api/owner/bookings/month" && request.method === "GET") {

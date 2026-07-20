@@ -23,7 +23,8 @@ import {
   isTerminalBookingStatus,
   isCustomerCancellableStatus,
   bookingStatusToLegacyApiLabel,
-  bookingStatusToDtoExtensions
+  bookingStatusToDtoExtensions,
+  listOwnerStaffTransitionTargets
 } from "../src/booking-state-machine.js";
 
 var ALL_STATUSES = [
@@ -107,6 +108,22 @@ test("confirmed 是唯一正式成立狀態", function () {
   });
   assert.equal(isConfirmedBookingStatus(S.PENDING), false);
   assert.equal(isConfirmedBookingStatus(S.CHECKED_IN), false);
+});
+
+test("staff 可 confirmed→checked_in、checked_in→completed、pending→confirmed／checked_in", function () {
+  assert.equal(canTransition(S.CONFIRMED, S.CHECKED_IN, BOOKING_ACTORS.STAFF), true);
+  assert.equal(canTransition(S.CHECKED_IN, S.COMPLETED, BOOKING_ACTORS.STAFF), true);
+  assert.equal(canTransition(S.PENDING, S.CONFIRMED, BOOKING_ACTORS.STAFF), true);
+  assert.equal(canTransition(S.PENDING, S.CHECKED_IN, BOOKING_ACTORS.STAFF), true);
+});
+
+test("listOwnerStaffTransitionTargets 僅含 Phase 2 一般操作白名單", function () {
+  assert.deepEqual(listOwnerStaffTransitionTargets(S.CONFIRMED), [S.CHECKED_IN]);
+  assert.deepEqual(listOwnerStaffTransitionTargets(S.CHECKED_IN), [S.COMPLETED]);
+  assert.deepEqual(listOwnerStaffTransitionTargets(S.PENDING), [S.CONFIRMED, S.CHECKED_IN]);
+  assert.deepEqual(listOwnerStaffTransitionTargets(S.DRAFT), []);
+  assert.ok(listOwnerStaffTransitionTargets(S.CONFIRMED).indexOf(S.COMPLETED) === -1);
+  assert.ok(listOwnerStaffTransitionTargets(S.CONFIRMED).indexOf(S.RESCHEDULED) === -1);
 });
 
 test("legacy slot blocking 含 pending／checked_in／confirmed", function () {

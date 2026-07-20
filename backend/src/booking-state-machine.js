@@ -177,6 +177,7 @@ var TRANSITIONS = Object.freeze({
     cancelled_by_store: ["staff"]
   },
   confirmed: {
+    checked_in: ["staff"],
     completed: ["staff"],
     cancelled_by_customer: ["customer"],
     cancelled_by_store: ["staff"],
@@ -192,6 +193,7 @@ var TRANSITIONS = Object.freeze({
   /** legacy：視同 confirmed 的可取消／完成路徑 */
   pending: {
     confirmed: ["customer", "staff", "system"],
+    checked_in: ["staff"],
     completed: ["staff"],
     cancelled_by_customer: ["customer"],
     cancelled_by_store: ["staff"],
@@ -425,6 +427,42 @@ export function listAllowedTransitions(fromStatus, actor) {
     }
     return fromMap[toStatus].indexOf(actor) !== -1;
   });
+}
+
+/** 業主 Phase 2 一般狀態操作 route／UI 明確白名單（不含取消） */
+var OWNER_GENERAL_STATUS_ROUTE_TARGETS = Object.freeze({
+  confirmed: Object.freeze([S.CHECKED_IN]),
+  checked_in: Object.freeze([S.COMPLETED]),
+  pending: Object.freeze([S.CONFIRMED, S.CHECKED_IN])
+});
+
+/** 業主一般狀態操作 route／UI：Phase 2 明確白名單 */
+export function listOwnerStaffTransitionTargets(fromStatus) {
+  assertKnownBookingStatus(fromStatus);
+  var targets = OWNER_GENERAL_STATUS_ROUTE_TARGETS[fromStatus];
+  return targets ? targets.slice() : [];
+}
+
+export function canOwnerGeneralStatusRouteTransition(fromStatus, toStatus) {
+  if (!isKnownBookingStatus(fromStatus) || !isKnownBookingStatus(toStatus)) {
+    return false;
+  }
+  var allowed = OWNER_GENERAL_STATUS_ROUTE_TARGETS[fromStatus];
+  if (!allowed) {
+    return false;
+  }
+  return allowed.indexOf(toStatus) !== -1;
+}
+
+export function assertOwnerGeneralStatusRouteTransition(fromStatus, toStatus) {
+  assertKnownBookingStatus(fromStatus);
+  assertKnownBookingStatus(toStatus);
+  if (isCancellationStatus(toStatus)) {
+    throw makeError("請使用取消預約功能", 400);
+  }
+  if (!canOwnerGeneralStatusRouteTransition(fromStatus, toStatus)) {
+    throw makeError("不允許的預約狀態轉換", 400);
+  }
 }
 
 /** 供測試：全部合法 (from, to, actor) 三元組 */

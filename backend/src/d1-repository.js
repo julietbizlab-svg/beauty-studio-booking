@@ -49,7 +49,8 @@ import {
   isCustomerCancellableStatus,
   isStaffCancellableStatus,
   isCancellationStatus,
-  buildStatusInClause
+  buildStatusInClause,
+  assertOwnerGeneralStatusRouteTransition
 } from "./booking-state-machine.js";
 
 function makeError(message, status) {
@@ -1455,6 +1456,37 @@ function buildTransitionUpdateBindings(toStatus, now, options) {
  * @param {string} [params.reasonCode] status log reason_code
  * @param {string} [params.note] status log note；store 取消必填
  */
+export async function applyOwnerGeneralBookingStatusTransition(env, params) {
+  ensureD1Env(env);
+  var input = params || {};
+  var bookingId = String(input.bookingId || "");
+  var toStatus = input.toStatus;
+
+  if (!bookingId) {
+    throw makeError("缺少預約編號");
+  }
+  if (!toStatus) {
+    throw makeError("缺少目標狀態");
+  }
+
+  var existing = await env.DB.prepare(
+    "SELECT id, status FROM bookings WHERE tenant_id = ?1 AND id = ?2"
+  ).bind(env.TENANT_ID, bookingId).first();
+
+  if (!existing) {
+    throw makeError("找不到此預約", 404);
+  }
+
+  assertOwnerGeneralStatusRouteTransition(existing.status, toStatus);
+
+  return applyBookingStatusTransition(env, Object.assign({}, input, {
+    bookingId: bookingId,
+    toStatus: toStatus,
+    actor: BOOKING_ACTORS.STAFF,
+    actorId: input.actorId != null ? String(input.actorId) : ""
+  }));
+}
+
 export async function applyBookingStatusTransition(env, params) {
   ensureD1Env(env);
   var input = params || {};

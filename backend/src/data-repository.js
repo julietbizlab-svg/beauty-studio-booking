@@ -221,3 +221,11 @@ export function deleteCustomerComparisonPhoto(env, customerId, photoId) {
     env, customerId, photoId
   );
 }
+
+export function applyBookingStatusTransition(env, params) {
+  return requireRepositoryFunction(env, "applyBookingStatusTransition")(env, params);
+}
+
+export function applyOwnerGeneralBookingStatusTransition(env, params) {
+  return requireRepositoryFunction(env, "applyOwnerGeneralBookingStatusTransition")(env, params);
+}

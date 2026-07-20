@@ -267,6 +267,41 @@ test("selector export index.js 使用的全部 25 個 wrapper 與 ensureDataEnv"
   assert.equal(typeof dataRepository.getDataBackendName, "function");
 });
 
+test("applyOwnerGeneralBookingStatusTransition wrapper：notion 501", function () {
+  assert.throws(
+    function () {
+      dataRepository.applyOwnerGeneralBookingStatusTransition(fullNotionEnv(), {
+        bookingId: "bk-1",
+        toStatus: "checked_in",
+        actorId: "staff-1"
+      });
+    },
+    function (error) {
+      assert.equal(error.status, 501);
+      assert.match(error.message, /不支援/);
+      return true;
+    }
+  );
+});
+
+test("applyBookingStatusTransition wrapper：notion 501", function () {
+  assert.throws(
+    function () {
+      dataRepository.applyBookingStatusTransition(fullNotionEnv(), {
+        bookingId: "bk-1",
+        toStatus: "completed",
+        actor: "staff",
+        actorId: "staff-1"
+      });
+    },
+    function (error) {
+      assert.equal(error.status, 501);
+      assert.match(error.message, /不支援/);
+      return true;
+    }
+  );
+});
+
 test("customer profile wrapper：notion 後端 fail closed 回 501，不碰任何資料", async function () {
   var env = fullNotionEnv();
   var wrapperCalls = [

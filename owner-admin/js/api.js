@@ -205,6 +205,20 @@
       });
     },
 
+    transitionBookingStatus: function (bookingId, toStatus, options) {
+      var opts = options || {};
+      var body = { toStatus: toStatus };
+      if (opts.reasonCode) body.reasonCode = opts.reasonCode;
+      if (opts.note) body.note = opts.note;
+      return apiFetch(
+        "/api/owner/bookings/" + encodeURIComponent(bookingId || "") + "/status",
+        {
+          method: "PATCH",
+          body: JSON.stringify(body)
+        }
+      );
+    },
+
     getCustomers: function (q) {
       var query = "/api/owner/customers";
       if (q) query += "?q=" + encodeURIComponent(q);
