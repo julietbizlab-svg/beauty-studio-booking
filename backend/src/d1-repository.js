@@ -1588,9 +1588,13 @@ export async function applyBookingStatusTransition(env, params) {
     updateBind.push(customerUserId);
   }
 
+  // Cloudflare D1 PreparedStatement.bind 依賴 this（dbSession）；
+  // 不可用 bind.apply(null, ...)，否則正式環境會丟 TypeError。
+  var logPrepared = env.DB.prepare(logSql);
+  var updatePrepared = env.DB.prepare(updateSql);
   var results = await env.DB.batch([
-    env.DB.prepare(logSql).bind.apply(null, logBind),
-    env.DB.prepare(updateSql).bind.apply(null, updateBind)
+    logPrepared.bind.apply(logPrepared, logBind),
+    updatePrepared.bind.apply(updatePrepared, updateBind)
   ]);
 
   var updateResult = results && results[1];

@@ -171,6 +171,119 @@ test("合法 transition 寫入 booking update 與 status log 同一 batch", asyn
   assert.equal(log.to_status, S.COMPLETED);
 });
 
+/**
+ * Cloudflare D1 PreparedStatement.bind 依賴 this.dbSession。
+ * 本機 mock 的 bind 不檢查 this，正式環境會因 bind.apply(null, …) 崩潰。
+ */
+function makeD1LikeEnvWithThisAwareBind(db) {
+  var batchCalls = [];
+  var bindThisChecks = [];
+
+  function makePreparedStatement(sql) {
+    var statement = {
+      dbSession: { id: "d1-session-" + Math.random().toString(16).slice(2) },
+      bind: function () {
+        if (this == null || this.dbSession == null) {
+          throw new TypeError("Cannot read properties of null (reading 'dbSession')");
+        }
+        bindThisChecks.push({
+          receiverIsStatement: this === statement,
+          hasDbSession: Boolean(this.dbSession)
+        });
+        var binds = Array.prototype.slice.call(arguments);
+        return {
+          sql: sql,
+          binds: binds,
+          all: async function () {
+            var stmt = db.prepare(sql);
+            return { results: stmt.all.apply(stmt, binds) };
+          },
+          first: async function () {
+            var stmt = db.prepare(sql);
+            return stmt.get.apply(stmt, binds) || null;
+          },
+          run: async function () {
+            var stmt = db.prepare(sql);
+            var info = stmt.run.apply(stmt, binds);
+            return { meta: { changes: info.changes } };
+          }
+        };
+      }
+    };
+    return statement;
+  }
+
+  return {
+    DB: {
+      prepare: function (sql) {
+        return makePreparedStatement(sql);
+      },
+      batch: async function (statements) {
+        batchCalls.push(statements);
+        db.exec("BEGIN IMMEDIATE");
+        try {
+          var results = [];
+          for (var i = 0; i < statements.length; i++) {
+            var s = statements[i];
+            var stmt = db.prepare(s.sql);
+            var info = stmt.run.apply(stmt, s.binds);
+            results.push({ meta: { changes: info.changes } });
+          }
+          db.exec("COMMIT");
+          return results;
+        } catch (err) {
+          db.exec("ROLLBACK");
+          throw err;
+        }
+      }
+    },
+    TENANT_ID: "tenant-a",
+    LOCATION_ID: "loc-a",
+    STAFF_ID: "staff-a",
+    DATA_BACKEND: "d1",
+    _batchCalls: batchCalls,
+    _bindThisChecks: bindThisChecks
+  };
+}
+
+test("confirmed→checked_in：D1-like bind 必須保留 PreparedStatement this，且只 batch 一次", async function () {
+  var db = new DatabaseSync(":memory:");
+  applyMigrations(db);
+  seedBase(db);
+  insertConfirmedBooking(db, "bk-d1-this", "BK-D1-THIS");
+  var env = makeD1LikeEnvWithThisAwareBind(db);
+
+  var result = await applyBookingStatusTransition(env, {
+    bookingId: "bk-d1-this",
+    toStatus: S.CHECKED_IN,
+    actor: BOOKING_ACTORS.STAFF,
+    actorId: "staff-a"
+  });
+
+  assert.equal(result.fromStatus, S.CONFIRMED);
+  assert.equal(result.toStatus, S.CHECKED_IN);
+  assert.equal(env._batchCalls.length, 1, "合法 transition 只執行一次 batch");
+  assert.equal(env._batchCalls[0].length, 2, "batch 含 log + update");
+
+  // prepare 先用於 SELECT；batch 前的兩個 bind（log／update）必須保留 this
+  var batchBinds = env._bindThisChecks.slice(-2);
+  assert.equal(batchBinds.length, 2);
+  batchBinds.forEach(function (check, index) {
+    assert.equal(check.receiverIsStatement, true, "bind #" + index + " receiver 必須是 PreparedStatement");
+    assert.equal(check.hasDbSession, true, "bind #" + index + " 必須能讀到 this.dbSession");
+  });
+
+  assert.equal(
+    db.prepare("SELECT status FROM bookings WHERE id = ?").get("bk-d1-this").status,
+    S.CHECKED_IN
+  );
+  assert.equal(
+    db.prepare("SELECT COUNT(*) AS c FROM booking_status_logs WHERE booking_id = ?")
+      .get("bk-d1-this").c,
+    1
+  );
+});
+
 test("非法 transition 零 DB 寫入", async function () {
   var db = new DatabaseSync(":memory:");
   applyMigrations(db);
