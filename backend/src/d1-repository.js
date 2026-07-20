@@ -31,6 +31,26 @@ import {
   formatDeadlineTaipei,
   DEFAULT_NOTICE_DAYS
 } from "./booking-notice-policy.js";
+import {
+  BOOKING_STATUSES,
+  BOOKING_ACTORS,
+  SLOT_BLOCKING_STATUS_SQL,
+  CUSTOMER_VISIBLE_STATUS_SQL,
+  CUSTOMER_CONFIRMED_GROUP_SQL,
+  CUSTOMER_CANCELLABLE_STATUS_SQL,
+  STAFF_CANCELLABLE_STATUS_SQL,
+  CANCELLATION_REASON_BY_STATUS,
+  CANCELLATION_TARGET_BY_ACTOR,
+  assertTransition,
+  assertKnownActor,
+  assertKnownBookingStatus,
+  bookingStatusToLegacyApiLabel,
+  bookingStatusToDtoExtensions,
+  isCustomerCancellableStatus,
+  isStaffCancellableStatus,
+  isCancellationStatus,
+  buildStatusInClause
+} from "./booking-state-machine.js";
 
 function makeError(message, status) {
   var error = new Error(message);
@@ -566,37 +586,14 @@ export async function replaceWeeklySlots(env, slots) {
 // customers、line_accounts（0001_init_core.sql）。
 // 只提供客戶端查詢；不含 createBooking／cancelBooking／owner 函式。
 //
-// 狀態轉換（D1 → 現有 API）：
-// - pending / confirmed / checked_in / completed →「已確認」
-// - cancelled_by_customer →「已取消」＋ canceledBy「客人」
-// - cancelled_by_store   →「已取消」＋ canceledBy「業主」
-// - rescheduled / no_show 不屬於 active，也不出現在客戶查詢
+// 狀態轉換：集中於 booking-state-machine.js。
+// 對外 DTO 的 status 欄位維持既有中文（已確認／已取消等）以向後相容；
+// 另附 publicStatus、statusLabel、isConfirmed 等擴充欄位。
+// rescheduled／no_show 不出現在客戶／業主列表。
 //
 // 時間規則：start_at／cancelled_at 以 UTC ISO 儲存；輸出 date／time／
 // canceledAt 一律轉 Asia/Taipei；月／日查詢先把台北日界換算成 UTC 範圍
 // 再比對 start_at，不假設 UTC 日期等於台北日期。
-
-/** active＝可占用時段的狀態（completed 已結束、rescheduled/no_show 不算） */
-var BOOKING_ACTIVE_STATUSES = "('pending', 'confirmed', 'checked_in')";
-
-/** 客戶查詢會出現的全部狀態（排除 rescheduled／no_show） */
-var BOOKING_VISIBLE_STATUSES =
-  "('pending', 'confirmed', 'checked_in', 'completed', " +
-  "'cancelled_by_customer', 'cancelled_by_store')";
-
-var BOOKING_STATUS_TO_API = {
-  pending: "已確認",
-  confirmed: "已確認",
-  checked_in: "已確認",
-  completed: "已確認",
-  cancelled_by_customer: "已取消",
-  cancelled_by_store: "已取消"
-};
-
-var BOOKING_CANCELED_BY = {
-  cancelled_by_customer: "客人",
-  cancelled_by_store: "業主"
-};
 
 /** 台北日期（YYYY-MM-DD）00:00 → UTC ISO 字串（Asia/Taipei 固定 +08:00） */
 function taipeiDateToUtcIso(dateStr) {
@@ -699,9 +696,7 @@ var BOOKING_SELECT_SQL =
 function bookingRowToCustomerCancelDto(row, nowUtc) {
   var now = nowUtc || new Date();
   var status = row.status;
-  var apiStatus = BOOKING_STATUS_TO_API[status] || "已取消";
-  var isActiveCustomerStatus = status === "pending" || status === "confirmed" ||
-    status === "checked_in";
+  assertKnownBookingStatus(status);
   var cancelEval = evaluateCustomerCancelPermission(
     row.start_at,
     row.cancellation_deadline_at,
@@ -710,7 +705,7 @@ function bookingRowToCustomerCancelDto(row, nowUtc) {
     status
   );
   return {
-    canCancel: isActiveCustomerStatus && cancelEval.canCancel,
+    canCancel: isCustomerCancellableStatus(status) && cancelEval.canCancel,
     cancellationDeadlineAt: cancelEval.cancellationDeadlineAt ||
       (row.cancellation_deadline_at || null),
     cancellationDeadlineDisplay: formatDeadlineTaipei(
@@ -726,6 +721,8 @@ function bookingRowToCustomerCancelDto(row, nowUtc) {
 
 function bookingRowToDto(row, nowUtc) {
   var cancelDto = bookingRowToCustomerCancelDto(row, nowUtc);
+  var statusExt = bookingStatusToDtoExtensions(row.status);
+  var legacyStatus = bookingStatusToLegacyApiLabel(row.status);
   return {
     id: row.id,
     title: row.booking_no || "",
@@ -737,9 +734,15 @@ function bookingRowToDto(row, nowUtc) {
     serviceName: row.service_name_snapshot || "",
     date: utcIsoToTaipeiDate(row.start_at),
     time: utcIsoToTaipeiTime(row.start_at),
-    status: BOOKING_STATUS_TO_API[row.status] || "已取消",
+    status: legacyStatus,
+    publicStatus: statusExt.publicStatus,
+    statusLabel: statusExt.statusLabel,
+    isConfirmed: statusExt.isConfirmed,
+    isTerminal: statusExt.isTerminal,
     cancelReason: row.cancellation_note || row.cancellation_reason_code || "",
-    canceledBy: BOOKING_CANCELED_BY[row.status] || "",
+    canceledBy: statusExt.publicStatus === "cancelled"
+      ? (row.status === BOOKING_STATUSES.CANCELLED_BY_STORE ? "業主" : "客人")
+      : "",
     canceledAt: utcIsoToTaipeiDate(row.cancelled_at),
     createdAt: row.created_at || "",
     canCancel: cancelDto.canCancel,
@@ -759,7 +762,7 @@ export async function getActiveBookingsForMonth(env, month) {
 
   var result = await env.DB.prepare(
     BOOKING_SELECT_SQL +
-    "WHERE b.tenant_id = ?1 AND b.status IN " + BOOKING_ACTIVE_STATUSES + " " +
+    "WHERE b.tenant_id = ?1 AND b.status IN " + SLOT_BLOCKING_STATUS_SQL + " " +
     "AND b.start_at >= ?2 AND b.start_at < ?3 " +
     "ORDER BY b.start_at ASC"
   ).bind(env.TENANT_ID, startUtc, endUtc).all();
@@ -778,7 +781,7 @@ export async function getActiveBookingsByDate(env, date) {
 
   var result = await env.DB.prepare(
     BOOKING_SELECT_SQL +
-    "WHERE b.tenant_id = ?1 AND b.status IN " + BOOKING_ACTIVE_STATUSES + " " +
+    "WHERE b.tenant_id = ?1 AND b.status IN " + SLOT_BLOCKING_STATUS_SQL + " " +
     "AND b.start_at >= ?2 AND b.start_at < ?3 " +
     "ORDER BY b.start_at ASC"
   ).bind(env.TENANT_ID, startUtc, endUtc).all();
@@ -795,7 +798,7 @@ export async function getActiveBookingsByUser(env, userId) {
   var result = await env.DB.prepare(
     BOOKING_SELECT_SQL +
     "WHERE b.tenant_id = ?1 AND la.line_user_id = ?2 " +
-    "AND b.status IN " + BOOKING_ACTIVE_STATUSES + " " +
+    "AND b.status IN " + SLOT_BLOCKING_STATUS_SQL + " " +
     "ORDER BY b.start_at ASC"
   ).bind(env.TENANT_ID, String(userId)).all();
 
@@ -815,8 +818,8 @@ export async function getUserBookings(env, userId) {
   var result = await env.DB.prepare(
     BOOKING_SELECT_SQL +
     "WHERE b.tenant_id = ?1 AND la.line_user_id = ?2 " +
-    "AND b.status IN " + BOOKING_VISIBLE_STATUSES + " " +
-    "ORDER BY CASE WHEN b.status IN " + BOOKING_ACTIVE_STATUSES + " OR b.status = 'completed' " +
+    "AND b.status IN " + CUSTOMER_VISIBLE_STATUS_SQL + " " +
+    "ORDER BY CASE WHEN b.status IN " + CUSTOMER_CONFIRMED_GROUP_SQL + " " +
     "THEN 0 ELSE 1 END ASC, b.start_at DESC"
   ).bind(env.TENANT_ID, String(userId)).all();
 
@@ -1306,12 +1309,12 @@ export async function createBooking(env, payload) {
       "WHERE NOT EXISTS (" +
       "SELECT 1 FROM bookings b WHERE b.tenant_id = ?2 " +
       "AND b.customer_id = ?4 " +
-      "AND b.status IN " + BOOKING_ACTIVE_STATUSES + " " +
+      "AND b.status IN " + SLOT_BLOCKING_STATUS_SQL + " " +
       "AND b.start_at >= ?10 AND b.start_at < ?11" +
       ") AND NOT EXISTS (" +
       "SELECT 1 FROM bookings b WHERE b.tenant_id = ?2 " +
       "AND b.staff_id = ?5 " +
-      "AND b.status IN " + BOOKING_ACTIVE_STATUSES + " " +
+      "AND b.status IN " + SLOT_BLOCKING_STATUS_SQL + " " +
       "AND b.start_at < ?8 AND b.end_at > ?7" +
       ")"
     ).bind(
@@ -1363,6 +1366,7 @@ export async function createBooking(env, payload) {
     throw makeError("此時段與現有預約重疊，或同一天已有預約，請選擇其他時間", 400);
   }
 
+  var confirmedExt = bookingStatusToDtoExtensions(BOOKING_STATUSES.CONFIRMED);
   return {
     ok: true,
     message: "預約成功",
@@ -1378,6 +1382,10 @@ export async function createBooking(env, payload) {
       date: date,
       time: time,
       status: "已確認",
+      publicStatus: confirmedExt.publicStatus,
+      statusLabel: confirmedExt.statusLabel,
+      isConfirmed: confirmedExt.isConfirmed,
+      isTerminal: confirmedExt.isTerminal,
       cancelReason: "",
       canceledBy: "",
       canceledAt: "",
@@ -1392,20 +1400,201 @@ export async function createBooking(env, payload) {
   };
 }
 
+// ──────────────────────── bookings（狀態轉換） ───────────────────────────
+//
+// 集中狀態機 enforce；非法轉換不寫 bookings／status log。
+// log 與 UPDATE 同一 D1 batch，共用 from_status 條件。
+
+function mapActorToChangedByType(actor) {
+  if (actor === BOOKING_ACTORS.STAFF) {
+    return "staff";
+  }
+  if (actor === BOOKING_ACTORS.SYSTEM) {
+    return "system";
+  }
+  return "customer";
+}
+
+function buildTransitionUpdateBindings(toStatus, now, options) {
+  var note = options && options.note != null ? String(options.note) : "";
+  var reasonCode = options && options.reasonCode != null ? String(options.reasonCode) : "";
+  var setParts = ["status = ?1", "updated_at = ?2"];
+  var values = [toStatus, now];
+
+  if (isCancellationStatus(toStatus)) {
+    var defaultReason = CANCELLATION_REASON_BY_STATUS[toStatus];
+    var defaultNote = toStatus === BOOKING_STATUSES.CANCELLED_BY_CUSTOMER
+      ? "客人自行取消"
+      : note;
+    if (toStatus === BOOKING_STATUSES.CANCELLED_BY_STORE && !note.trim()) {
+      throw makeError("請填寫取消原因", 400);
+    }
+    setParts.push("cancellation_reason_code = ?3");
+    setParts.push("cancellation_note = ?4");
+    setParts.push("cancelled_at = ?5");
+    values.push(defaultReason, defaultNote, now);
+  }
+
+  if (toStatus === BOOKING_STATUSES.COMPLETED) {
+    var completedIdx = values.length + 1;
+    setParts.push("completed_at = ?" + completedIdx);
+    values.push(now);
+  }
+
+  return { setClause: setParts.join(", "), values: values };
+}
+
+/**
+ * 套用合法狀態轉換（Phase 1 核心；取消流程亦應符合同一規則）。
+ * @param {object} params
+ * @param {string} params.bookingId
+ * @param {string} params.toStatus internal status
+ * @param {'customer'|'staff'|'system'} params.actor
+ * @param {string} [params.actorId]
+ * @param {string} [params.customerUserId] actor=customer 時必填（所有權）
+ * @param {string} [params.reasonCode] status log reason_code
+ * @param {string} [params.note] status log note；store 取消必填
+ */
+export async function applyBookingStatusTransition(env, params) {
+  ensureD1Env(env);
+  var input = params || {};
+  var bookingId = String(input.bookingId || "");
+  var toStatus = input.toStatus;
+  var actor = input.actor;
+  var actorId = input.actorId != null ? String(input.actorId) : "";
+  var customerUserId = input.customerUserId != null ? String(input.customerUserId) : "";
+  var reasonCode = input.reasonCode != null ? String(input.reasonCode) : "";
+  var note = input.note != null ? String(input.note) : "";
+
+  if (!bookingId) {
+    throw makeError("缺少預約編號");
+  }
+  if (!toStatus) {
+    throw makeError("缺少目標狀態");
+  }
+  if (!actor) {
+    throw makeError("缺少操作者", 400);
+  }
+  assertKnownActor(actor);
+
+  var existing = await env.DB.prepare(
+    "SELECT id, status, customer_id FROM bookings WHERE tenant_id = ?1 AND id = ?2"
+  ).bind(env.TENANT_ID, bookingId).first();
+
+  if (!existing) {
+    throw makeError("找不到此預約", 404);
+  }
+
+  assertTransition(existing.status, toStatus, actor);
+
+  if (actor === BOOKING_ACTORS.CUSTOMER) {
+    if (!customerUserId) {
+      throw makeError("缺少 LINE userId");
+    }
+    var owned = await env.DB.prepare(
+      "SELECT 1 AS ok FROM line_accounts la " +
+      "WHERE la.tenant_id = ?1 AND la.customer_id = ?2 AND la.line_user_id = ?3"
+    ).bind(env.TENANT_ID, existing.customer_id, customerUserId).first();
+    if (!owned) {
+      throw makeError("無法操作他人的預約", 403);
+    }
+  }
+
+  var now = nowIso();
+  var changedByType = mapActorToChangedByType(actor);
+  var updateBindings = buildTransitionUpdateBindings(toStatus, now, {
+    note: note,
+    reasonCode: reasonCode
+  });
+  var logReason = reasonCode || (isCancellationStatus(toStatus)
+    ? CANCELLATION_REASON_BY_STATUS[toStatus]
+    : "");
+  var logNote = note || (toStatus === BOOKING_STATUSES.CANCELLED_BY_CUSTOMER
+    ? "客人自行取消"
+    : "");
+
+  var fromStatus = existing.status;
+  var statusGuard = buildStatusInClause([fromStatus]);
+  var logSql =
+    "INSERT INTO booking_status_logs " +
+    "(id, tenant_id, booking_id, from_status, to_status, changed_by_type, " +
+    "changed_by_id, reason_code, note, created_at) " +
+    "SELECT ?1, ?2, ?3, b.status, ?4, ?5, ?6, ?7, ?8, ?9 " +
+    "FROM bookings b WHERE b.tenant_id = ?2 AND b.id = ?3 " +
+    "AND b.status IN " + statusGuard;
+
+  var updateSql =
+    "UPDATE bookings SET " + updateBindings.setClause + " " +
+    "WHERE tenant_id = ?" + (updateBindings.values.length + 1) +
+    " AND id = ?" + (updateBindings.values.length + 2) +
+    " AND status IN " + statusGuard;
+
+  if (actor === BOOKING_ACTORS.CUSTOMER) {
+    updateSql +=
+      " AND EXISTS (" +
+      "SELECT 1 FROM line_accounts la WHERE la.tenant_id = bookings.tenant_id " +
+      "AND la.customer_id = bookings.customer_id AND la.line_user_id = ?" +
+      (updateBindings.values.length + 3) +
+      ")";
+  }
+
+  var logBind = [
+    crypto.randomUUID(),
+    env.TENANT_ID,
+    bookingId,
+    toStatus,
+    changedByType,
+    actorId,
+    logReason,
+    logNote,
+    now
+  ];
+  var updateBind = updateBindings.values.concat([env.TENANT_ID, bookingId]);
+  if (actor === BOOKING_ACTORS.CUSTOMER) {
+    updateBind.push(customerUserId);
+  }
+
+  var results = await env.DB.batch([
+    env.DB.prepare(logSql).bind.apply(null, logBind),
+    env.DB.prepare(updateSql).bind.apply(null, updateBind)
+  ]);
+
+  var updateResult = results && results[1];
+  if (!updateResult || !updateResult.meta || !updateResult.meta.changes) {
+    throw makeError("此預約狀態已變更，無法更新", 400);
+  }
+
+  return {
+    ok: true,
+    bookingId: bookingId,
+    fromStatus: fromStatus,
+    toStatus: toStatus
+  };
+}
+
 // ──────────────────────── bookings（取消預約） ───────────────────────────
 //
-// 取消規則：只有 pending／confirmed／checked_in 可取消；
+// 取消規則：依狀態機 customer／staff 可取消集合；
 // completed／no_show／rescheduled 與已取消狀態一律拒絕。
-// batch 順序：先以 INSERT...SELECT 從「目前仍為 active 的 booking」
+// batch 順序：先以 INSERT...SELECT 從「目前仍為可取消的 booking」
 // 寫 status log（保留實際 from_status），再做同條件的條件式 UPDATE；
-// 兩者同一交易且共用 active 條件，UPDATE 沒改到列時 log 也必為 0 筆，
+// 兩者同一交易且共用條件，UPDATE 沒改到列時 log 也必為 0 筆，
 // 不會留下單獨 log。
 
-function assertCancellableStatus(status) {
-  if (status === "cancelled_by_customer" || status === "cancelled_by_store") {
+function assertCustomerCancellableStatus(status) {
+  if (isCancellationStatus(status)) {
     throw makeError("此預約已取消");
   }
-  if (status !== "pending" && status !== "confirmed" && status !== "checked_in") {
+  if (!isCustomerCancellableStatus(status)) {
+    throw makeError("此預約無法取消");
+  }
+}
+
+function assertStaffCancellableStatus(status) {
+  if (isCancellationStatus(status)) {
+    throw makeError("此預約已取消");
+  }
+  if (!isStaffCancellableStatus(status)) {
     throw makeError("此預約無法取消");
   }
 }
@@ -1457,7 +1646,7 @@ export async function cancelBooking(env, userId, bookingId) {
       "JOIN line_accounts la ON la.tenant_id = b.tenant_id " +
       "AND la.customer_id = b.customer_id AND la.line_user_id = ?6 " +
       "WHERE b.tenant_id = ?2 AND b.id = ?3 " +
-      "AND b.status IN " + BOOKING_ACTIVE_STATUSES
+      "AND b.status IN " + CUSTOMER_CANCELLABLE_STATUS_SQL
     ).bind(
       crypto.randomUUID(),
       env.TENANT_ID,
@@ -1471,7 +1660,7 @@ export async function cancelBooking(env, userId, bookingId) {
       "cancellation_reason_code = 'customer_cancelled', " +
       "cancellation_note = '客人自行取消', " +
       "cancelled_at = ?1, updated_at = ?1 " +
-      "WHERE tenant_id = ?2 AND id = ?3 AND status IN " + BOOKING_ACTIVE_STATUSES + " " +
+      "WHERE tenant_id = ?2 AND id = ?3 AND status IN " + CUSTOMER_CANCELLABLE_STATUS_SQL + " " +
       "AND EXISTS (" +
       "SELECT 1 FROM line_accounts la WHERE la.tenant_id = bookings.tenant_id " +
       "AND la.customer_id = bookings.customer_id AND la.line_user_id = ?4" +
@@ -1512,7 +1701,7 @@ export async function cancelBookingByOwner(env, bookingId, cancelReason) {
   if (!existing) {
     throw makeError("找不到此預約", 404);
   }
-  assertCancellableStatus(existing.status);
+  assertStaffCancellableStatus(existing.status);
 
   var now = nowIso();
   var results = await env.DB.batch([
@@ -1523,14 +1712,14 @@ export async function cancelBookingByOwner(env, bookingId, cancelReason) {
       "SELECT ?1, ?2, ?3, b.status, 'cancelled_by_store', 'staff', ?4, " +
       "'store_cancelled', ?5, ?6 " +
       "FROM bookings b WHERE b.tenant_id = ?2 AND b.id = ?3 " +
-      "AND b.status IN " + BOOKING_ACTIVE_STATUSES
+      "AND b.status IN " + STAFF_CANCELLABLE_STATUS_SQL
     ).bind(crypto.randomUUID(), env.TENANT_ID, String(bookingId), env.STAFF_ID, reason, now),
     env.DB.prepare(
       "UPDATE bookings SET status = 'cancelled_by_store', " +
       "cancellation_reason_code = 'store_cancelled', " +
       "cancellation_note = ?1, " +
       "cancelled_at = ?2, updated_at = ?2 " +
-      "WHERE tenant_id = ?3 AND id = ?4 AND status IN " + BOOKING_ACTIVE_STATUSES
+      "WHERE tenant_id = ?3 AND id = ?4 AND status IN " + STAFF_CANCELLABLE_STATUS_SQL
     ).bind(reason, now, env.TENANT_ID, String(bookingId))
   ]);
 
@@ -1551,7 +1740,7 @@ export async function cancelBookingByOwner(env, bookingId, cancelReason) {
 // ──────────────────────── bookings（業主查詢） ───────────────────────────
 //
 // 業主看得到全部可見狀態（pending／confirmed／checked_in／completed／
-// cancelled_by_customer／cancelled_by_store＝BOOKING_VISIBLE_STATUSES），
+// cancelled_by_customer／cancelled_by_store＝CUSTOMER_VISIBLE_STATUS_SQL），
 // 排除 no_show／rescheduled；狀態與取消者轉換沿用 bookingRowToDto。
 
 /** 與 notion.js 的 bookingToOwnerDto 相同的欄位子集 */
@@ -1579,7 +1768,7 @@ export async function getTodayBookingsForOwner(env, date) {
 
   var result = await env.DB.prepare(
     BOOKING_SELECT_SQL +
-    "WHERE b.tenant_id = ?1 AND b.status IN " + BOOKING_VISIBLE_STATUSES + " " +
+    "WHERE b.tenant_id = ?1 AND b.status IN " + CUSTOMER_VISIBLE_STATUS_SQL + " " +
     "AND b.start_at >= ?2 AND b.start_at < ?3 " +
     "ORDER BY b.start_at ASC"
   ).bind(env.TENANT_ID, startUtc, endUtc).all();
@@ -1595,7 +1784,7 @@ export async function getOwnerBookingsForMonth(env, month) {
 
   var result = await env.DB.prepare(
     BOOKING_SELECT_SQL +
-    "WHERE b.tenant_id = ?1 AND b.status IN " + BOOKING_VISIBLE_STATUSES + " " +
+    "WHERE b.tenant_id = ?1 AND b.status IN " + CUSTOMER_VISIBLE_STATUS_SQL + " " +
     "AND b.start_at >= ?2 AND b.start_at < ?3 " +
     "ORDER BY b.start_at ASC"
   ).bind(env.TENANT_ID, startUtc, endUtc).all();
@@ -1631,7 +1820,7 @@ export async function getOwnerBookingsForMonth(env, month) {
 // ──────────────────── bookings（業主客戶目錄） ───────────────────────────
 //
 // 客戶一律經 customers＋line_accounts＋bookings 三表關聯（全部限制
-// tenant_id）；只列出至少有一筆可見 booking（BOOKING_VISIBLE_STATUSES，
+// tenant_id）；只列出至少有一筆可見 booking（CUSTOMER_VISIBLE_STATUS_SQL，
 // 排除 no_show／rescheduled）的客戶。彙總查詢不 JOIN booking_items，
 // bookingCount 不會因多筆 items 重複計算。
 
@@ -1661,7 +1850,7 @@ export async function getOwnerCustomersFromBookings(env, queryText) {
     "FROM customers c " +
     "LEFT JOIN line_accounts la ON la.tenant_id = c.tenant_id AND la.customer_id = c.id " +
     "LEFT JOIN bookings b ON b.tenant_id = c.tenant_id AND b.customer_id = c.id " +
-    "AND b.status IN " + BOOKING_VISIBLE_STATUSES + " " +
+    "AND b.status IN " + CUSTOMER_VISIBLE_STATUS_SQL + " " +
     "WHERE c.tenant_id = ?1 AND c.deleted_at IS NULL ";
 
   var binds = [env.TENANT_ID];
@@ -1735,8 +1924,8 @@ export async function getOwnerCustomerById(env, customerId) {
   var result = await env.DB.prepare(
     BOOKING_SELECT_SQL +
     "WHERE b.tenant_id = ?1 AND b.customer_id = ?2 " +
-    "AND b.status IN " + BOOKING_VISIBLE_STATUSES + " " +
-    "ORDER BY CASE WHEN b.status IN " + BOOKING_ACTIVE_STATUSES + " OR b.status = 'completed' " +
+    "AND b.status IN " + CUSTOMER_VISIBLE_STATUS_SQL + " " +
+    "ORDER BY CASE WHEN b.status IN " + CUSTOMER_CONFIRMED_GROUP_SQL + " " +
     "THEN 0 ELSE 1 END ASC, b.start_at DESC"
   ).bind(env.TENANT_ID, id).all();
 
@@ -1771,8 +1960,8 @@ export async function getOwnerCustomerBookings(env, userId) {
   var result = await env.DB.prepare(
     BOOKING_SELECT_SQL +
     "WHERE b.tenant_id = ?1 AND la.line_user_id = ?2 " +
-    "AND b.status IN " + BOOKING_VISIBLE_STATUSES + " " +
-    "ORDER BY CASE WHEN b.status IN " + BOOKING_ACTIVE_STATUSES + " OR b.status = 'completed' " +
+    "AND b.status IN " + CUSTOMER_VISIBLE_STATUS_SQL + " " +
+    "ORDER BY CASE WHEN b.status IN " + CUSTOMER_CONFIRMED_GROUP_SQL + " " +
     "THEN 0 ELSE 1 END ASC, b.start_at DESC"
   ).bind(env.TENANT_ID, id).all();
 

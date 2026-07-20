@@ -1,3 +1,9 @@
+import {
+  isKnownBookingStatus,
+  isCustomerCancellableStatus,
+  isCancellationStatus
+} from "./booking-state-machine.js";
+
 /**
  * 預約／取消提前天數政策（精確 = 天數 × 24 小時）
  *
@@ -114,14 +120,21 @@ export function resolveCancellationPolicy(startAtUtc, storedDeadline, storedNoti
  * 回傳 { canCancel, reasonCode, reasonMessage }。
  */
 export function evaluateCustomerCancelPermission(startAtUtc, storedDeadline, storedNoticeDays, nowUtc, status) {
-  if (status === "cancelled_by_customer" || status === "cancelled_by_store") {
+  if (!isKnownBookingStatus(status)) {
+    return {
+      canCancel: false,
+      reasonCode: "not_cancellable_status",
+      reasonMessage: "此預約無法取消"
+    };
+  }
+  if (isCancellationStatus(status)) {
     return {
       canCancel: false,
       reasonCode: "already_cancelled",
       reasonMessage: "此預約已取消"
     };
   }
-  if (status !== "pending" && status !== "confirmed" && status !== "checked_in") {
+  if (!isCustomerCancellableStatus(status)) {
     return {
       canCancel: false,
       reasonCode: "not_cancellable_status",
