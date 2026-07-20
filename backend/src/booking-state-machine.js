@@ -433,6 +433,9 @@ export function listAllowedTransitions(fromStatus, actor) {
 /** 業主 Phase 2 一般狀態操作 route／UI 明確白名單（不含取消） */
 export var OWNER_NO_SHOW_REASON_CODE = "owner_no_show";
 
+/** 業主改期：舊 booking confirmed → rescheduled 的固定 reason_code */
+export var OWNER_RESCHEDULED_REASON_CODE = "owner_rescheduled";
+
 var OWNER_GENERAL_STATUS_ROUTE_TARGETS = Object.freeze({
   confirmed: Object.freeze([S.CHECKED_IN, S.NO_SHOW]),
   checked_in: Object.freeze([S.COMPLETED]),

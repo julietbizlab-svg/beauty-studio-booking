@@ -464,6 +464,7 @@ textarea { min-height: 72px; resize: vertical; }
 }
 
 .booking-card-actions .btn-transition-booking,
+.booking-card-actions .btn-reschedule-booking,
 .booking-card-actions .btn-cancel-booking {
   margin-top: 0;
   width: 100%;

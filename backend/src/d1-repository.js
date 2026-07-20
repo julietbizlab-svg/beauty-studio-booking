@@ -51,7 +51,8 @@ import {
   isCancellationStatus,
   buildStatusInClause,
   assertOwnerGeneralStatusRouteTransition,
-  OWNER_NO_SHOW_REASON_CODE
+  OWNER_NO_SHOW_REASON_CODE,
+  OWNER_RESCHEDULED_REASON_CODE
 } from "./booking-state-machine.js";
 
 function makeError(message, status) {
@@ -1401,6 +1402,326 @@ export async function createBooking(env, payload) {
       cancelBlockedReason: "",
       cancelBlockedReasonCode: ""
     }
+  };
+}
+
+// ──────────────────────── bookings（Owner 改期） ─────────────────────────
+//
+// POST /api/owner/bookings/:id/reschedule
+// 首版僅 confirmed → 新建 confirmed（parent_booking_id=舊）+ 舊→rescheduled。
+//
+// 時間政策（刻意與 createBooking 不同）：
+// - Owner 改期第一版不套用 customer booking_min_notice_days。
+// - 仍必須拒絕已開始／已過去時段（以伺服器 now 與新 start_at 毫秒比較）。
+// - 不信任前端時區；date／time 一律當台北牆鐘，經 taipeiDateTimeToUtcIso 換算。
+//
+// 原子交易（單一 D1 batch）：
+// 1. 條件式 INSERT 新 booking（舊仍 confirmed、無 staff／同客同日衝突；衝突排除舊 id）
+// 2. 複製全部 booking_items（新 item id；WHERE EXISTS 新 booking）
+// 3. 新 booking NULL→confirmed status log
+// 4. 舊 booking confirmed→rescheduled status log（reason_code=owner_rescheduled）
+// 5. 條件式 UPDATE 舊 booking → rescheduled
+// 6. 補償 DELETE：若舊未變成 rescheduled，刪除新 booking（CASCADE items／logs）
+// 7. 補償 DELETE：清除孤立的舊→rescheduled log
+// D1 對 changes=0 不會自動 rollback，故以 EXISTS／補償 DELETE fail closed，
+// 並在 batch 後核對每一步 meta.changes；不可改成多次非交易寫入。
+
+/**
+ * Owner 將 confirmed 預約改期至新台北 date／time。
+ * body 僅使用 date、time；其餘欄位一律忽略。
+ */
+export async function rescheduleBookingByOwner(env, bookingId, payload) {
+  ensureD1SlotsEnv(env);
+  var oldBookingId = String(bookingId || "").trim();
+  // 僅接受普通物件；null／array／primitive 由 route 或此處 fail closed 400
+  if (payload != null && (typeof payload !== "object" || Array.isArray(payload))) {
+    throw makeError("請求格式錯誤，需為 JSON 物件", 400);
+  }
+  var input = payload && typeof payload === "object" && !Array.isArray(payload)
+    ? payload
+    : {};
+  var date = input.date != null ? String(input.date).trim() : "";
+  var time = input.time != null ? String(input.time).trim() : "";
+
+  if (!oldBookingId) {
+    throw makeError("缺少預約編號");
+  }
+  if (!date) {
+    throw makeError("請選擇預約日期", 400);
+  }
+  if (!isRealDateString(date)) {
+    throw makeError("date 格式錯誤，請使用 YYYY-MM-DD", 400);
+  }
+  if (!time) {
+    throw makeError("請選擇預約時段", 400);
+  }
+  if (!TIME_HHMM_PATTERN.test(time)) {
+    throw makeError("時間格式錯誤，請使用 HH:MM（24 小時制）", 400);
+  }
+
+  var existing = await env.DB.prepare(
+    "SELECT id, tenant_id, location_id, customer_id, staff_id, start_at, end_at, status, " +
+    "cancellation_notice_days_snapshot " +
+    "FROM bookings WHERE tenant_id = ?1 AND id = ?2"
+  ).bind(env.TENANT_ID, oldBookingId).first();
+
+  if (!existing) {
+    throw makeError("找不到此預約", 404);
+  }
+  if (existing.status !== BOOKING_STATUSES.CONFIRMED) {
+    throw makeError("僅已確認的預約可以改期", 400);
+  }
+  assertTransition(
+    existing.status,
+    BOOKING_STATUSES.RESCHEDULED,
+    BOOKING_ACTORS.STAFF
+  );
+
+  var itemsResult = await env.DB.prepare(
+    "SELECT service_id, service_name_snapshot, duration_minutes, quantity, " +
+    "unit_price_amount, discount_amount, final_amount, sort_order " +
+    "FROM booking_items WHERE tenant_id = ?1 AND booking_id = ?2 " +
+    "ORDER BY sort_order ASC, id ASC"
+  ).bind(env.TENANT_ID, oldBookingId).all();
+  var items = (itemsResult && itemsResult.results) || [];
+  if (!items.length) {
+    throw makeError("此預約缺少服務項目，無法改期", 400);
+  }
+
+  // 新 booking 必須沿用舊 booking 的 staff／location／customer；
+  // 不得用 request body 或 env.STAFF_ID／LOCATION_ID 代替（env.STAFF_ID 僅作 actorId）。
+  if (existing.staff_id == null || String(existing.staff_id).trim() === "") {
+    throw makeError("此預約缺少服務人員資料，無法改期", 400);
+  }
+  if (existing.location_id == null || String(existing.location_id).trim() === "") {
+    throw makeError("此預約缺少據點資料，無法改期", 400);
+  }
+  if (existing.customer_id == null || String(existing.customer_id).trim() === "") {
+    throw makeError("此預約缺少客戶資料，無法改期", 400);
+  }
+  var staffId = String(existing.staff_id);
+  var locationId = String(existing.location_id);
+  var customerId = String(existing.customer_id);
+
+  var totalDurationMinutes = 0;
+  for (var di = 0; di < items.length; di++) {
+    totalDurationMinutes +=
+      Number(items[di].duration_minutes) * (Number(items[di].quantity) || 1);
+  }
+  if (!(totalDurationMinutes > 0)) {
+    throw makeError("此預約服務時長無效，無法改期", 400);
+  }
+
+  var now = nowIso();
+  var startUtc = taipeiDateTimeToUtcIso(date, time);
+  var endUtc = new Date(
+    new Date(startUtc).getTime() + totalDurationMinutes * 60 * 1000
+  ).toISOString();
+  var dayStartUtc = taipeiDateToUtcIso(date);
+  var dayEndUtc = new Date(new Date(dayStartUtc).getTime() + 24 * 60 * 60 * 1000).toISOString();
+
+  // Owner 改期不套用 booking_min_notice_days；僅禁止過去／已開始時段。
+  var startMillis = Date.parse(startUtc);
+  var nowMillis = Date.parse(now);
+  if (!Number.isFinite(startMillis) || !Number.isFinite(nowMillis)) {
+    throw makeError("無法驗證預約時間", 400);
+  }
+  if (startMillis <= nowMillis) {
+    throw makeError("無法改期至已開始或已過去的時段", 400);
+  }
+  if (startUtc === existing.start_at) {
+    throw makeError("新時段與原時段相同", 400);
+  }
+
+  var noticeSnapshot = existing.cancellation_notice_days_snapshot;
+  var noticeDaysForDeadline = parseNoticeDays(noticeSnapshot, DEFAULT_NOTICE_DAYS);
+  var cancellationDeadlineAt = computeCancellationDeadlineAt(startUtc, noticeDaysForDeadline);
+
+  var newBookingId = crypto.randomUUID();
+  var newBookingNo = "BK-" + crypto.randomUUID();
+  var newLogId = crypto.randomUUID();
+  var oldLogId = crypto.randomUUID();
+  var actorId = String(env.STAFF_ID);
+
+  // 條件式建立新 booking：舊仍 confirmed；衝突檢查排除正在改期的舊 id
+  var insertNewSql =
+    "INSERT INTO bookings " +
+    "(id, tenant_id, location_id, customer_id, staff_id, booking_no, " +
+    "start_at, end_at, status, source, created_by_type, created_by_id, " +
+    "parent_booking_id, cancellation_notice_days_snapshot, cancellation_deadline_at, " +
+    "created_at, updated_at) " +
+    "SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'confirmed', 'admin', 'staff', ?9, " +
+    "?10, ?11, ?12, ?13, ?13 " +
+    "WHERE EXISTS (" +
+    "SELECT 1 FROM bookings ob WHERE ob.tenant_id = ?2 AND ob.id = ?10 " +
+    "AND ob.status = 'confirmed'" +
+    ") AND NOT EXISTS (" +
+    "SELECT 1 FROM bookings b WHERE b.tenant_id = ?2 " +
+    "AND b.customer_id = ?4 " +
+    "AND b.id <> ?10 " +
+    "AND b.status IN " + SLOT_BLOCKING_STATUS_SQL + " " +
+    "AND b.start_at >= ?14 AND b.start_at < ?15" +
+    ") AND NOT EXISTS (" +
+    "SELECT 1 FROM bookings b WHERE b.tenant_id = ?2 " +
+    "AND b.staff_id = ?5 " +
+    "AND b.id <> ?10 " +
+    "AND b.status IN " + SLOT_BLOCKING_STATUS_SQL + " " +
+    "AND b.start_at < ?8 AND b.end_at > ?7" +
+    ")";
+
+  var insertNewPrepared = env.DB.prepare(insertNewSql);
+  var insertNewBinds = [
+    newBookingId,
+    env.TENANT_ID,
+    locationId,
+    customerId,
+    staffId,
+    newBookingNo,
+    startUtc,
+    endUtc,
+    actorId,
+    oldBookingId,
+    noticeSnapshot,
+    cancellationDeadlineAt,
+    now,
+    dayStartUtc,
+    dayEndUtc
+  ];
+  var statements = [
+    insertNewPrepared.bind.apply(insertNewPrepared, insertNewBinds)
+  ];
+
+  for (var ii = 0; ii < items.length; ii++) {
+    var item = items[ii];
+    var itemPrepared = env.DB.prepare(
+      "INSERT INTO booking_items " +
+      "(id, tenant_id, booking_id, service_id, service_name_snapshot, " +
+      "duration_minutes, quantity, unit_price_amount, discount_amount, " +
+      "final_amount, sort_order, created_at) " +
+      "SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12 " +
+      "WHERE EXISTS (SELECT 1 FROM bookings WHERE tenant_id = ?2 AND id = ?3)"
+    );
+    var itemBinds = [
+      crypto.randomUUID(),
+      env.TENANT_ID,
+      newBookingId,
+      item.service_id,
+      item.service_name_snapshot,
+      Number(item.duration_minutes),
+      Number(item.quantity) || 1,
+      Number(item.unit_price_amount) || 0,
+      Number(item.discount_amount) || 0,
+      Number(item.final_amount) || 0,
+      Number(item.sort_order) || 0,
+      now
+    ];
+    statements.push(itemPrepared.bind.apply(itemPrepared, itemBinds));
+  }
+
+  var newLogPrepared = env.DB.prepare(
+    "INSERT INTO booking_status_logs " +
+    "(id, tenant_id, booking_id, from_status, to_status, changed_by_type, " +
+    "changed_by_id, reason_code, note, created_at) " +
+    "SELECT ?1, ?2, ?3, NULL, 'confirmed', 'staff', ?4, '', '', ?5 " +
+    "WHERE EXISTS (SELECT 1 FROM bookings WHERE tenant_id = ?2 AND id = ?3)"
+  );
+  statements.push(newLogPrepared.bind.apply(newLogPrepared, [
+    newLogId, env.TENANT_ID, newBookingId, actorId, now
+  ]));
+
+  var oldLogPrepared = env.DB.prepare(
+    "INSERT INTO booking_status_logs " +
+    "(id, tenant_id, booking_id, from_status, to_status, changed_by_type, " +
+    "changed_by_id, reason_code, note, created_at) " +
+    "SELECT ?1, ?2, ?3, b.status, 'rescheduled', 'staff', ?4, ?5, '', ?6 " +
+    "FROM bookings b WHERE b.tenant_id = ?2 AND b.id = ?3 " +
+    "AND b.status = 'confirmed' " +
+    "AND EXISTS (SELECT 1 FROM bookings WHERE tenant_id = ?2 AND id = ?7)"
+  );
+  statements.push(oldLogPrepared.bind.apply(oldLogPrepared, [
+    oldLogId,
+    env.TENANT_ID,
+    oldBookingId,
+    actorId,
+    OWNER_RESCHEDULED_REASON_CODE,
+    now,
+    newBookingId
+  ]));
+
+  var updateOldPrepared = env.DB.prepare(
+    "UPDATE bookings SET status = 'rescheduled', updated_at = ?1 " +
+    "WHERE tenant_id = ?2 AND id = ?3 AND status = 'confirmed' " +
+    "AND EXISTS (SELECT 1 FROM bookings WHERE tenant_id = ?2 AND id = ?4)"
+  );
+  statements.push(updateOldPrepared.bind.apply(updateOldPrepared, [
+    now, env.TENANT_ID, oldBookingId, newBookingId
+  ]));
+
+  // 補償：UPDATE 未生效時刪除已插入的新 booking（CASCADE items／logs）
+  var cleanupNewPrepared = env.DB.prepare(
+    "DELETE FROM bookings WHERE tenant_id = ?1 AND id = ?2 " +
+    "AND NOT EXISTS (" +
+    "SELECT 1 FROM bookings WHERE tenant_id = ?1 AND id = ?3 AND status = 'rescheduled'" +
+    ")"
+  );
+  statements.push(cleanupNewPrepared.bind.apply(cleanupNewPrepared, [
+    env.TENANT_ID, newBookingId, oldBookingId
+  ]));
+
+  // 補償：只刪本次建立的 oldLogId，不得以 to_status／reason_code 掃刪歷史稽核
+  var cleanupOldLogPrepared = env.DB.prepare(
+    "DELETE FROM booking_status_logs WHERE id = ?1 AND tenant_id = ?2 AND booking_id = ?3 " +
+    "AND NOT EXISTS (" +
+    "SELECT 1 FROM bookings WHERE tenant_id = ?2 AND id = ?3 AND status = 'rescheduled'" +
+    ")"
+  );
+  statements.push(cleanupOldLogPrepared.bind.apply(cleanupOldLogPrepared, [
+    oldLogId, env.TENANT_ID, oldBookingId
+  ]));
+
+  var results = await env.DB.batch(statements);
+  var itemCount = items.length;
+  var newBookingResult = results && results[0];
+  var newLogResult = results && results[1 + itemCount];
+  var oldLogResult = results && results[2 + itemCount];
+  var updateResult = results && results[3 + itemCount];
+  var cleanupNewResult = results && results[4 + itemCount];
+  var cleanupOldLogResult = results && results[5 + itemCount];
+
+  if (!newBookingResult || !newBookingResult.meta || !newBookingResult.meta.changes) {
+    throw makeError("此時段與現有預約重疊，或同一天已有預約，請選擇其他時間", 400);
+  }
+
+  for (var ci = 0; ci < itemCount; ci++) {
+    var itemResult = results[1 + ci];
+    if (!itemResult || !itemResult.meta || !itemResult.meta.changes) {
+      throw makeError("改期寫入失敗，請稍後再試", 500);
+    }
+  }
+  if (!newLogResult || !newLogResult.meta || !newLogResult.meta.changes) {
+    throw makeError("改期寫入失敗，請稍後再試", 500);
+  }
+
+  var updateOk = updateResult && updateResult.meta && updateResult.meta.changes;
+  var cleanupFired = (cleanupNewResult && cleanupNewResult.meta && cleanupNewResult.meta.changes) ||
+    (cleanupOldLogResult && cleanupOldLogResult.meta && cleanupOldLogResult.meta.changes);
+
+  if (!updateOk || cleanupFired) {
+    throw makeError("此預約狀態已變更，無法改期", 400);
+  }
+  if (!oldLogResult || !oldLogResult.meta || !oldLogResult.meta.changes) {
+    throw makeError("改期寫入失敗，請稍後再試", 500);
+  }
+
+  return {
+    ok: true,
+    oldBookingId: oldBookingId,
+    newBookingId: newBookingId,
+    fromStatus: BOOKING_STATUSES.CONFIRMED,
+    oldStatus: BOOKING_STATUSES.RESCHEDULED,
+    newStatus: BOOKING_STATUSES.CONFIRMED,
+    date: date,
+    time: time
   };
 }
 

@@ -165,6 +165,14 @@
 
   var cancelModalState = { bookingId: "" };
   var transitionBusy = false;
+  var rescheduleBusy = false;
+  var rescheduleModalState = {
+    bookingId: "",
+    customerName: "",
+    serviceName: "",
+    date: "",
+    time: ""
+  };
 
   var OWNER_STAFF_TRANSITION_UI = {
     checked_in: {
@@ -288,7 +296,7 @@
         ? getOwnerStaffTransitionActions(b.internalStatus)
         : [];
       var transitionBtns = transitionActions.map(function (action) {
-        var disabledAttr = transitionBusy ? " disabled" : "";
+        var disabledAttr = (transitionBusy || rescheduleBusy) ? " disabled" : "";
         return (
           '<button type="button" class="btn btn-primary btn-small btn-transition-booking"' +
           disabledAttr +
@@ -298,8 +306,14 @@
           "</button>"
         );
       }).join("");
-      var actionRow = (transitionBtns || cancelBtn)
-        ? '<div class="booking-card-actions">' + transitionBtns + cancelBtn + "</div>"
+      // 首版僅 confirmed 可改期；不把 customerId／staffId 等放入 DOM
+      var rescheduleBtn = (b.internalStatus === "confirmed")
+        ? '<button type="button" class="btn btn-small btn-reschedule-booking"' +
+          ((transitionBusy || rescheduleBusy) ? " disabled" : "") +
+          ' data-reschedule-id="' + escapeHtml(b.id) + '">改期</button>'
+        : "";
+      var actionRow = (transitionBtns || rescheduleBtn || cancelBtn)
+        ? '<div class="booking-card-actions">' + transitionBtns + rescheduleBtn + cancelBtn + "</div>"
         : "";
       return (
         '<div class="' + cardClass + '">' +
@@ -324,6 +338,7 @@
 
     container.querySelectorAll("[data-cancel-id]").forEach(function (btn) {
       btn.addEventListener("click", function () {
+        if (transitionBusy || rescheduleBusy) return;
         var id = btn.getAttribute("data-cancel-id");
         var booking = sorted.find(function (b) { return b.id === id; });
         openOwnerCancelModal(booking || { id: id, date: date });
@@ -332,7 +347,7 @@
 
     container.querySelectorAll("[data-transition-id]").forEach(function (btn) {
       btn.addEventListener("click", function () {
-        if (transitionBusy || btn.disabled) return;
+        if (transitionBusy || rescheduleBusy || btn.disabled) return;
         var id = btn.getAttribute("data-transition-id");
         var toStatus = btn.getAttribute("data-transition-to");
         var booking = sorted.find(function (b) { return b.id === id; });
@@ -342,6 +357,16 @@
         var action = actions.find(function (item) { return item.toStatus === toStatus; });
         if (!action) return;
         submitBookingTransition(id, action);
+      });
+    });
+
+    container.querySelectorAll("[data-reschedule-id]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (transitionBusy || rescheduleBusy || btn.disabled) return;
+        var id = btn.getAttribute("data-reschedule-id");
+        var booking = sorted.find(function (b) { return b.id === id; });
+        if (!booking || booking.internalStatus !== "confirmed") return;
+        openOwnerRescheduleModal(booking);
       });
     });
   }
@@ -420,6 +445,102 @@
       await refreshCalendarBookings();
     } catch (error) {
       setStatus("error", error.message);
+    }
+  }
+
+  function normalizeRescheduleTimeInput(value) {
+    var match = /^([01]\d|2[0-3]):([0-5]\d)/.exec(String(value || "").trim());
+    if (!match) return "";
+    return match[1] + ":" + match[2];
+  }
+
+  /** 前端僅擋明顯過去／無效時間；後端仍是唯一權威 */
+  function isObviouslyPastTaipeiDateTime(dateStr, timeStr) {
+    var start = new Date(dateStr + "T" + timeStr + ":00+08:00");
+    if (isNaN(start.getTime())) return true;
+    return start.getTime() <= Date.now();
+  }
+
+  function setRescheduleModalControlsBusy(busy) {
+    rescheduleBusy = !!busy;
+    if (els.ownerRescheduleConfirm) els.ownerRescheduleConfirm.disabled = rescheduleBusy;
+    if (els.ownerRescheduleDismiss) els.ownerRescheduleDismiss.disabled = rescheduleBusy;
+    if (els.ownerRescheduleDate) els.ownerRescheduleDate.disabled = rescheduleBusy;
+    if (els.ownerRescheduleTime) els.ownerRescheduleTime.disabled = rescheduleBusy;
+    renderDayBookings();
+  }
+
+  function openOwnerRescheduleModal(booking) {
+    if (!booking || !booking.id || booking.internalStatus !== "confirmed") return;
+    rescheduleModalState.bookingId = String(booking.id);
+    rescheduleModalState.customerName = booking.customerName || "客人";
+    rescheduleModalState.serviceName = booking.serviceName || "服務";
+    rescheduleModalState.date = booking.date || state.selectedDate || "";
+    rescheduleModalState.time = booking.time || "";
+    // textContent 避免 XSS；不把完整 booking JSON 放入 DOM
+    els.ownerRescheduleSummary.textContent =
+      rescheduleModalState.customerName + "｜" +
+      rescheduleModalState.serviceName + "｜" +
+      formatDateZh(rescheduleModalState.date) + " " +
+      rescheduleModalState.time;
+    els.ownerRescheduleDate.value = "";
+    els.ownerRescheduleTime.value = "";
+    setRescheduleModalControlsBusy(false);
+    els.ownerRescheduleModal.classList.remove("hidden");
+  }
+
+  function closeOwnerRescheduleModal() {
+    if (rescheduleBusy) return;
+    rescheduleModalState.bookingId = "";
+    rescheduleModalState.customerName = "";
+    rescheduleModalState.serviceName = "";
+    rescheduleModalState.date = "";
+    rescheduleModalState.time = "";
+    if (els.ownerRescheduleDate) els.ownerRescheduleDate.value = "";
+    if (els.ownerRescheduleTime) els.ownerRescheduleTime.value = "";
+    if (els.ownerRescheduleSummary) els.ownerRescheduleSummary.textContent = "";
+    els.ownerRescheduleModal.classList.add("hidden");
+  }
+
+  async function submitOwnerReschedule() {
+    if (rescheduleBusy) return;
+    var bookingId = rescheduleModalState.bookingId;
+    if (!bookingId) return;
+
+    var newDate = String(els.ownerRescheduleDate.value || "").trim();
+    var newTime = normalizeRescheduleTimeInput(els.ownerRescheduleTime.value);
+    if (!newDate) {
+      setStatus("error", "請選擇新的預約日期");
+      return;
+    }
+    if (!newTime) {
+      setStatus("error", "請選擇新的預約時間");
+      return;
+    }
+    if (isObviouslyPastTaipeiDateTime(newDate, newTime)) {
+      setStatus("error", "無法改期至已開始或已過去的時段");
+      return;
+    }
+
+    var confirmMessage =
+      "確定將預約改期？\n" +
+      "原時段：" + formatDateZh(rescheduleModalState.date) + " " + rescheduleModalState.time + "\n" +
+      "新時段：" + formatDateZh(newDate) + " " + newTime;
+    if (!confirm(confirmMessage)) {
+      return;
+    }
+
+    setRescheduleModalControlsBusy(true);
+    setStatus("info", "改期處理中…");
+    try {
+      await window.ownerApi.rescheduleBooking(bookingId, newDate, newTime);
+      setRescheduleModalControlsBusy(false);
+      closeOwnerRescheduleModal();
+      await refreshCalendarBookings();
+      setStatus("success", "改期成功");
+    } catch (error) {
+      setStatus("error", error && error.message ? error.message : "改期失敗");
+      setRescheduleModalControlsBusy(false);
     }
   }
 
@@ -2115,6 +2236,12 @@
     els.ownerCancelReasonPreset = $("owner-cancel-reason-preset");
     els.ownerCancelReasonOther = $("owner-cancel-reason-other");
     els.ownerCancelOtherWrap = $("owner-cancel-other-wrap");
+    els.ownerRescheduleModal = $("owner-reschedule-modal");
+    els.ownerRescheduleSummary = $("owner-reschedule-summary");
+    els.ownerRescheduleDate = $("owner-reschedule-date");
+    els.ownerRescheduleTime = $("owner-reschedule-time");
+    els.ownerRescheduleDismiss = $("owner-reschedule-dismiss");
+    els.ownerRescheduleConfirm = $("owner-reschedule-confirm");
     els.customerListView = $("customer-list-view");
     els.customerDetailView = $("customer-detail-view");
     els.customerSearch = $("customer-search");
@@ -2188,6 +2315,15 @@
     els.ownerCancelModal.addEventListener("click", function (event) {
       if (event.target === els.ownerCancelModal) {
         closeOwnerCancelModal();
+      }
+    });
+    $("owner-reschedule-dismiss").addEventListener("click", closeOwnerRescheduleModal);
+    $("owner-reschedule-confirm").addEventListener("click", function () {
+      submitOwnerReschedule().catch(function (e) { setStatus("error", e.message); });
+    });
+    els.ownerRescheduleModal.addEventListener("click", function (event) {
+      if (event.target === els.ownerRescheduleModal) {
+        closeOwnerRescheduleModal();
       }
     });
     if (els.photoLightboxClose) {

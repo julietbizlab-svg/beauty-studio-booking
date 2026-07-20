@@ -219,6 +219,20 @@
       );
     },
 
+    /** Owner 改期：body 僅允許 date／time，其餘一律不傳 */
+    rescheduleBooking: function (bookingId, date, time) {
+      return apiFetch(
+        "/api/owner/bookings/" + encodeURIComponent(bookingId || "") + "/reschedule",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            date: date,
+            time: time
+          })
+        }
+      );
+    },
+
     getCustomers: function (q) {
       var query = "/api/owner/customers";
       if (q) query += "?q=" + encodeURIComponent(q);

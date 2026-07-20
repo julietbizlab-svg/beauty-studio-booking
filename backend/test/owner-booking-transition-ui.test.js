@@ -29,9 +29,10 @@ function queryAttrButtons(el, selector) {
   var match = /^\[([a-z-]+)\]$/.exec(selector);
   if (!match) return [];
   var attr = match[1];
+  if (!el._qsaCacheMap) el._qsaCacheMap = {};
   var cacheKey = selector + "\u0000" + el.innerHTML;
-  if (el._qsaCache && el._qsaCache.key === cacheKey) {
-    return el._qsaCache.list;
+  if (el._qsaCacheMap[selector] && el._qsaCacheMap[selector].key === cacheKey) {
+    return el._qsaCacheMap[selector].list;
   }
   var list = [];
   var tagRe = /<button\b[^>]*>/g;
@@ -53,7 +54,7 @@ function queryAttrButtons(el, selector) {
       list.push(btn);
     })(tag, attrMatch[1]);
   }
-  el._qsaCache = { key: cacheKey, list: list };
+  el._qsaCacheMap[selector] = { key: cacheKey, list: list };
   return list;
 }
 
@@ -278,6 +279,7 @@ test("預約清單：no_show 終態只顯示未到，無取消／transition 按�
   assert.ok(html.includes("未到"), "應顯示未到");
   assert.ok(!html.includes("data-cancel-id"), "no_show 不得有取消按鈕");
   assert.ok(!html.includes("data-transition-id"), "no_show 不得有 transition 按鈕");
+  assert.ok(!html.includes("data-reschedule-id"), "no_show 不得有改期按鈕");
   assert.ok(!html.includes("取消預約"));
 });
 

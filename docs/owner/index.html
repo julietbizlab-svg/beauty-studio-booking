@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
   <title>工作室管理</title>
-  <link rel="stylesheet" href="css/style.css?v=20260720004">
+  <link rel="stylesheet" href="css/style.css?v=20260721001">
 </head>
 <body>
   <div class="app">
@@ -302,6 +302,26 @@
     </div>
   </div>
 
+  <div id="owner-reschedule-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="owner-reschedule-title">
+    <div class="modal-card">
+      <h3 id="owner-reschedule-title">預約改期</h3>
+      <p class="modal-booking-summary" id="owner-reschedule-summary"></p>
+      <p class="panel-hint">請選擇新的預約日期與時間（必填）</p>
+      <div class="form-group">
+        <label for="owner-reschedule-date">新日期</label>
+        <input type="date" id="owner-reschedule-date" required>
+      </div>
+      <div class="form-group">
+        <label for="owner-reschedule-time">新時間</label>
+        <input type="time" id="owner-reschedule-time" step="1800" required>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-small" id="owner-reschedule-dismiss">取消</button>
+        <button type="button" class="btn btn-primary" id="owner-reschedule-confirm">確認改期</button>
+      </div>
+    </div>
+  </div>
+
   <div id="photo-lightbox" class="photo-lightbox hidden" role="dialog" aria-modal="true" aria-labelledby="photo-lightbox-title">
     <button type="button" class="photo-lightbox-close" id="photo-lightbox-close" aria-label="關閉照片檢視">×</button>
     <p id="photo-lightbox-title" class="photo-lightbox-title"></p>
@@ -313,10 +333,10 @@
 
   <!-- 本機 QR 產生器：qrcode-generator 1.4.4（MIT, Kazuhiko Arase），
        本機託管，不使用 CDN 或第三方 QR 服務 -->
-  <script src="js/vendor/qrcode.js?v=20260720004"></script>
-  <script src="js/config.js?v=20260720004"></script>
-  <script src="js/liff-init.js?v=20260720004"></script>
-  <script src="js/api.js?v=20260720004"></script>
-  <script src="js/app.js?v=20260720004"></script>
+  <script src="js/vendor/qrcode.js?v=20260721001"></script>
+  <script src="js/config.js?v=20260721001"></script>
+  <script src="js/liff-init.js?v=20260721001"></script>
+  <script src="js/api.js?v=20260721001"></script>
+  <script src="js/app.js?v=20260721001"></script>
 </body>
 </html>

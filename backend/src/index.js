@@ -40,7 +40,8 @@ import {
   uploadCustomerComparisonPhoto,
   getCustomerPhotoContent,
   deleteCustomerComparisonPhoto,
-  applyOwnerGeneralBookingStatusTransition
+  applyOwnerGeneralBookingStatusTransition,
+  rescheduleBookingByOwner
 } from "./data-repository.js";
 import { requireOwnerFromRequest } from "./owner-auth.js";
 import { requireCustomerFromRequest } from "./liff-verify.js";
@@ -343,6 +344,37 @@ export default {
           note: ownerStatusBody.note != null ? String(ownerStatusBody.note) : ""
         });
         return jsonResponse(Object.assign({ ok: true }, ownerTransitionResult), corsHeaders);
+      }
+
+      var ownerBookingRescheduleMatch = url.pathname.match(
+        /^\/api\/owner\/bookings\/([^/]+)\/reschedule$/
+      );
+      if (ownerBookingRescheduleMatch && request.method === "POST") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var ownerRescheduleBookingId = decodeURIComponent(ownerBookingRescheduleMatch[1]);
+        var ownerRescheduleBody = await readJson(request);
+        // 合法 JSON null／array／primitive 不得讀 .date 造成 TypeError／500
+        if (
+          ownerRescheduleBody === null ||
+          typeof ownerRescheduleBody !== "object" ||
+          Array.isArray(ownerRescheduleBody)
+        ) {
+          return jsonResponse(
+            { ok: false, message: "請求格式錯誤，需為 JSON 物件" },
+            corsHeaders,
+            400
+          );
+        }
+        var ownerRescheduleResult = await rescheduleBookingByOwner(
+          env,
+          ownerRescheduleBookingId,
+          {
+            date: ownerRescheduleBody.date,
+            time: ownerRescheduleBody.time
+          }
+        );
+        return jsonResponse(ownerRescheduleResult, corsHeaders);
       }
 
       if (url.pathname === "/api/owner/bookings/month" && request.method === "GET") {
