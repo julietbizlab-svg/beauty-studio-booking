@@ -476,6 +476,23 @@ input[type="date"] {
   margin-bottom: 12px;
 }
 
+/* v2 專屬：預約四個步驟標題加強視覺層級（iPhone 驗收回饋）。
+   以 html.is-v2 scope（config.js 依 isV2Host 加 class），Demo v1 不受影響。 */
+html.is-v2 .step-hint {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text);
+  background: #FDF1F2;
+  border-left: 4px solid var(--primary);
+  border-radius: 0 8px 8px 0;
+  padding: 8px 12px;
+  margin: 0 0 12px;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .customer-profile-form {
   background: var(--card);
   border: 1px solid var(--border);

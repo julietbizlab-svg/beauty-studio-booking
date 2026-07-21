@@ -544,6 +544,26 @@ textarea { min-height: 72px; resize: vertical; }
   background: #fff;
 }
 
+/* iOS Safari：date input 以原生 appearance 渲染，intrinsic 寬度不受 width:100% 收縮，
+   會往右溢出 modal（iPhone 14 Pro 驗收 bug）。限定改期 modal 的日期欄位修正。 */
+#owner-reschedule-date {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  width: 100%;
+  inline-size: 100%;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  box-sizing: border-box;
+  min-height: 44px;
+}
+
+/* iOS WebKit 內建 value 容器預設置中且帶 margin，會撐開高寬 */
+#owner-reschedule-date::-webkit-date-and-time-value {
+  text-align: left;
+  margin: 0;
+}
+
 .inline-date {
   margin-bottom: 12px;
 }

@@ -15,6 +15,10 @@ window.BEAUTY_CONFIG = (function () {
     hostname.endsWith(".juliet-studio.pages.dev");
 
   if (isV2Test) {
+    // v2 專屬樣式 scope：Demo v1 不加 class，CSS 以 html.is-v2 限定不影響 v1
+    if (typeof document !== "undefined" && document.documentElement) {
+      document.documentElement.classList.add("is-v2");
+    }
     return {
       LIFF_ID: "2010530394-orSKMGcU",
       API_BASE_URL: "https://beauty-studio-api-v2-test.gosu-chill-book.workers.dev",

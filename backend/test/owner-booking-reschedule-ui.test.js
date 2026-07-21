@@ -296,12 +296,30 @@ test("CSS：modal／input／select 有防溢出規則", function () {
   assert.ok(/\.form-group\s*\{[^}]*min-width:\s*0/s.test(cssCode));
 });
 
+test("CSS：iOS Safari date input 防溢出（限定 #owner-reschedule-date）", function () {
+  var rule = cssCode.match(/#owner-reschedule-date\s*\{[^}]*\}/s);
+  assert.ok(rule, "必須有 #owner-reschedule-date 專屬規則");
+  assert.ok(/-webkit-appearance:\s*none/.test(rule[0]));
+  assert.ok(/\bappearance:\s*none/.test(rule[0]));
+  assert.ok(/width:\s*100%/.test(rule[0]));
+  assert.ok(/min-inline-size:\s*0/.test(rule[0]));
+  assert.ok(/max-inline-size:\s*100%/.test(rule[0]));
+  assert.ok(/box-sizing:\s*border-box/.test(rule[0]));
+  assert.ok(
+    /#owner-reschedule-date::-webkit-date-and-time-value\s*\{[^}]*margin:\s*0/s.test(cssCode),
+    "WebKit value 容器需 margin:0 避免撐寬"
+  );
+  // 限定選擇器，不得用寬泛的 input[type=date] 全域規則
+  assert.ok(!/^\s*input\[type="?date"?\]\s*\{/m.test(cssCode));
+});
+
 test("HTML：時間欄為 select，無 time input step", function () {
   assert.ok(htmlCode.includes('<select id="owner-reschedule-time"'));
   assert.ok(!htmlCode.includes('id="owner-reschedule-time" step='));
   assert.ok(!htmlCode.includes('type="time" id="owner-reschedule-time"'));
   assert.ok(htmlCode.includes("請先選擇日期"));
-  assert.ok(htmlCode.includes("v=20260721002"));
+  assert.ok(htmlCode.includes("v=20260721003"));
+  assert.ok(!htmlCode.includes("v=20260721002"));
 });
 
 test("開啟時 time／confirm disabled；僅 confirmed 有改期", async function () {

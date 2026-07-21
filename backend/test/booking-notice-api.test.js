@@ -279,7 +279,7 @@ test("customer-ui 靜態：含 booking-notice-hint 與 canCancel 依 API 渲染"
     "utf8"
   );
   assert.ok(html.includes("booking-notice-hint"));
-  assert.ok(html.includes("v=20260720004"));
+  assert.ok(html.includes("v=20260722001"));
   assert.ok(appJs.includes("renderBookingNotice"));
   assert.ok(appJs.includes("canCancel"));
   assert.ok(appJs.includes("cancellationDeadlineDisplay"));
