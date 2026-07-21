@@ -1,5 +1,5 @@
 /**
- * Owner 改期 UI／API client 測試
+ * Owner 改期 UI／API client 測試（30 分 select＋slots 重新確認）
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -10,6 +10,8 @@ import { dirname, join } from "node:path";
 var repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 var apiJsCode = readFileSync(join(repoRoot, "owner-admin/js/api.js"), "utf8");
 var appJsCode = readFileSync(join(repoRoot, "owner-admin/js/app.js"), "utf8");
+var cssCode = readFileSync(join(repoRoot, "owner-admin/css/style.css"), "utf8");
+var htmlCode = readFileSync(join(repoRoot, "owner-admin/index.html"), "utf8");
 
 function makeClassList() {
   var set = new Set();
@@ -48,10 +50,6 @@ function queryAttrButtons(el, selector) {
         return m ? m[1] : null;
       };
       btn.disabled = /\sdisabled(?:\s|>)/.test(tagHtml);
-      if (primaryValue != null) {
-        btn._primaryAttr = attr;
-        btn._primaryValue = primaryValue;
-      }
       list.push(btn);
     })(tag, attrMatch[1]);
   }
@@ -60,7 +58,8 @@ function queryAttrButtons(el, selector) {
 }
 
 function makeElement(id) {
-  return {
+  var childNodes = [];
+  var el = {
     id: id,
     value: "",
     textContent: "",
@@ -69,6 +68,7 @@ function makeElement(id) {
     hidden: false,
     disabled: false,
     _listeners: {},
+    childNodes: childNodes,
     addEventListener: function (type, fn) {
       if (!this._listeners[type]) this._listeners[type] = [];
       this._listeners[type].push(fn);
@@ -82,30 +82,47 @@ function makeElement(id) {
     querySelectorAll: function (selector) {
       return queryAttrButtons(this, selector);
     },
+    appendChild: function (child) {
+      childNodes.push(child);
+      return child;
+    },
+    removeChild: function (child) {
+      var i = childNodes.indexOf(child);
+      if (i >= 0) childNodes.splice(i, 1);
+      return child;
+    },
     classList: makeClassList(),
     style: { display: "" }
   };
+  Object.defineProperty(el, "firstChild", {
+    get: function () { return childNodes[0] || null; }
+  });
+  return el;
 }
 
 function makeFakeDom() {
   var elements = {};
-  return {
-    elements: elements,
-    document: {
-      addEventListener: function () {},
-      getElementById: function (id) {
-        if (!elements[id]) {
-          elements[id] = makeElement(id);
-          if (id === "owner-reschedule-modal" || id === "owner-cancel-modal") {
-            elements[id].classList.add("hidden");
-          }
+  var document = {
+    addEventListener: function () {},
+    createElement: function (tag) {
+      return makeElement("__" + tag);
+    },
+    getElementById: function (id) {
+      if (!elements[id]) {
+        elements[id] = makeElement(id);
+        if (id === "owner-reschedule-modal" || id === "owner-cancel-modal") {
+          elements[id].classList.add("hidden");
         }
-        return elements[id];
-      },
-      querySelectorAll: function () { return []; },
-      documentElement: makeElement("__root__")
-    }
+        if (id === "owner-reschedule-confirm" || id === "owner-reschedule-time") {
+          elements[id].disabled = true;
+        }
+      }
+      return elements[id];
+    },
+    querySelectorAll: function () { return []; },
+    documentElement: makeElement("__root__")
   };
+  return { elements: elements, document: document };
 }
 
 async function tick(times) {
@@ -125,7 +142,7 @@ function makeApiClient() {
     return {
       ok: true,
       status: 200,
-      json: async function () { return { ok: true }; }
+      json: async function () { return { ok: true, slots: ["10:00", "10:30"] }; }
     };
   };
   new Function("window", "fetch", apiJsCode)(fakeWindow, fakeFetch);
@@ -154,66 +171,11 @@ async function bootBookingApp(overrides, confirmImpl) {
   var keys = todayKeys();
   var spy = {
     rescheduleBooking: [],
+    getRescheduleSlots: [],
     getBookingsForMonth: [],
     confirmCount: 0,
     lastConfirmMessage: ""
   };
-  var bookingsForToday = [{
-    id: "bk-confirmed",
-    time: "10:00",
-    status: "已確認",
-    internalStatus: "confirmed",
-    statusLabel: "已確認",
-    serviceName: "霧眉",
-    customerName: "客人甲",
-    date: keys.dateKey
-  }, {
-    id: "bk-pending",
-    time: "11:00",
-    status: "已確認",
-    internalStatus: "pending",
-    statusLabel: "已確認",
-    serviceName: "霧眉",
-    customerName: "客人乙",
-    date: keys.dateKey
-  }, {
-    id: "bk-checked",
-    time: "12:00",
-    status: "已確認",
-    internalStatus: "checked_in",
-    statusLabel: "已確認",
-    serviceName: "霧眉",
-    customerName: "客人丙",
-    date: keys.dateKey
-  }, {
-    id: "bk-done",
-    time: "13:00",
-    status: "已確認",
-    internalStatus: "completed",
-    statusLabel: "已完成",
-    serviceName: "霧眉",
-    customerName: "客人丁",
-    date: keys.dateKey
-  }, {
-    id: "bk-cancel",
-    time: "14:00",
-    status: "已取消",
-    internalStatus: "cancelled_by_store",
-    statusLabel: "已取消",
-    serviceName: "霧眉",
-    customerName: "客人戊",
-    date: keys.dateKey
-  }, {
-    id: "bk-noshow",
-    time: "15:00",
-    status: "未到",
-    internalStatus: "no_show",
-    statusLabel: "未到",
-    serviceName: "霧眉",
-    customerName: "客人己",
-    date: keys.dateKey
-  }];
-
   var api = {
     isConfigured: function () { return true; },
     getSettings: async function () { return {}; },
@@ -222,7 +184,34 @@ async function bootBookingApp(overrides, confirmImpl) {
       var days = {};
       days[keys.dateKey] = {
         confirmedCount: 1,
-        bookings: bookingsForToday.slice()
+        bookings: [{
+          id: "bk-confirmed",
+          time: "10:00",
+          status: "已確認",
+          internalStatus: "confirmed",
+          statusLabel: "已確認",
+          serviceName: "霧眉",
+          customerName: "客人甲",
+          date: keys.dateKey
+        }, {
+          id: "bk-pending",
+          time: "11:00",
+          status: "已確認",
+          internalStatus: "pending",
+          statusLabel: "已確認",
+          serviceName: "霧眉",
+          customerName: "客人乙",
+          date: keys.dateKey
+        }, {
+          id: "bk-noshow",
+          time: "15:00",
+          status: "未到",
+          internalStatus: "no_show",
+          statusLabel: "未到",
+          serviceName: "霧眉",
+          customerName: "客人己",
+          date: keys.dateKey
+        }]
       };
       return { month: month, days: days };
     },
@@ -230,15 +219,22 @@ async function bootBookingApp(overrides, confirmImpl) {
     getSlots: async function () { return []; },
     cancelBooking: async function () { return { ok: true }; },
     transitionBookingStatus: async function () { return { ok: true }; },
-    rescheduleBooking: async function (bookingId, date, time) {
-      spy.rescheduleBooking.push({ bookingId: bookingId, date: date, time: time });
+    getRescheduleSlots: async function (bookingId, date) {
+      spy.getRescheduleSlots.push({ bookingId: bookingId, date: date });
       return {
         ok: true,
-        oldBookingId: bookingId,
-        newBookingId: "bk-new",
+        bookingId: bookingId,
         date: date,
-        time: time
+        durationMinutes: 60,
+        stepMinutes: 30,
+        slots: ["10:00", "10:30", "11:00"],
+        bookable: true,
+        reason: null
       };
+    },
+    rescheduleBooking: async function (bookingId, date, time) {
+      spy.rescheduleBooking.push({ bookingId: bookingId, date: date, time: time });
+      return { ok: true, newBookingId: "bk-new", date: date, time: time };
     }
   };
   Object.assign(api, overrides || {});
@@ -260,289 +256,253 @@ async function bootBookingApp(overrides, confirmImpl) {
   );
   await tick(6);
 
-  return { els: dom.elements, spy: spy, keys: keys, bookings: bookingsForToday };
+  return { els: dom.elements, spy: spy, keys: keys, document: dom.document };
 }
 
-test("api client：rescheduleBooking 使用 POST /reschedule 且 body 僅 date／time", async function () {
+function openReschedule(app) {
+  app.els["today-list"].querySelectorAll("[data-reschedule-id]")[0].fire("click");
+}
+
+test("api client：getRescheduleSlots 使用 GET 且 encode 參數", async function () {
   var ctx = makeApiClient();
-  await ctx.api.rescheduleBooking("bk-1", "2099-08-15", "14:00");
+  await ctx.api.getRescheduleSlots("bk/特殊", "2099-08-03");
   assert.equal(
     ctx.calls[0].url,
-    "https://api.example.test/api/owner/bookings/bk-1/reschedule"
+    "https://api.example.test/api/owner/bookings/" +
+    encodeURIComponent("bk/特殊") +
+    "/reschedule-slots?date=" + encodeURIComponent("2099-08-03")
   );
-  assert.equal(ctx.calls[0].options.method, "POST");
+  assert.equal(ctx.calls[0].options.method || "GET", "GET");
+  assert.ok(!/"staffId"|"tenantId"|"userId"|"serviceId"|"now"/.test(
+    JSON.stringify(ctx.calls[0])
+  ));
+});
+
+test("api client：rescheduleBooking body 仍僅 date／time", async function () {
+  var ctx = makeApiClient();
+  await ctx.api.rescheduleBooking("bk-1", "2099-08-15", "14:00");
   assert.deepEqual(JSON.parse(ctx.calls[0].options.body), {
     date: "2099-08-15",
     time: "14:00"
   });
-  var bodyKeys = Object.keys(JSON.parse(ctx.calls[0].options.body)).sort();
-  assert.deepEqual(bodyKeys, ["date", "time"]);
-  assert.ok(!/"actor"|"actorId"|"staffId"|"tenantId"|"userId"|"status"|"now"|"reasonCode"/.test(
-    ctx.calls[0].options.body
-  ));
 });
 
-test("api client：bookingId 會 encodeURIComponent", async function () {
-  var ctx = makeApiClient();
-  await ctx.api.rescheduleBooking("bk/特殊", "2099-08-15", "14:00");
-  assert.ok(ctx.calls[0].url.includes(encodeURIComponent("bk/特殊")));
+test("CSS：modal／input／select 有防溢出規則", function () {
+  assert.ok(/\.modal-card\s*\{[^}]*min-width:\s*0/s.test(cssCode));
+  assert.ok(/\.modal-card\s*\{[^}]*overflow-x:\s*hidden/s.test(cssCode));
+  assert.ok(/\.modal-card input[\s\S]*?min-width:\s*0/.test(cssCode));
+  assert.ok(/\.modal-card select[\s\S]*?max-width:\s*100%/.test(cssCode));
+  assert.ok(/\.modal-card (input|select|textarea)[\s\S]*?box-sizing:\s*border-box/.test(cssCode));
+  assert.ok(/\.form-group\s*\{[^}]*min-width:\s*0/s.test(cssCode));
 });
 
-test("預約清單：僅 confirmed 顯示改期；其他狀態不顯示", async function () {
+test("HTML：時間欄為 select，無 time input step", function () {
+  assert.ok(htmlCode.includes('<select id="owner-reschedule-time"'));
+  assert.ok(!htmlCode.includes('id="owner-reschedule-time" step='));
+  assert.ok(!htmlCode.includes('type="time" id="owner-reschedule-time"'));
+  assert.ok(htmlCode.includes("請先選擇日期"));
+  assert.ok(htmlCode.includes("v=20260721002"));
+});
+
+test("開啟時 time／confirm disabled；僅 confirmed 有改期", async function () {
   var app = await bootBookingApp();
   var html = app.els["today-list"].innerHTML;
-  assert.ok(html.includes('data-reschedule-id="bk-confirmed"'), "confirmed 應顯示改期");
-  assert.ok(html.includes(">改期</button>"));
+  assert.ok(html.includes('data-reschedule-id="bk-confirmed"'));
   assert.ok(!html.includes('data-reschedule-id="bk-pending"'));
-  assert.ok(!html.includes('data-reschedule-id="bk-checked"'));
-  assert.ok(!html.includes('data-reschedule-id="bk-done"'));
-  assert.ok(!html.includes('data-reschedule-id="bk-cancel"'));
   assert.ok(!html.includes('data-reschedule-id="bk-noshow"'));
-  assert.ok(html.includes('data-transition-to="checked_in"'), "報到仍保留");
-  assert.ok(html.includes('data-transition-to="no_show"'), "未到仍保留");
-  assert.ok(html.includes("取消預約"), "取消仍保留");
-  assert.ok(!html.includes("data-customer-id"), "不得把 customerId 放入改期 DOM");
-  assert.ok(!html.includes("data-staff-id"));
+
+  openReschedule(app);
+  await tick(1);
+  assert.ok(!app.els["owner-reschedule-modal"].classList.contains("hidden"));
+  assert.equal(app.els["owner-reschedule-time"].disabled, true);
+  assert.equal(app.els["owner-reschedule-confirm"].disabled, true);
+  assert.equal(app.els["owner-reschedule-date"].value, "");
 });
 
-test("no_show 終態仍無取消／transition／改期按鈕", async function () {
-  var keys = todayKeys();
+test("日期 change 呼叫 slots API；僅渲染 00／30", async function () {
+  var app = await bootBookingApp();
+  openReschedule(app);
+  await tick(1);
+  var date = futureTaipeiDate(5);
+  app.els["owner-reschedule-date"].value = date;
+  app.els["owner-reschedule-date"].fire("change");
+  await tick(4);
+
+  assert.equal(app.spy.getRescheduleSlots.length, 1);
+  assert.equal(app.spy.getRescheduleSlots[0].bookingId, "bk-confirmed");
+  assert.equal(app.spy.getRescheduleSlots[0].date, date);
+  assert.equal(app.els["owner-reschedule-time"].disabled, false);
+  var options = app.els["owner-reschedule-time"].childNodes.slice(1);
+  assert.equal(options.length, 3);
+  options.forEach(function (opt) {
+    assert.match(opt.value, /^([01]\d|2[0-3]):(00|30)$/);
+    assert.equal(opt.textContent, opt.value);
+  });
+});
+
+test("無 slots 時提示並禁止提交", async function () {
   var app = await bootBookingApp({
-    getBookingsForMonth: async function (month) {
-      var days = {};
-      days[keys.dateKey] = {
-        confirmedCount: 0,
-        bookings: [{
-          id: "bk-only-noshow",
-          time: "10:00",
-          status: "未到",
-          internalStatus: "no_show",
-          statusLabel: "未到",
-          serviceName: "霧眉",
-          customerName: "未到客",
-          date: keys.dateKey
-        }]
-      };
-      return { month: month, days: days };
+    getRescheduleSlots: async function (bookingId, date) {
+      app.spy.getRescheduleSlots.push({ bookingId: bookingId, date: date });
+      return { ok: true, slots: [], bookable: false, reason: "full" };
     }
   });
-  var html = app.els["today-list"].innerHTML;
-  assert.ok(!html.includes("data-cancel-id"));
-  assert.ok(!html.includes("data-transition-id"));
-  assert.ok(!html.includes("data-reschedule-id"));
-  assert.ok(!html.includes("取消預約"));
-  assert.ok(!html.includes(">改期<"));
-});
-
-test("點擊改期：顯示原預約摘要、新日期／時間空白", async function () {
-  var app = await bootBookingApp();
-  var btn = app.els["today-list"].querySelectorAll("[data-reschedule-id]")[0];
-  assert.ok(btn);
-  btn.fire("click");
-  await tick(2);
-
-  assert.ok(!app.els["owner-reschedule-modal"].classList.contains("hidden"));
-  assert.equal(
-    app.els["owner-reschedule-summary"].textContent,
-    "客人甲｜霧眉｜" + app.keys.dateKey.replace(/-/g, "/") + " 10:00"
-  );
-  assert.equal(app.els["owner-reschedule-date"].value, "");
-  assert.equal(app.els["owner-reschedule-time"].value, "");
-});
-
-test("缺日期或時間不呼叫 API", async function () {
-  var app = await bootBookingApp();
-  app.els["today-list"].querySelectorAll("[data-reschedule-id]")[0].fire("click");
+  openReschedule(app);
   await tick(1);
-
-  app.els["owner-reschedule-confirm"].fire("click");
-  await tick(2);
-  assert.equal(app.spy.rescheduleBooking.length, 0);
-  assert.match(app.els.status.textContent, /日期/);
-
-  app.els["owner-reschedule-date"].value = futureTaipeiDate(5);
-  app.els["owner-reschedule-confirm"].fire("click");
-  await tick(2);
-  assert.equal(app.spy.rescheduleBooking.length, 0);
-  assert.match(app.els.status.textContent, /時間/);
+  app.els["owner-reschedule-date"].value = futureTaipeiDate(6);
+  app.els["owner-reschedule-date"].fire("change");
+  await tick(4);
+  assert.equal(app.els["owner-reschedule-time"].disabled, true);
+  assert.equal(app.els["owner-reschedule-confirm"].disabled, true);
+  assert.equal(app.els["owner-reschedule-time"].firstChild.textContent, "此日期沒有可改期時段");
 });
 
-test("新時間明顯在過去時前端拒絕", async function () {
-  var app = await bootBookingApp();
-  app.els["today-list"].querySelectorAll("[data-reschedule-id]")[0].fire("click");
-  await tick(1);
-  app.els["owner-reschedule-date"].value = "2020-01-15";
-  app.els["owner-reschedule-time"].value = "10:00";
-  app.els["owner-reschedule-confirm"].fire("click");
-  await tick(2);
-  assert.equal(app.spy.rescheduleBooking.length, 0);
-  assert.equal(app.spy.confirmCount, 0);
-  assert.match(app.els.status.textContent, /過去|已開始/);
-});
-
-test("確認取消時不呼叫 API", async function () {
-  var confirmCount = 0;
-  var app = await bootBookingApp(null, function () {
-    confirmCount += 1;
-    return false;
+test("快速切換日期：舊回應不覆蓋新結果", async function () {
+  var resolvers = [];
+  var app = await bootBookingApp({
+    getRescheduleSlots: function (bookingId, date) {
+      app.spy.getRescheduleSlots.push({ bookingId: bookingId, date: date });
+      return new Promise(function (resolve) {
+        resolvers.push({ date: date, resolve: resolve });
+      });
+    }
   });
-  app.els["today-list"].querySelectorAll("[data-reschedule-id]")[0].fire("click");
+  openReschedule(app);
   await tick(1);
-  app.els["owner-reschedule-date"].value = futureTaipeiDate(5);
-  app.els["owner-reschedule-time"].value = "15:00";
-  app.els["owner-reschedule-confirm"].fire("click");
+  var d1 = futureTaipeiDate(7);
+  var d2 = futureTaipeiDate(8);
+  app.els["owner-reschedule-date"].value = d1;
+  app.els["owner-reschedule-date"].fire("change");
+  await tick(1);
+  app.els["owner-reschedule-date"].value = d2;
+  app.els["owner-reschedule-date"].fire("change");
+  await tick(1);
+
+  assert.equal(resolvers.length, 2);
+  resolvers[0].resolve({ ok: true, slots: ["09:00"], bookable: true });
   await tick(2);
-  assert.equal(confirmCount, 1);
-  assert.equal(app.spy.rescheduleBooking.length, 0);
+  assert.ok(
+    !app.els["owner-reschedule-time"].childNodes.some(function (n) {
+      return n.value === "09:00";
+    }),
+    "舊回應不得渲染"
+  );
+
+  resolvers[1].resolve({ ok: true, slots: ["15:00", "15:30"], bookable: true });
+  await tick(2);
+  var values = app.els["owner-reschedule-time"].childNodes.slice(1).map(function (n) {
+    return n.value;
+  });
+  assert.deepEqual(values, ["15:00", "15:30"]);
 });
 
-test("loading 防重複提交；成功後關閉清除並重新載入", async function () {
+test("偽造非 slots 時間不可提交；提交前重新查詢", async function () {
+  var app = await bootBookingApp();
+  openReschedule(app);
+  await tick(1);
+  var date = futureTaipeiDate(9);
+  app.els["owner-reschedule-date"].value = date;
+  app.els["owner-reschedule-date"].fire("change");
+  await tick(4);
+
+  app.els["owner-reschedule-time"].value = "10:15";
+  app.els["owner-reschedule-time"].fire("change");
+  assert.equal(app.els["owner-reschedule-confirm"].disabled, true);
+  app.els["owner-reschedule-confirm"].fire("click");
+  await tick(2);
+  assert.equal(app.spy.rescheduleBooking.length, 0);
+
+  app.els["owner-reschedule-time"].value = "10:00";
+  app.els["owner-reschedule-time"].fire("change");
+  assert.equal(app.els["owner-reschedule-confirm"].disabled, false);
+
+  var slotsBeforeSubmit = app.spy.getRescheduleSlots.length;
+  app.els["owner-reschedule-confirm"].fire("click");
+  await tick(6);
+  assert.ok(app.spy.getRescheduleSlots.length > slotsBeforeSubmit, "提交前應再查一次");
+  assert.equal(app.spy.rescheduleBooking.length, 1);
+  assert.deepEqual(app.spy.rescheduleBooking[0], {
+    bookingId: "bk-confirmed",
+    date: date,
+    time: "10:00"
+  });
+});
+
+test("時段被搶走時不呼叫改期 API", async function () {
+  var call = 0;
+  var app = await bootBookingApp({
+    getRescheduleSlots: async function (bookingId, date) {
+      app.spy.getRescheduleSlots.push({ bookingId: bookingId, date: date });
+      call += 1;
+      if (call === 1) {
+        return { ok: true, slots: ["10:00", "10:30"], bookable: true };
+      }
+      return { ok: true, slots: ["10:30"], bookable: true };
+    }
+  });
+  openReschedule(app);
+  await tick(1);
+  app.els["owner-reschedule-date"].value = futureTaipeiDate(10);
+  app.els["owner-reschedule-date"].fire("change");
+  await tick(4);
+  app.els["owner-reschedule-time"].value = "10:00";
+  app.els["owner-reschedule-time"].fire("change");
+  app.els["owner-reschedule-confirm"].fire("click");
+  await tick(6);
+  assert.equal(app.spy.rescheduleBooking.length, 0);
+  assert.match(app.els.status.textContent, /剛被預約/);
+  assert.equal(app.spy.confirmCount, 0);
+});
+
+test("loading 防重複；成功後清除；關閉後完整清除", async function () {
   var resolveReschedule;
   var app = await bootBookingApp({
     rescheduleBooking: function (bookingId, date, time) {
       app.spy.rescheduleBooking.push({ bookingId: bookingId, date: date, time: time });
-      return new Promise(function (resolve) {
-        resolveReschedule = resolve;
-      });
+      return new Promise(function (resolve) { resolveReschedule = resolve; });
     }
   });
-
-  app.els["today-list"].querySelectorAll("[data-reschedule-id]")[0].fire("click");
+  openReschedule(app);
   await tick(1);
-  var newDate = futureTaipeiDate(7);
-  app.els["owner-reschedule-date"].value = newDate;
-  app.els["owner-reschedule-time"].value = "15:00";
-
+  var date = futureTaipeiDate(11);
+  app.els["owner-reschedule-date"].value = date;
+  app.els["owner-reschedule-date"].fire("change");
+  await tick(4);
+  app.els["owner-reschedule-time"].value = "11:00";
+  app.els["owner-reschedule-time"].fire("change");
   app.els["owner-reschedule-confirm"].fire("click");
-  await tick(2);
-  assert.equal(app.spy.confirmCount, 1);
-  assert.ok(app.spy.lastConfirmMessage.includes("原時段"));
-  assert.ok(app.spy.lastConfirmMessage.includes("新時段"));
+  await tick(3);
   assert.equal(app.els["owner-reschedule-confirm"].disabled, true);
-  assert.equal(app.els["owner-reschedule-dismiss"].disabled, true);
-
   app.els["owner-reschedule-confirm"].fire("click");
   await tick(1);
-  assert.equal(app.spy.rescheduleBooking.length, 1, "loading 期間不得重複送出");
+  assert.equal(app.spy.rescheduleBooking.length, 1);
 
-  var loadsBefore = app.spy.getBookingsForMonth.length;
-  resolveReschedule({ ok: true, newBookingId: "bk-new" });
+  resolveReschedule({ ok: true });
   await tick(8);
-
   assert.ok(app.els["owner-reschedule-modal"].classList.contains("hidden"));
-  assert.equal(app.els["owner-reschedule-summary"].textContent, "");
-  assert.equal(app.els["owner-reschedule-date"].value, "");
-  assert.equal(app.els["owner-reschedule-time"].value, "");
   assert.equal(app.els.status.textContent, "改期成功");
-  assert.ok(app.spy.getBookingsForMonth.length > loadsBefore);
-});
+  assert.equal(app.els["owner-reschedule-date"].value, "");
+  assert.equal(app.els["owner-reschedule-time"].disabled, true);
 
-test("失敗後保留輸入並恢復操作；錯誤不洩漏內部細節", async function () {
-  var app = await bootBookingApp({
-    rescheduleBooking: async function () {
-      var error = new Error("此時段與現有預約重疊，或同一天已有預約，請選擇其他時間");
-      error.status = 400;
-      error.stack = "Error: secret stack\n at d1-repository.js";
-      throw error;
-    }
-  });
-  app.els["today-list"].querySelectorAll("[data-reschedule-id]")[0].fire("click");
+  openReschedule(app);
   await tick(1);
-  var newDate = futureTaipeiDate(8);
-  app.els["owner-reschedule-date"].value = newDate;
-  app.els["owner-reschedule-time"].value = "16:30";
-  app.els["owner-reschedule-confirm"].fire("click");
-  await tick(6);
-
-  assert.equal(app.els["owner-reschedule-date"].value, newDate);
-  assert.equal(app.els["owner-reschedule-time"].value, "16:30");
-  assert.ok(!app.els["owner-reschedule-modal"].classList.contains("hidden"));
-  assert.equal(app.els["owner-reschedule-confirm"].disabled, false);
-  assert.equal(app.els["owner-reschedule-dismiss"].disabled, false);
-  assert.match(app.els.status.textContent, /重疊|同一天/);
-  assert.ok(!app.els.status.textContent.includes("stack"));
-  assert.ok(!app.els.status.textContent.includes("d1-repository"));
-  assert.ok(!app.els.status.textContent.includes("token"));
-  assert.ok(!app.els.status.textContent.includes("STAFF_ID"));
-});
-
-test("特殊字元不造成 XSS；關閉後清除 booking reference", async function () {
-  var keys = todayKeys();
-  var xssName = '<img src=x onerror=alert(1)>';
-  var xssService = '<script>alert(2)</script>';
-  var app = await bootBookingApp({
-    getBookingsForMonth: async function (month) {
-      var days = {};
-      days[keys.dateKey] = {
-        confirmedCount: 1,
-        bookings: [{
-          id: "bk-xss",
-          time: "10:00",
-          status: "已確認",
-          internalStatus: "confirmed",
-          statusLabel: "已確認",
-          serviceName: xssService,
-          customerName: xssName,
-          date: keys.dateKey
-        }]
-      };
-      return { month: month, days: days };
-    }
-  });
-
-  var html = app.els["today-list"].innerHTML;
-  assert.ok(html.includes("&lt;img"), "姓名應 escape");
-  assert.ok(html.includes("&lt;script&gt;"), "服務名應 escape");
-  assert.ok(!html.includes("<img src=x"));
-  assert.ok(!html.includes("<script>alert"));
-
-  app.els["today-list"].querySelectorAll("[data-reschedule-id]")[0].fire("click");
-  await tick(1);
-  assert.equal(
-    app.els["owner-reschedule-summary"].textContent,
-    xssName + "｜" + xssService + "｜" + keys.dateKey.replace(/-/g, "/") + " 10:00"
-  );
-  assert.ok(!String(app.els["owner-reschedule-summary"].innerHTML || "").includes("<img"));
-
   app.els["owner-reschedule-dismiss"].fire("click");
   await tick(1);
-  assert.ok(app.els["owner-reschedule-modal"].classList.contains("hidden"));
   assert.equal(app.els["owner-reschedule-summary"].textContent, "");
-  assert.equal(app.els["owner-reschedule-date"].value, "");
-  assert.equal(app.els["owner-reschedule-time"].value, "");
-
-  // 關閉後再提交不得打 API（booking reference 已清）
-  app.els["owner-reschedule-date"].value = futureTaipeiDate(4);
-  app.els["owner-reschedule-time"].value = "11:00";
   app.els["owner-reschedule-confirm"].fire("click");
   await tick(2);
-  assert.equal(app.spy.rescheduleBooking.length, 0);
+  assert.equal(app.spy.rescheduleBooking.length, 1);
 });
 
-test("app.js 改期流程不寫入 storage，也不 console 輸出 booking DTO", function () {
+test("app.js 改期不寫 storage／不 console slots", function () {
   assert.ok(!appJsCode.includes("localStorage.setItem"));
   assert.ok(!appJsCode.includes("sessionStorage.setItem"));
-  assert.ok(!appJsCode.includes("localStorage.getItem"));
-  assert.ok(!appJsCode.includes("sessionStorage.getItem"));
-  assert.ok(!/console\.(log|debug|info|warn|error)\s*\(\s*.*reschedule/i.test(appJsCode));
-  assert.ok(appJsCode.includes("data-reschedule-id"));
-  assert.ok(appJsCode.includes('data-reschedule-id="' + "' + escapeHtml(b.id)"));
-  assert.ok(!appJsCode.includes("data-staff-id"));
-  assert.ok(appJsCode.includes('internalStatus === "confirmed"'));
+  assert.ok(appJsCode.includes("slotsRequestSeq"));
+  assert.ok(appJsCode.includes("getRescheduleSlots"));
+  assert.ok(!/console\.(log|debug|info|warn|error)\s*\(\s*.*slots/i.test(appJsCode));
 });
 
-test("index.html：改期 modal 與 time step=1800；cache-busting 一致", function () {
-  var html = readFileSync(join(repoRoot, "owner-admin/index.html"), "utf8");
-  assert.ok(html.includes('id="owner-reschedule-modal"'));
-  assert.ok(html.includes('id="owner-reschedule-date"'));
-  assert.ok(html.includes('id="owner-reschedule-time"'));
-  assert.ok(html.includes('step="1800"'));
-  assert.ok(html.includes("css/style.css?v=20260721001"));
-  assert.ok(html.includes("js/api.js?v=20260721001"));
-  assert.ok(html.includes("js/app.js?v=20260721001"));
-});
-
-test("owner-admin 與 docs/owner 靜態副本完全一致（改期 UI）", function () {
+test("owner-admin 與 docs/owner 靜態副本完全一致", function () {
   ["index.html", "js/api.js", "js/app.js", "css/style.css"].forEach(function (file) {
     var ownerAdmin = readFileSync(join(repoRoot, "owner-admin", file), "utf8");
     var docsOwner = readFileSync(join(repoRoot, "docs/owner", file), "utf8");

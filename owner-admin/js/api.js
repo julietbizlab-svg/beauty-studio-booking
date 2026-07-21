@@ -233,6 +233,14 @@
       );
     },
 
+    /** Owner 改期可用時段（唯讀）；不傳 userId／serviceId／staffId／tenantId／now */
+    getRescheduleSlots: function (bookingId, date) {
+      return apiFetch(
+        "/api/owner/bookings/" + encodeURIComponent(bookingId || "") +
+        "/reschedule-slots?date=" + encodeURIComponent(date || "")
+      );
+    },
+
     getCustomers: function (q) {
       var query = "/api/owner/customers";
       if (q) query += "?q=" + encodeURIComponent(q);

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
   <title>工作室管理</title>
-  <link rel="stylesheet" href="css/style.css?v=20260721001">
+  <link rel="stylesheet" href="css/style.css?v=20260721002">
 </head>
 <body>
   <div class="app">
@@ -313,7 +313,9 @@
       </div>
       <div class="form-group">
         <label for="owner-reschedule-time">新時間</label>
-        <input type="time" id="owner-reschedule-time" step="1800" required>
+        <select id="owner-reschedule-time" required disabled>
+          <option value="">請先選擇日期</option>
+        </select>
       </div>
       <div class="modal-actions">
         <button type="button" class="btn btn-small" id="owner-reschedule-dismiss">取消</button>
@@ -333,10 +335,10 @@
 
   <!-- 本機 QR 產生器：qrcode-generator 1.4.4（MIT, Kazuhiko Arase），
        本機託管，不使用 CDN 或第三方 QR 服務 -->
-  <script src="js/vendor/qrcode.js?v=20260721001"></script>
-  <script src="js/config.js?v=20260721001"></script>
-  <script src="js/liff-init.js?v=20260721001"></script>
-  <script src="js/api.js?v=20260721001"></script>
-  <script src="js/app.js?v=20260721001"></script>
+  <script src="js/vendor/qrcode.js?v=20260721002"></script>
+  <script src="js/config.js?v=20260721002"></script>
+  <script src="js/liff-init.js?v=20260721002"></script>
+  <script src="js/api.js?v=20260721002"></script>
+  <script src="js/app.js?v=20260721002"></script>
 </body>
 </html>

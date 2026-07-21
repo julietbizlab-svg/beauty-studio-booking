@@ -54,6 +54,14 @@ import {
   OWNER_NO_SHOW_REASON_CODE,
   OWNER_RESCHEDULED_REASON_CODE
 } from "./booking-state-machine.js";
+import {
+  buildAllSlotTimesForDayWithStep,
+  filterAvailableSlots,
+  buildBusyIntervalClippedToDay,
+  getNowMinutesInTaipei,
+  OWNER_RESCHEDULE_SLOT_STEP_MINUTES
+} from "./slots.js";
+import { getTaipeiDateString, getTaipeiWeekdayIndex } from "./owner-auth.js";
 
 function makeError(message, status) {
   var error = new Error(message);
@@ -1723,6 +1731,146 @@ export async function rescheduleBookingByOwner(env, bookingId, payload) {
     date: date,
     time: time
   };
+}
+
+/**
+ * Owner 改期可用時段（唯讀）。
+ * - 固定 30 分鐘步進；不套用 customer booking_min_notice_days。
+ * - busy 以 bookings.start_at／end_at 為權威，裁切到所選台北日後再轉分鐘。
+ * - 零寫入：僅 SELECT。
+ */
+export async function listOwnerRescheduleSlots(env, bookingId, date) {
+  ensureD1SlotsEnv(env);
+  var oldBookingId = String(bookingId || "").trim();
+  if (!oldBookingId) {
+    throw makeError("缺少預約編號");
+  }
+  if (!date) {
+    throw makeError("請選擇預約日期", 400);
+  }
+  var day = validateBookingDateParam(date);
+
+  var existing = await env.DB.prepare(
+    "SELECT id, location_id, staff_id, status FROM bookings " +
+    "WHERE tenant_id = ?1 AND id = ?2"
+  ).bind(env.TENANT_ID, oldBookingId).first();
+
+  if (!existing) {
+    throw makeError("找不到此預約", 404);
+  }
+  if (existing.status !== BOOKING_STATUSES.CONFIRMED) {
+    throw makeError("僅已確認的預約可以改期", 400);
+  }
+  if (existing.staff_id == null || String(existing.staff_id).trim() === "") {
+    throw makeError("此預約缺少服務人員資料，無法改期", 400);
+  }
+  if (existing.location_id == null || String(existing.location_id).trim() === "") {
+    throw makeError("此預約缺少據點資料，無法改期", 400);
+  }
+
+  var staffId = String(existing.staff_id);
+  var locationId = String(existing.location_id);
+
+  var itemsResult = await env.DB.prepare(
+    "SELECT duration_minutes, quantity FROM booking_items " +
+    "WHERE tenant_id = ?1 AND booking_id = ?2 ORDER BY sort_order ASC, id ASC"
+  ).bind(env.TENANT_ID, oldBookingId).all();
+  var items = (itemsResult && itemsResult.results) || [];
+  if (!items.length) {
+    throw makeError("此預約缺少服務項目，無法改期", 400);
+  }
+
+  var durationMinutes = 0;
+  for (var di = 0; di < items.length; di++) {
+    durationMinutes +=
+      Number(items[di].duration_minutes) * (Number(items[di].quantity) || 1);
+  }
+  if (!(durationMinutes > 0)) {
+    throw makeError("此預約服務時長無效，無法改期", 400);
+  }
+
+  var stepMinutes = OWNER_RESCHEDULE_SLOT_STEP_MINUTES;
+  var todayStr = getTaipeiDateString();
+  var baseResponse = {
+    ok: true,
+    bookingId: oldBookingId,
+    date: day,
+    durationMinutes: durationMinutes,
+    stepMinutes: stepMinutes,
+    slots: [],
+    bookable: false,
+    reason: null
+  };
+
+  if (day < todayStr) {
+    baseResponse.reason = "past";
+    return baseResponse;
+  }
+
+  var weekdayIndex = getTaipeiWeekdayIndex(day);
+  var scheduleResult = await env.DB.prepare(
+    "SELECT start_time, end_time FROM staff_schedules " +
+    "WHERE tenant_id = ?1 AND location_id = ?2 AND staff_id = ?3 " +
+    "AND schedule_type = 'weekly' AND is_active = 1 AND is_available = 1 " +
+    "AND weekday = ?4 ORDER BY start_time ASC"
+  ).bind(env.TENANT_ID, locationId, staffId, weekdayIndex).all();
+  var scheduleRows = (scheduleResult && scheduleResult.results) || [];
+  var daySlots = scheduleRows.map(function (row) {
+    return { startTime: row.start_time, endTime: row.end_time };
+  });
+
+  if (!daySlots.length) {
+    baseResponse.reason = "closed";
+    return baseResponse;
+  }
+
+  var dayStartUtc = taipeiDateToUtcIso(day);
+  var dayEndUtc = new Date(
+    new Date(dayStartUtc).getTime() + 24 * 60 * 60 * 1000
+  ).toISOString();
+
+  // 同 staff、SLOT_BLOCKING；區間與當日重疊；排除原 booking 自身
+  var busyResult = await env.DB.prepare(
+    "SELECT id, start_at, end_at FROM bookings " +
+    "WHERE tenant_id = ?1 AND staff_id = ?2 " +
+    "AND status IN " + SLOT_BLOCKING_STATUS_SQL + " " +
+    "AND start_at < ?3 AND end_at > ?4 " +
+    "AND id <> ?5"
+  ).bind(env.TENANT_ID, staffId, dayEndUtc, dayStartUtc, oldBookingId).all();
+
+  var busyIntervals = [];
+  ((busyResult && busyResult.results) || []).forEach(function (row) {
+    var interval = buildBusyIntervalClippedToDay(
+      row.start_at,
+      row.end_at,
+      dayStartUtc,
+      dayEndUtc
+    );
+    // SQL 已判定與當日半開重疊；裁切失敗代表占用資料損壞，必須 fail closed
+    if (!interval) {
+      throw makeError("無法計算預約占用時段，請稍後再試", 500);
+    }
+    busyIntervals.push(interval);
+  });
+
+  var allTimes = buildAllSlotTimesForDayWithStep(daySlots, durationMinutes, stepMinutes);
+  var halfHourOnly = allTimes.filter(function (slot) {
+    return /^([01]\d|2[0-3]):(00|30)$/.test(slot);
+  });
+
+  var isToday = day === todayStr;
+  var available = filterAvailableSlots(
+    halfHourOnly,
+    durationMinutes,
+    busyIntervals,
+    isToday ? day : null,
+    isToday ? getNowMinutesInTaipei() : 0
+  );
+
+  baseResponse.slots = available;
+  baseResponse.bookable = available.length > 0;
+  baseResponse.reason = available.length > 0 ? null : "full";
+  return baseResponse;
 }
 
 // ──────────────────────── bookings（狀態轉換） ───────────────────────────

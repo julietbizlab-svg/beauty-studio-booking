@@ -171,7 +171,10 @@
     customerName: "",
     serviceName: "",
     date: "",
-    time: ""
+    time: "",
+    slots: [],
+    slotsDate: "",
+    slotsRequestSeq: 0
   };
 
   var OWNER_STAFF_TRANSITION_UI = {
@@ -449,25 +452,133 @@
   }
 
   function normalizeRescheduleTimeInput(value) {
-    var match = /^([01]\d|2[0-3]):([0-5]\d)/.exec(String(value || "").trim());
+    var match = /^([01]\d|2[0-3]):(00|30)$/.exec(String(value || "").trim());
     if (!match) return "";
     return match[1] + ":" + match[2];
   }
 
-  /** 前端僅擋明顯過去／無效時間；後端仍是唯一權威 */
-  function isObviouslyPastTaipeiDateTime(dateStr, timeStr) {
-    var start = new Date(dateStr + "T" + timeStr + ":00+08:00");
-    if (isNaN(start.getTime())) return true;
-    return start.getTime() <= Date.now();
+  function isHalfHourSlot(value) {
+    return /^([01]\d|2[0-3]):(00|30)$/.test(String(value || "").trim());
+  }
+
+  function clearRescheduleTimeSelect(placeholderText, disabled) {
+    var select = els.ownerRescheduleTime;
+    if (!select) return;
+    while (select.firstChild) {
+      select.removeChild(select.firstChild);
+    }
+    var option = document.createElement("option");
+    option.value = "";
+    option.textContent = placeholderText || "請先選擇日期";
+    select.appendChild(option);
+    select.value = "";
+    select.disabled = disabled !== false;
+  }
+
+  function renderRescheduleTimeOptions(slots, placeholderText) {
+    var select = els.ownerRescheduleTime;
+    if (!select) return;
+    while (select.firstChild) {
+      select.removeChild(select.firstChild);
+    }
+    var placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = placeholderText || "請選擇時間";
+    select.appendChild(placeholder);
+
+    var validSlots = [];
+    (slots || []).forEach(function (slot) {
+      var time = normalizeRescheduleTimeInput(slot);
+      if (!time || !isHalfHourSlot(time)) return;
+      if (validSlots.indexOf(time) !== -1) return;
+      validSlots.push(time);
+      var option = document.createElement("option");
+      option.value = time;
+      option.textContent = time;
+      select.appendChild(option);
+    });
+
+    select.value = "";
+    select.disabled = validSlots.length === 0 || rescheduleBusy;
+    rescheduleModalState.slots = validSlots;
+    updateRescheduleConfirmEnabled();
+  }
+
+  function updateRescheduleConfirmEnabled() {
+    if (!els.ownerRescheduleConfirm) return;
+    if (rescheduleBusy) {
+      els.ownerRescheduleConfirm.disabled = true;
+      return;
+    }
+    var selected = normalizeRescheduleTimeInput(
+      els.ownerRescheduleTime && els.ownerRescheduleTime.value
+    );
+    var ok = Boolean(
+      rescheduleModalState.bookingId &&
+      els.ownerRescheduleDate &&
+      els.ownerRescheduleDate.value &&
+      selected &&
+      rescheduleModalState.slots.indexOf(selected) !== -1
+    );
+    els.ownerRescheduleConfirm.disabled = !ok;
   }
 
   function setRescheduleModalControlsBusy(busy) {
     rescheduleBusy = !!busy;
-    if (els.ownerRescheduleConfirm) els.ownerRescheduleConfirm.disabled = rescheduleBusy;
     if (els.ownerRescheduleDismiss) els.ownerRescheduleDismiss.disabled = rescheduleBusy;
     if (els.ownerRescheduleDate) els.ownerRescheduleDate.disabled = rescheduleBusy;
-    if (els.ownerRescheduleTime) els.ownerRescheduleTime.disabled = rescheduleBusy;
+    if (els.ownerRescheduleTime) {
+      els.ownerRescheduleTime.disabled = rescheduleBusy ||
+        !(rescheduleModalState.slots && rescheduleModalState.slots.length);
+    }
+    updateRescheduleConfirmEnabled();
     renderDayBookings();
+  }
+
+  function resetRescheduleSlotState() {
+    rescheduleModalState.slots = [];
+    rescheduleModalState.slotsDate = "";
+    clearRescheduleTimeSelect("請先選擇日期", true);
+    updateRescheduleConfirmEnabled();
+  }
+
+  async function loadRescheduleSlotsForDate(dateStr) {
+    var bookingId = rescheduleModalState.bookingId;
+    var date = String(dateStr || "").trim();
+    if (!bookingId || !date) {
+      resetRescheduleSlotState();
+      return;
+    }
+
+    rescheduleModalState.slotsRequestSeq += 1;
+    var requestSeq = rescheduleModalState.slotsRequestSeq;
+    rescheduleModalState.slots = [];
+    rescheduleModalState.slotsDate = date;
+    clearRescheduleTimeSelect("載入可用時段中…", true);
+    updateRescheduleConfirmEnabled();
+
+    try {
+      var result = await window.ownerApi.getRescheduleSlots(bookingId, date);
+      if (requestSeq !== rescheduleModalState.slotsRequestSeq) {
+        return;
+      }
+      if (String(els.ownerRescheduleDate.value || "").trim() !== date) {
+        return;
+      }
+      var slots = (result && result.slots) || [];
+      if (!slots.length) {
+        renderRescheduleTimeOptions([], "此日期沒有可改期時段");
+        return;
+      }
+      renderRescheduleTimeOptions(slots, "請選擇時間");
+    } catch (error) {
+      if (requestSeq !== rescheduleModalState.slotsRequestSeq) {
+        return;
+      }
+      resetRescheduleSlotState();
+      clearRescheduleTimeSelect("載入失敗，請重選日期", true);
+      setStatus("error", error && error.message ? error.message : "載入可用時段失敗");
+    }
   }
 
   function openOwnerRescheduleModal(booking) {
@@ -477,28 +588,32 @@
     rescheduleModalState.serviceName = booking.serviceName || "服務";
     rescheduleModalState.date = booking.date || state.selectedDate || "";
     rescheduleModalState.time = booking.time || "";
-    // textContent 避免 XSS；不把完整 booking JSON 放入 DOM
+    rescheduleModalState.slotsRequestSeq += 1;
     els.ownerRescheduleSummary.textContent =
       rescheduleModalState.customerName + "｜" +
       rescheduleModalState.serviceName + "｜" +
       formatDateZh(rescheduleModalState.date) + " " +
       rescheduleModalState.time;
     els.ownerRescheduleDate.value = "";
-    els.ownerRescheduleTime.value = "";
+    resetRescheduleSlotState();
     setRescheduleModalControlsBusy(false);
     els.ownerRescheduleModal.classList.remove("hidden");
   }
 
   function closeOwnerRescheduleModal() {
     if (rescheduleBusy) return;
+    rescheduleModalState.slotsRequestSeq += 1;
     rescheduleModalState.bookingId = "";
     rescheduleModalState.customerName = "";
     rescheduleModalState.serviceName = "";
     rescheduleModalState.date = "";
     rescheduleModalState.time = "";
+    rescheduleModalState.slots = [];
+    rescheduleModalState.slotsDate = "";
     if (els.ownerRescheduleDate) els.ownerRescheduleDate.value = "";
-    if (els.ownerRescheduleTime) els.ownerRescheduleTime.value = "";
+    clearRescheduleTimeSelect("請先選擇日期", true);
     if (els.ownerRescheduleSummary) els.ownerRescheduleSummary.textContent = "";
+    if (els.ownerRescheduleConfirm) els.ownerRescheduleConfirm.disabled = true;
     els.ownerRescheduleModal.classList.add("hidden");
   }
 
@@ -513,26 +628,37 @@
       setStatus("error", "請選擇新的預約日期");
       return;
     }
-    if (!newTime) {
-      setStatus("error", "請選擇新的預約時間");
-      return;
-    }
-    if (isObviouslyPastTaipeiDateTime(newDate, newTime)) {
-      setStatus("error", "無法改期至已開始或已過去的時段");
-      return;
-    }
-
-    var confirmMessage =
-      "確定將預約改期？\n" +
-      "原時段：" + formatDateZh(rescheduleModalState.date) + " " + rescheduleModalState.time + "\n" +
-      "新時段：" + formatDateZh(newDate) + " " + newTime;
-    if (!confirm(confirmMessage)) {
+    if (!newTime || rescheduleModalState.slots.indexOf(newTime) === -1) {
+      setStatus("error", "請選擇可用的預約時間");
       return;
     }
 
     setRescheduleModalControlsBusy(true);
-    setStatus("info", "改期處理中…");
+    setStatus("info", "確認時段中…");
     try {
+      var latest = await window.ownerApi.getRescheduleSlots(bookingId, newDate);
+      var latestSlots = ((latest && latest.slots) || []).map(normalizeRescheduleTimeInput)
+        .filter(function (slot) { return slot && isHalfHourSlot(slot); });
+      if (latestSlots.indexOf(newTime) === -1) {
+        renderRescheduleTimeOptions(
+          latestSlots,
+          latestSlots.length ? "請選擇時間" : "此日期沒有可改期時段"
+        );
+        setStatus("error", "此時段剛被預約，請重新選擇");
+        setRescheduleModalControlsBusy(false);
+        return;
+      }
+
+      var confirmMessage =
+        "確定將預約改期？\n" +
+        "原時段：" + formatDateZh(rescheduleModalState.date) + " " + rescheduleModalState.time + "\n" +
+        "新時段：" + formatDateZh(newDate) + " " + newTime;
+      if (!confirm(confirmMessage)) {
+        setRescheduleModalControlsBusy(false);
+        return;
+      }
+
+      setStatus("info", "改期處理中…");
       await window.ownerApi.rescheduleBooking(bookingId, newDate, newTime);
       setRescheduleModalControlsBusy(false);
       closeOwnerRescheduleModal();
@@ -2320,6 +2446,19 @@
     $("owner-reschedule-dismiss").addEventListener("click", closeOwnerRescheduleModal);
     $("owner-reschedule-confirm").addEventListener("click", function () {
       submitOwnerReschedule().catch(function (e) { setStatus("error", e.message); });
+    });
+    els.ownerRescheduleDate.addEventListener("change", function () {
+      var date = String(els.ownerRescheduleDate.value || "").trim();
+      if (!date) {
+        resetRescheduleSlotState();
+        return;
+      }
+      loadRescheduleSlotsForDate(date).catch(function (e) {
+        setStatus("error", e.message);
+      });
+    });
+    els.ownerRescheduleTime.addEventListener("change", function () {
+      updateRescheduleConfirmEnabled();
     });
     els.ownerRescheduleModal.addEventListener("click", function (event) {
       if (event.target === els.ownerRescheduleModal) {

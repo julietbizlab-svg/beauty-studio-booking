@@ -41,7 +41,8 @@ import {
   getCustomerPhotoContent,
   deleteCustomerComparisonPhoto,
   applyOwnerGeneralBookingStatusTransition,
-  rescheduleBookingByOwner
+  rescheduleBookingByOwner,
+  listOwnerRescheduleSlots
 } from "./data-repository.js";
 import { requireOwnerFromRequest } from "./owner-auth.js";
 import { requireCustomerFromRequest } from "./liff-verify.js";
@@ -375,6 +376,22 @@ export default {
           }
         );
         return jsonResponse(ownerRescheduleResult, corsHeaders);
+      }
+
+      var ownerRescheduleSlotsMatch = url.pathname.match(
+        /^\/api\/owner\/bookings\/([^/]+)\/reschedule-slots$/
+      );
+      if (ownerRescheduleSlotsMatch && request.method === "GET") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var ownerSlotsBookingId = decodeURIComponent(ownerRescheduleSlotsMatch[1]);
+        var ownerSlotsDate = url.searchParams.get("date");
+        var ownerSlotsResult = await listOwnerRescheduleSlots(
+          env,
+          ownerSlotsBookingId,
+          ownerSlotsDate
+        );
+        return jsonResponse(ownerSlotsResult, corsHeaders);
       }
 
       if (url.pathname === "/api/owner/bookings/month" && request.method === "GET") {

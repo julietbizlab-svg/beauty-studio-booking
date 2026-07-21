@@ -233,3 +233,7 @@ export function applyOwnerGeneralBookingStatusTransition(env, params) {
 export function rescheduleBookingByOwner(env, bookingId, payload) {
   return requireRepositoryFunction(env, "rescheduleBookingByOwner")(env, bookingId, payload);
 }
+
+export function listOwnerRescheduleSlots(env, bookingId, date) {
+  return requireRepositoryFunction(env, "listOwnerRescheduleSlots")(env, bookingId, date);
+}
