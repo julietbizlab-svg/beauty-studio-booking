@@ -32,11 +32,21 @@ function runConfig(hostname) {
   return { config: fakeWindow.BEAUTY_CONFIG, rootClasses: rootClasses };
 }
 
-test("config.js：v2 hostname 加 is-v2 class（含 preview 子網域）", function () {
-  ["juliet-studio.pages.dev", "abc123.juliet-studio.pages.dev"].forEach(function (host) {
-    var result = runConfig(host);
-    assert.ok(result.rootClasses.has("is-v2"), host + " 必須加 is-v2");
+test("config.js：v2 hostname 加 is-v2 class（正式與 preview）", function () {
+  [
+    {
+      host: "juliet-studio.pages.dev",
+      api: "https://beauty-studio-api-v2-production.gosu-chill-book.workers.dev"
+    },
+    {
+      host: "abc123.juliet-studio.pages.dev",
+      api: "https://beauty-studio-api-v2-test.gosu-chill-book.workers.dev"
+    }
+  ].forEach(function (item) {
+    var result = runConfig(item.host);
+    assert.ok(result.rootClasses.has("is-v2"), item.host + " 必須加 is-v2");
     assert.equal(result.config.CLAIM_ENABLED, true);
+    assert.equal(result.config.API_BASE_URL, item.api);
   });
 });
 
