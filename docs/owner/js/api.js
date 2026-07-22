@@ -392,6 +392,27 @@
       });
     },
 
+    generateAiDailySummary: function (date) {
+      return apiFetch("/api/owner/ai/daily-summary", {
+        method: "POST",
+        body: JSON.stringify({ date: date || "" })
+      });
+    },
+
+    generateAiMessageDraft: function (bookingId, draftType) {
+      return apiFetch("/api/owner/ai/message-draft", {
+        method: "POST",
+        body: JSON.stringify({
+          bookingId: bookingId || "",
+          draftType: draftType || ""
+        })
+      });
+    },
+
+    getAiCapability: function () {
+      return apiFetch("/api/owner/ai/capability");
+    },
+
     isConfigured: function () {
       return Boolean(getApiBaseUrl());
     }

@@ -237,3 +237,11 @@ export function rescheduleBookingByOwner(env, bookingId, payload) {
 export function listOwnerRescheduleSlots(env, bookingId, date) {
   return requireRepositoryFunction(env, "listOwnerRescheduleSlots")(env, bookingId, date);
 }
+
+export function listOwnerAiDailySummaryItems(env, date) {
+  return requireRepositoryFunction(env, "listOwnerAiDailySummaryItems")(env, date);
+}
+
+export function getOwnerAiMessageDraftContext(env, bookingId) {
+  return requireRepositoryFunction(env, "getOwnerAiMessageDraftContext")(env, bookingId);
+}

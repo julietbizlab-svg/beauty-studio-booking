@@ -166,6 +166,10 @@
   var cancelModalState = { bookingId: "" };
   var transitionBusy = false;
   var rescheduleBusy = false;
+  var aiDraftBusy = false;
+  var aiDraftModalState = { bookingId: "", summary: "" };
+  var aiSummaryBusy = false;
+  var aiFeatureEnabled = false;
   var rescheduleModalState = {
     bookingId: "",
     customerName: "",
@@ -315,8 +319,14 @@
           ((transitionBusy || rescheduleBusy) ? " disabled" : "") +
           ' data-reschedule-id="' + escapeHtml(b.id) + '">改期</button>'
         : "";
-      var actionRow = (transitionBtns || rescheduleBtn || cancelBtn)
-        ? '<div class="booking-card-actions">' + transitionBtns + rescheduleBtn + cancelBtn + "</div>"
+      var aiDraftBtn = aiFeatureEnabled
+        ? ('<button type="button" class="btn btn-small btn-ai-draft"' +
+          ((transitionBusy || rescheduleBusy || aiDraftBusy) ? " disabled" : "") +
+          ' data-ai-draft-id="' + escapeHtml(b.id) + '">AI 訊息草稿</button>')
+        : "";
+      var actionRow = (transitionBtns || rescheduleBtn || aiDraftBtn || cancelBtn)
+        ? '<div class="booking-card-actions">' + transitionBtns + rescheduleBtn +
+          aiDraftBtn + cancelBtn + "</div>"
         : "";
       return (
         '<div class="' + cardClass + '">' +
@@ -370,6 +380,15 @@
         var booking = sorted.find(function (b) { return b.id === id; });
         if (!booking || booking.internalStatus !== "confirmed") return;
         openOwnerRescheduleModal(booking);
+      });
+    });
+
+    container.querySelectorAll("[data-ai-draft-id]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        if (transitionBusy || rescheduleBusy || aiDraftBusy || btn.disabled) return;
+        var id = btn.getAttribute("data-ai-draft-id");
+        var booking = sorted.find(function (b) { return b.id === id; });
+        openOwnerAiDraftModal(booking || { id: id, date: date });
       });
     });
   }
@@ -672,8 +691,213 @@
 
   function selectBookingDate(date) {
     state.selectedDate = date;
+    if (els.aiSummaryDate) {
+      els.aiSummaryDate.value = date || "";
+    }
     renderCalendar();
     renderDayBookings();
+  }
+
+  function setAiStatus(el, message, isError) {
+    if (!el) return;
+    el.textContent = message || "";
+    el.classList.toggle("is-error", Boolean(isError && message));
+  }
+
+  async function copyTextToClipboard(text) {
+    var value = String(text || "");
+    if (!value) {
+      throw new Error("尚無草稿可複製");
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(value);
+      return;
+    }
+    throw new Error("此裝置不支援複製到剪貼簿");
+  }
+
+  function applyAiCapabilityUi() {
+    if (els.aiSummaryCard) {
+      if (aiFeatureEnabled) {
+        els.aiSummaryCard.classList.remove("hidden");
+        els.aiSummaryCard.hidden = false;
+      } else {
+        els.aiSummaryCard.classList.add("hidden");
+        els.aiSummaryCard.hidden = true;
+        if (els.aiSummaryResult) els.aiSummaryResult.value = "";
+        if (els.aiSummaryCopy) els.aiSummaryCopy.disabled = true;
+        setAiStatus(els.aiSummaryStatus, "", false);
+      }
+    }
+  }
+
+  async function refreshAiCapability() {
+    if (!window.ownerApi || typeof window.ownerApi.getAiCapability !== "function") {
+      aiFeatureEnabled = false;
+      applyAiCapabilityUi();
+      return false;
+    }
+    try {
+      var result = await window.ownerApi.getAiCapability();
+      aiFeatureEnabled = Boolean(result && result.enabled);
+    } catch (ignore) {
+      aiFeatureEnabled = false;
+    }
+    applyAiCapabilityUi();
+    return aiFeatureEnabled;
+  }
+
+  async function handleAiSummaryGenerate() {
+    if (!aiFeatureEnabled) {
+      setAiStatus(els.aiSummaryStatus, "AI 功能尚未啟用", true);
+      return;
+    }
+    if (aiSummaryBusy) return;
+    var date = String(
+      (els.aiSummaryDate && els.aiSummaryDate.value) || state.selectedDate || ""
+    ).trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      setAiStatus(els.aiSummaryStatus, "請先選擇有效日期", true);
+      return;
+    }
+    aiSummaryBusy = true;
+    if (els.aiSummaryGenerate) els.aiSummaryGenerate.disabled = true;
+    if (els.aiSummaryCopy) els.aiSummaryCopy.disabled = true;
+    if (els.aiSummaryResult) els.aiSummaryResult.value = "";
+    setAiStatus(els.aiSummaryStatus, "產生中…", false);
+    try {
+      var result = await window.ownerApi.generateAiDailySummary(date);
+      if (els.aiSummaryResult) {
+        els.aiSummaryResult.value = (result && result.draft) || "";
+      }
+      setAiStatus(
+        els.aiSummaryStatus,
+        (result && result.disclaimer) ||
+          "此為 AI 草稿，業主須自行審核；不會自動傳送或儲存。",
+        false
+      );
+      if (els.aiSummaryCopy) {
+        els.aiSummaryCopy.disabled = !String(
+          (els.aiSummaryResult && els.aiSummaryResult.value) || ""
+        ).trim();
+      }
+    } catch (error) {
+      var message = (error && error.message) || "AI 產生失敗";
+      setAiStatus(els.aiSummaryStatus, message, true);
+      if (els.aiSummaryCopy) els.aiSummaryCopy.disabled = true;
+    } finally {
+      aiSummaryBusy = false;
+      if (els.aiSummaryGenerate) els.aiSummaryGenerate.disabled = false;
+    }
+  }
+
+  async function handleAiSummaryCopy() {
+    try {
+      await copyTextToClipboard(els.aiSummaryResult && els.aiSummaryResult.value);
+      setAiStatus(els.aiSummaryStatus, "已複製到剪貼簿（請自行審核後使用）", false);
+    } catch (error) {
+      setAiStatus(els.aiSummaryStatus, (error && error.message) || "複製失敗", true);
+    }
+  }
+
+  function openOwnerAiDraftModal(booking) {
+    if (!aiFeatureEnabled) return;
+    aiDraftModalState.bookingId = booking && booking.id ? String(booking.id) : "";
+    // 業主畫面可顯示既有預約摘要；不把客戶身分送進 AI（後端固定「您好」）
+    aiDraftModalState.summary =
+      formatDateZh(booking && (booking.date || state.selectedDate)) + " " +
+      String((booking && booking.time) || "") + " · " +
+      String((booking && booking.serviceName) || "服務");
+    if (els.ownerAiDraftSummary) {
+      els.ownerAiDraftSummary.textContent = aiDraftModalState.summary;
+    }
+    if (els.ownerAiDraftType) els.ownerAiDraftType.value = "";
+    if (els.ownerAiDraftResult) els.ownerAiDraftResult.value = "";
+    if (els.ownerAiDraftCopy) els.ownerAiDraftCopy.disabled = true;
+    setAiStatus(els.ownerAiDraftStatus, "", false);
+    if (els.ownerAiDraftModal) els.ownerAiDraftModal.classList.remove("hidden");
+  }
+
+  function closeOwnerAiDraftModal() {
+    aiDraftModalState.bookingId = "";
+    aiDraftModalState.summary = "";
+    if (els.ownerAiDraftModal) els.ownerAiDraftModal.classList.add("hidden");
+    if (els.ownerAiDraftType) els.ownerAiDraftType.value = "";
+    if (els.ownerAiDraftResult) els.ownerAiDraftResult.value = "";
+    if (els.ownerAiDraftCopy) els.ownerAiDraftCopy.disabled = true;
+    setAiStatus(els.ownerAiDraftStatus, "", false);
+  }
+
+  async function handleOwnerAiDraftGenerate() {
+    if (!aiFeatureEnabled) {
+      setAiStatus(els.ownerAiDraftStatus, "AI 功能尚未啟用", true);
+      return;
+    }
+    if (aiDraftBusy) return;
+    var bookingId = String(aiDraftModalState.bookingId || "").trim();
+    var draftType = String(
+      (els.ownerAiDraftType && els.ownerAiDraftType.value) || ""
+    ).trim();
+    if (!bookingId) {
+      setAiStatus(els.ownerAiDraftStatus, "找不到預約", true);
+      return;
+    }
+    if (!draftType) {
+      setAiStatus(els.ownerAiDraftStatus, "請選擇草稿類型", true);
+      return;
+    }
+    aiDraftBusy = true;
+    if (els.ownerAiDraftGenerate) els.ownerAiDraftGenerate.disabled = true;
+    if (els.ownerAiDraftCopy) els.ownerAiDraftCopy.disabled = true;
+    if (els.ownerAiDraftResult) els.ownerAiDraftResult.value = "";
+    setAiStatus(els.ownerAiDraftStatus, "產生中…", false);
+    try {
+      var result = await window.ownerApi.generateAiMessageDraft(bookingId, draftType);
+      if (els.ownerAiDraftResult) {
+        els.ownerAiDraftResult.value = (result && result.draft) || "";
+      }
+      setAiStatus(
+        els.ownerAiDraftStatus,
+        (result && result.disclaimer) ||
+          "此為 AI 草稿，業主須自行審核；不會自動傳送或儲存。",
+        false
+      );
+      if (els.ownerAiDraftCopy) {
+        els.ownerAiDraftCopy.disabled = !String(
+          (els.ownerAiDraftResult && els.ownerAiDraftResult.value) || ""
+        ).trim();
+      }
+    } catch (error) {
+      setAiStatus(
+        els.ownerAiDraftStatus,
+        (error && error.message) || "AI 產生失敗",
+        true
+      );
+      if (els.ownerAiDraftCopy) els.ownerAiDraftCopy.disabled = true;
+    } finally {
+      aiDraftBusy = false;
+      if (els.ownerAiDraftGenerate) els.ownerAiDraftGenerate.disabled = false;
+      renderDayBookings();
+    }
+  }
+
+  async function handleOwnerAiDraftCopy() {
+    try {
+      await copyTextToClipboard(
+        els.ownerAiDraftResult && els.ownerAiDraftResult.value
+      );
+      setAiStatus(
+        els.ownerAiDraftStatus,
+        "已複製到剪貼簿（請自行審核後使用）",
+        false
+      );
+    } catch (error) {
+      setAiStatus(
+        els.ownerAiDraftStatus,
+        (error && error.message) || "複製失敗",
+        true
+      );
+    }
   }
 
   function getDefaultDateForMonth(month) {
@@ -2368,6 +2592,20 @@
     els.ownerRescheduleTime = $("owner-reschedule-time");
     els.ownerRescheduleDismiss = $("owner-reschedule-dismiss");
     els.ownerRescheduleConfirm = $("owner-reschedule-confirm");
+    els.aiSummaryCard = $("ai-summary-card");
+    els.aiSummaryDate = $("ai-summary-date");
+    els.aiSummaryGenerate = $("ai-summary-generate");
+    els.aiSummaryStatus = $("ai-summary-status");
+    els.aiSummaryResult = $("ai-summary-result");
+    els.aiSummaryCopy = $("ai-summary-copy");
+    els.ownerAiDraftModal = $("owner-ai-draft-modal");
+    els.ownerAiDraftSummary = $("owner-ai-draft-summary");
+    els.ownerAiDraftType = $("owner-ai-draft-type");
+    els.ownerAiDraftGenerate = $("owner-ai-draft-generate");
+    els.ownerAiDraftStatus = $("owner-ai-draft-status");
+    els.ownerAiDraftResult = $("owner-ai-draft-result");
+    els.ownerAiDraftDismiss = $("owner-ai-draft-dismiss");
+    els.ownerAiDraftCopy = $("owner-ai-draft-copy");
     els.customerListView = $("customer-list-view");
     els.customerDetailView = $("customer-detail-view");
     els.customerSearch = $("customer-search");
@@ -2465,6 +2703,44 @@
         closeOwnerRescheduleModal();
       }
     });
+    if (els.aiSummaryGenerate) {
+      els.aiSummaryGenerate.addEventListener("click", function () {
+        handleAiSummaryGenerate().catch(function (e) {
+          setAiStatus(els.aiSummaryStatus, e.message || "AI 產生失敗", true);
+        });
+      });
+    }
+    if (els.aiSummaryCopy) {
+      els.aiSummaryCopy.addEventListener("click", function () {
+        handleAiSummaryCopy().catch(function (e) {
+          setAiStatus(els.aiSummaryStatus, e.message || "複製失敗", true);
+        });
+      });
+    }
+    if (els.ownerAiDraftGenerate) {
+      els.ownerAiDraftGenerate.addEventListener("click", function () {
+        handleOwnerAiDraftGenerate().catch(function (e) {
+          setAiStatus(els.ownerAiDraftStatus, e.message || "AI 產生失敗", true);
+        });
+      });
+    }
+    if (els.ownerAiDraftCopy) {
+      els.ownerAiDraftCopy.addEventListener("click", function () {
+        handleOwnerAiDraftCopy().catch(function (e) {
+          setAiStatus(els.ownerAiDraftStatus, e.message || "複製失敗", true);
+        });
+      });
+    }
+    if (els.ownerAiDraftDismiss) {
+      els.ownerAiDraftDismiss.addEventListener("click", closeOwnerAiDraftModal);
+    }
+    if (els.ownerAiDraftModal) {
+      els.ownerAiDraftModal.addEventListener("click", function (event) {
+        if (event.target === els.ownerAiDraftModal) {
+          closeOwnerAiDraftModal();
+        }
+      });
+    }
     if (els.photoLightboxClose) {
       els.photoLightboxClose.addEventListener("click", closePhotoLightbox);
     }
@@ -2563,6 +2839,7 @@
       }
 
       await loadSettings();
+      await refreshAiCapability();
       var today = getTodayIso();
       await loadMonthBookings(getCurrentMonthIso(), today);
       await loadServices();

@@ -2515,6 +2515,83 @@ export async function getOwnerCustomerBookings(env, userId) {
   };
 }
 
+/**
+ * Owner AI 當日摘要：只 SELECT 時間／服務／狀態，不 JOIN 客戶敏感欄位。
+ * 回傳給 AI 的 bookings 不含姓名、電話、ID、備註、照片。
+ */
+export async function listOwnerAiDailySummaryItems(env, date) {
+  ensureD1Env(env);
+  var day = validateBookingDateParam(date);
+  var startUtc = taipeiDateToUtcIso(day);
+  var endUtc = new Date(new Date(startUtc).getTime() + 24 * 60 * 60 * 1000).toISOString();
+
+  var result = await env.DB.prepare(
+    "SELECT b.start_at, b.end_at, b.status, bi.service_name_snapshot " +
+    "FROM bookings b " +
+    "LEFT JOIN booking_items bi ON bi.id = (" +
+    "SELECT bi2.id FROM booking_items bi2 " +
+    "WHERE bi2.tenant_id = b.tenant_id AND bi2.booking_id = b.id " +
+    "ORDER BY bi2.sort_order ASC, bi2.created_at ASC LIMIT 1" +
+    ") " +
+    "WHERE b.tenant_id = ?1 AND b.status IN " + CUSTOMER_VISIBLE_STATUS_SQL + " " +
+    "AND b.start_at >= ?2 AND b.start_at < ?3 " +
+    "ORDER BY b.start_at ASC"
+  ).bind(env.TENANT_ID, startUtc, endUtc).all();
+
+  var bookings = (result.results || []).map(function (row) {
+    var startMs = Date.parse(String(row.start_at || ""));
+    var endMs = Date.parse(String(row.end_at || ""));
+    var durationMinutes = 0;
+    if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs) {
+      durationMinutes = Math.round((endMs - startMs) / 60000);
+    }
+    return {
+      startTime: utcIsoToTaipeiTime(row.start_at),
+      durationMinutes: durationMinutes,
+      serviceName: String(row.service_name_snapshot || "服務"),
+      status: bookingStatusToLegacyApiLabel(row.status)
+    };
+  });
+
+  return { date: day, bookings: bookings };
+}
+
+/**
+ * Owner AI 訊息草稿上下文：不 SELECT 客戶姓名／電話／任何身分欄位。
+ * 僅回傳服務與時段，供編排層組固定問候「您好」的白名單 payload。
+ */
+export async function getOwnerAiMessageDraftContext(env, bookingId) {
+  ensureD1Env(env);
+  var id = String(bookingId || "").trim();
+  if (!id) {
+    throw makeError("缺少 bookingId", 400);
+  }
+
+  var row = await env.DB.prepare(
+    "SELECT b.start_at, b.end_at, b.status, bi.service_name_snapshot " +
+    "FROM bookings b " +
+    "LEFT JOIN booking_items bi ON bi.id = (" +
+    "SELECT bi2.id FROM booking_items bi2 " +
+    "WHERE bi2.tenant_id = b.tenant_id AND bi2.booking_id = b.id " +
+    "ORDER BY bi2.sort_order ASC, bi2.created_at ASC LIMIT 1" +
+    ") " +
+    "WHERE b.tenant_id = ?1 AND b.id = ?2 " +
+    "AND b.status IN " + CUSTOMER_VISIBLE_STATUS_SQL + " " +
+    "LIMIT 1"
+  ).bind(env.TENANT_ID, id).first();
+
+  if (!row) {
+    throw makeError("找不到此預約", 404);
+  }
+
+  return {
+    date: utcIsoToTaipeiDate(row.start_at),
+    time: utcIsoToTaipeiTime(row.start_at),
+    serviceName: String(row.service_name_snapshot || "服務"),
+    status: bookingStatusToLegacyApiLabel(row.status)
+  };
+}
+
 // ── 客戶 CSV 匯入（實作在 d1-customer-import.js，經此 re-export
 //    讓 data-repository selector 視為 D1 repository 的一部分） ──
 export {

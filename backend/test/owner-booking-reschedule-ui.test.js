@@ -318,7 +318,8 @@ test("HTML：時間欄為 select，無 time input step", function () {
   assert.ok(!htmlCode.includes('id="owner-reschedule-time" step='));
   assert.ok(!htmlCode.includes('type="time" id="owner-reschedule-time"'));
   assert.ok(htmlCode.includes("請先選擇日期"));
-  assert.ok(htmlCode.includes("v=20260721003"));
+  assert.ok(htmlCode.includes("v=20260722003"));
+  assert.ok(!htmlCode.includes("v=20260722002"));
   assert.ok(!htmlCode.includes("v=20260721002"));
 });
 

@@ -44,6 +44,11 @@ import {
   rescheduleBookingByOwner,
   listOwnerRescheduleSlots
 } from "./data-repository.js";
+import {
+  generateOwnerDailySummaryDraft,
+  generateOwnerMessageDraft
+} from "./owner-ai.js";
+import { getOwnerAiCapability } from "./ai-provider.js";
 import { requireOwnerFromRequest } from "./owner-auth.js";
 import { requireCustomerFromRequest } from "./liff-verify.js";
 import { isKnownBookingStatus } from "./booking-state-machine.js";
@@ -418,6 +423,37 @@ export default {
         }, corsHeaders);
       }
 
+      // Owner AI：能力查詢（唯讀、不呼叫 provider）／摘要／草稿（零寫入）
+      if (url.pathname === "/api/owner/ai/capability" && request.method === "GET") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        return jsonResponse(getOwnerAiCapability(env), corsHeaders);
+      }
+
+      if (url.pathname === "/api/owner/ai/daily-summary" && request.method === "POST") {
+        ensureDataEnv(env);
+        var summaryOwnerId = await requireOwnerFromRequest(request, env);
+        var summaryBody = await readJson(request);
+        var summaryResult = await generateOwnerDailySummaryDraft(
+          env,
+          summaryBody,
+          summaryOwnerId
+        );
+        return jsonResponse(summaryResult, corsHeaders);
+      }
+
+      if (url.pathname === "/api/owner/ai/message-draft" && request.method === "POST") {
+        ensureDataEnv(env);
+        var draftOwnerId = await requireOwnerFromRequest(request, env);
+        var draftBody = await readJson(request);
+        var draftResult = await generateOwnerMessageDraft(
+          env,
+          draftBody,
+          draftOwnerId
+        );
+        return jsonResponse(draftResult, corsHeaders);
+      }
+
       if (url.pathname === "/api/owner/services" && request.method === "GET") {
         ensureDataEnv(env);
         await requireOwnerFromRequest(request, env);
@@ -695,7 +731,12 @@ export default {
     } catch (error) {
       var status = error.status || 500;
       var message = error.message || "伺服器發生錯誤";
-      return jsonResponse({ ok: false, message: message }, corsHeaders, status);
+      return jsonResponse(
+        { ok: false, message: message },
+        corsHeaders,
+        status,
+        error.headers || null
+      );
     }
   }
 };
@@ -708,9 +749,15 @@ async function readJson(request) {
   }
 }
 
-function jsonResponse(data, corsHeaders, status) {
+function jsonResponse(data, corsHeaders, status, extraHeaders) {
+  var headers = Object.assign({ "Content-Type": "application/json" }, corsHeaders);
+  if (extraHeaders && typeof extraHeaders === "object") {
+    Object.keys(extraHeaders).forEach(function (key) {
+      headers[key] = extraHeaders[key];
+    });
+  }
   return new Response(JSON.stringify(data), {
     status: status || 200,
-    headers: Object.assign({ "Content-Type": "application/json" }, corsHeaders)
+    headers: headers
   });
 }

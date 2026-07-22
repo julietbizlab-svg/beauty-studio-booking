@@ -467,6 +467,7 @@ textarea { min-height: 72px; resize: vertical; }
 
 .booking-card-actions .btn-transition-booking,
 .booking-card-actions .btn-reschedule-booking,
+.booking-card-actions .btn-ai-draft,
 .booking-card-actions .btn-cancel-booking {
   margin-top: 0;
   width: 100%;
@@ -1205,3 +1206,50 @@ textarea { min-height: 72px; resize: vertical; }
   margin-bottom: 0;
 }
 
+/* Owner AI 草稿（當日摘要／訊息草稿）— 唯讀產出，不自動傳送／儲存 */
+.ai-summary-card {
+  margin-bottom: 16px;
+}
+
+.ai-card-title {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+.ai-disclaimer {
+  color: var(--muted);
+}
+
+.ai-status {
+  min-height: 1.2em;
+  margin: 8px 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.ai-status.is-error {
+  color: var(--danger);
+}
+
+.ai-result-label {
+  display: block;
+  margin-top: 8px;
+}
+
+.ai-result {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  margin: 6px 0 10px;
+  resize: vertical;
+  font-family: inherit;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  background: #faf7f7;
+}
+
+#ai-summary-copy,
+#owner-ai-draft-copy {
+  margin-bottom: 4px;
+}
