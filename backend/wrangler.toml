@@ -26,17 +26,17 @@ DATA_BACKEND = "d1"
 
 [[env.v2-test.d1_databases]]
 binding = "DB"
-database_name = "beauty-studio-booking-v2"
-database_id = "58e5f639-221d-4b7e-bc74-27dc83664d43"
+database_name = "beauty-studio-booking-v2-test"
+database_id = "d9dbde5c-290a-40f6-81a2-7169ab2aed5f"
 migrations_dir = "migrations"
 
-# 前後對比照片私有儲存（設定草稿）：
-# bucket 尚未建立，deploy 前需先以 wrangler r2 bucket create 建立，
-# 並保持 private（不開啟 public access、不設 custom domain）。
+# 前後對比照片私有測試儲存：
+# 使用既有空白測試 bucket，並保持 private
+#（不開啟 public access、不設 custom domain）。
 # 只綁在 env.v2-test，不影響頂層 Demo v1／Notion Worker。
 [[env.v2-test.r2_buckets]]
 binding = "PHOTO_BUCKET"
-bucket_name = "beauty-studio-photos-v2"
+bucket_name = "beauty-studio-photos-v2-test"
 
 # 正式環境設定草稿（僅本機設定，不新增 production deploy script、不執行 deploy）：
 # 綁定既有 D1 beauty-studio-booking-v2 與既有 R2 beauty-studio-photos-v2，
