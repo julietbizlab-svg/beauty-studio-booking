@@ -16,7 +16,9 @@
     slots: [],
     bookings: [],
     calendarMonth: "",
-    monthDays: {}
+    monthDays: {},
+    serverProfile: null,
+    profileLocked: false
   };
 
   var els = {};
@@ -63,6 +65,18 @@
     } else {
       els.announcement.style.display = "none";
     }
+    renderBookingNotice(settings);
+  }
+
+  function renderBookingNotice(settings) {
+    if (!els.bookingNoticeHint) return;
+    var days = settings && settings.bookingMinNoticeDays != null
+      ? Number(settings.bookingMinNoticeDays) : 1;
+    if (!Number.isInteger(days) || days < 0) {
+      days = 1;
+    }
+    els.bookingNoticeHint.textContent = "本工作室需至少提前 " + days + " 天預約。";
+    els.bookingNoticeHint.hidden = !state.selectedService;
   }
 
   function formatDateZh(iso) {
@@ -137,6 +151,9 @@
     }
     if (els.calendarPlaceholder) {
       els.calendarPlaceholder.style.display = hasService ? "none" : "block";
+    }
+    if (els.bookingNoticeHint) {
+      els.bookingNoticeHint.hidden = !hasService;
     }
   }
 
@@ -407,21 +424,41 @@
     var sorted = sortBookingsForDisplay(state.bookings);
     container.innerHTML = sorted.map(function (b) {
       var isConfirmed = b.status === "已確認";
-      var statusClass = isConfirmed ? "confirmed" : "cancelled";
-      var cardClass = isConfirmed ? "card booking-card booking-card--confirmed" : "card booking-card booking-card--cancelled";
-      var cancelBtn = isConfirmed
+      var isNoShow = b.status === "未到" ||
+        b.internalStatus === "no_show" ||
+        b.publicStatus === "no_show";
+      var statusClass = isConfirmed
+        ? "confirmed"
+        : (isNoShow ? "noshow" : "cancelled");
+      var cardClass = isConfirmed
+        ? "card booking-card booking-card--confirmed"
+        : (isNoShow
+          ? "card booking-card booking-card--noshow"
+          : "card booking-card booking-card--cancelled");
+      var canCancel = isConfirmed && b.canCancel === true;
+      var cancelBtn = canCancel
         ? '<button type="button" class="btn btn-danger" data-cancel="' + b.id + '">取消預約</button>'
+        : "";
+      var deadlineLine = canCancel && b.cancellationDeadlineDisplay
+        ? '<p class="booking-cancel-deadline">取消截止：' +
+          escapeHtml(b.cancellationDeadlineDisplay) + "（台北時間）</p>"
+        : "";
+      var blockedLine = isConfirmed && !canCancel && b.cancelBlockedReason
+        ? '<p class="booking-cancel-blocked">' + escapeHtml(b.cancelBlockedReason) + "</p>"
         : "";
       var reasonLine = b.status === "已取消" && b.cancelReason
         ? '<p class="booking-cancel-reason">取消原因：' + escapeHtml(b.cancelReason) + "</p>"
         : (b.status === "已取消" && b.canceledBy === "業主"
           ? '<p class="booking-cancel-reason">此預約由業主取消</p>'
           : "");
+      var displayStatus = b.statusLabel || b.status;
       return (
         '<div class="' + cardClass + '">' +
           '<h3>' + escapeHtml(b.serviceName) + '</h3>' +
           '<p>' + formatDateZh(b.date) + ' ' + escapeHtml(b.time) + '</p>' +
-          '<span class="booking-status ' + statusClass + '">' + escapeHtml(b.status) + '</span>' +
+          '<span class="booking-status ' + statusClass + '">' + escapeHtml(displayStatus) + '</span>' +
+          deadlineLine +
+          blockedLine +
           reasonLine +
           cancelBtn +
         '</div>'
@@ -485,6 +522,47 @@
     els.customerPhone.value = saved.phone || "";
     els.customerBirthday.value = saved.birthday || "";
     updateBookButton();
+  }
+
+  function setProfileFieldsLocked(locked) {
+    state.profileLocked = locked;
+    if (els.customerName) {
+      els.customerName.readOnly = locked;
+      els.customerName.classList.toggle("input-locked", locked);
+    }
+    if (els.customerPhone) {
+      els.customerPhone.readOnly = locked;
+      els.customerPhone.classList.toggle("input-locked", locked);
+    }
+    if (els.customerBirthday) {
+      // date input 的 readOnly 在多數瀏覽器無效，改用 disabled 鎖定
+      els.customerBirthday.disabled = locked;
+      els.customerBirthday.classList.toggle("input-locked", locked);
+    }
+    if (els.profileLockedHint) {
+      els.profileLockedHint.hidden = !locked;
+    }
+  }
+
+  function applyServerProfile(profile) {
+    state.serverProfile = profile || null;
+    if (!els.customerName || !els.customerPhone || !els.customerBirthday) return;
+    if (profile) {
+      // 伺服器資料為準，不得以 localStorage 值覆蓋
+      els.customerName.value = profile.customerName || "";
+      els.customerPhone.value = profile.phone || "";
+      els.customerBirthday.value = profile.birthday || "";
+      setProfileFieldsLocked(true);
+    } else {
+      setProfileFieldsLocked(false);
+      fillCustomerProfileForm();
+    }
+    updateBookButton();
+  }
+
+  async function loadServerProfile() {
+    var result = await window.beautyApi.getCustomerMe();
+    applyServerProfile(result && result.exists ? result.customer : null);
   }
 
   function escapeHtml(str) {
@@ -616,7 +694,7 @@
   }
 
   async function loadBookings() {
-    state.bookings = await window.beautyApi.getMyBookings(state.user.userId);
+    state.bookings = await window.beautyApi.getMyBookings();
     renderBookings();
   }
 
@@ -638,7 +716,6 @@
     var bookedTime = state.selectedTime;
     try {
       await window.beautyApi.createBooking({
-        userId: state.user.userId,
         displayName: state.user.displayName,
         customerName: profile.customerName,
         phone: profile.phone,
@@ -647,7 +724,9 @@
         date: bookedDate,
         time: bookedTime
       });
-      saveCustomerProfileLocal(profile);
+      if (!state.profileLocked) {
+        saveCustomerProfileLocal(profile);
+      }
       setStatus("");
       state.selectedTime = "";
       try {
@@ -661,6 +740,10 @@
         date: bookedDate,
         time: bookedTime
       });
+      // 第一次預約成功後改以伺服器 profile 為準並鎖定姓名／電話
+      try {
+        await loadServerProfile();
+      } catch (ignore) {}
       await loadMonthCalendar(state.calendarMonth || getCurrentMonthIso());
       await loadSlots();
       await loadBookings();
@@ -722,8 +805,20 @@
 
   function openCancelConfirmModal(bookingId) {
     if (!els.cancelConfirmModal || !bookingId) return;
+    var booking = (state.bookings || []).find(function (b) { return b.id === bookingId; });
+    if (booking && booking.canCancel !== true) {
+      setStatus("error", booking.cancelBlockedReason || "此預約無法取消");
+      return;
+    }
     cancelModalState.bookingId = bookingId;
     cancelModalState.submitting = false;
+    if (els.cancelConfirmBody) {
+      var base = "取消後這個時段會釋出，若要重新預約需重新選擇服務與時段。";
+      if (booking && booking.cancellationDeadlineDisplay) {
+        base += " 取消截止時間：" + booking.cancellationDeadlineDisplay + "（台北時間）。";
+      }
+      els.cancelConfirmBody.textContent = base;
+    }
     if (els.cancelConfirmYes) {
       els.cancelConfirmYes.disabled = false;
       els.cancelConfirmYes.textContent = "確認取消";
@@ -757,7 +852,7 @@
     if (els.cancelConfirmNo) els.cancelConfirmNo.disabled = true;
     setStatus("", "取消中…");
     try {
-      await window.beautyApi.cancelBooking(state.user.userId, bookingId);
+      await window.beautyApi.cancelBooking(bookingId);
       hideCancelConfirmModal();
       setStatus("success", "已取消預約");
       await loadBookings();
@@ -776,6 +871,134 @@
       if (els.cancelConfirmNo) els.cancelConfirmNo.disabled = false;
       setStatus("error", error.message);
     }
+  }
+
+  // ──────────────── LINE 認領邀請（一次性 token） ────────────────
+  //
+  // 安全規則：claim token 只保存在此記憶體狀態，不寫入
+  // localStorage／sessionStorage／console，也不帶到其他請求；
+  // 只有 v2 設定（BEAUTY_CONFIG.CLAIM_ENABLED）才處理 claim 參數，
+  // Demo v1 hostname 完全不啟動認領流程。
+  //
+  // token 一律放在 URL fragment（#claim=）：fragment 不會送到伺服器，
+  // 不進 Pages 存取紀錄，也不會出現在 Referer。
+  // 刻意不支援 ?claim= query 參數，避免保留洩漏路徑。
+
+  var claimState = { token: "", busy: false, done: false };
+
+  function isClaimEnabled() {
+    var config = window.BEAUTY_CONFIG || {};
+    return config.CLAIM_ENABLED === true;
+  }
+
+  function readClaimTokenFromUrl() {
+    var hash = String(window.location.hash || "");
+    var match = /[#&]claim=([^&]+)/.exec(hash);
+    if (!match) return "";
+    try {
+      return decodeURIComponent(match[1]);
+    } catch (ignore) {
+      return "";
+    }
+  }
+
+  /**
+   * 以 replaceState 移除 fragment 中的 claim token，不留在瀏覽紀錄；
+   * 保留 pathname 與既有非 claim 的 query parameters 及其他 hash 內容。
+   */
+  function clearClaimTokenFromUrl() {
+    if (!window.history || !window.history.replaceState) return;
+    var hash = String(window.location.hash || "")
+      .replace(/([#&])claim=[^&]*&?/, "$1")
+      .replace(/[#&]$/, "");
+    window.history.replaceState(
+      null,
+      "",
+      window.location.pathname + (window.location.search || "") + hash
+    );
+  }
+
+  function hideClaimModal() {
+    if (els.claimModal) {
+      els.claimModal.classList.add("hidden");
+    }
+  }
+
+  function showClaimModal() {
+    if (!els.claimModal) return;
+    if (els.claimBody) {
+      els.claimBody.innerHTML =
+        "<p>店家邀請您將這個 LINE 帳號與您的客戶資料完成綁定。</p>" +
+        '<p class="claim-hint">綁定後即可直接查看與預約，無需重新填寫資料。</p>';
+    }
+    if (els.claimConfirmBtn) {
+      els.claimConfirmBtn.hidden = false;
+      els.claimConfirmBtn.disabled = false;
+      els.claimConfirmBtn.textContent = "確認綁定";
+    }
+    if (els.claimDismissBtn) {
+      els.claimDismissBtn.disabled = false;
+      els.claimDismissBtn.textContent = "先不要";
+    }
+    els.claimModal.classList.remove("hidden");
+  }
+
+  function showClaimError(message) {
+    if (els.claimBody) {
+      els.claimBody.innerHTML =
+        '<p class="claim-error">' + escapeHtml(message || "邀請連結無效或已失效") + "</p>";
+    }
+    if (els.claimConfirmBtn) {
+      els.claimConfirmBtn.hidden = true;
+    }
+    if (els.claimDismissBtn) {
+      els.claimDismissBtn.disabled = false;
+      els.claimDismissBtn.textContent = "關閉";
+    }
+  }
+
+  function initClaimFlow() {
+    if (!isClaimEnabled()) return;
+    var token = readClaimTokenFromUrl();
+    if (!token) return;
+    claimState.token = token;
+    showClaimModal();
+  }
+
+  async function confirmClaimInvite() {
+    if (!claimState.token || claimState.busy || claimState.done) return;
+    claimState.busy = true;
+    if (els.claimConfirmBtn) {
+      els.claimConfirmBtn.disabled = true;
+      els.claimConfirmBtn.textContent = "綁定中…";
+    }
+    if (els.claimDismissBtn) {
+      els.claimDismissBtn.disabled = true;
+    }
+    try {
+      await window.beautyApi.claimInvite(claimState.token);
+      claimState.done = true;
+      claimState.token = "";
+      clearClaimTokenFromUrl();
+      hideClaimModal();
+      setStatus("success", "已完成 LINE 綁定，資料已為您帶入");
+      try {
+        await loadServerProfile();
+        await loadBookings();
+      } catch (ignore) {}
+    } catch (error) {
+      claimState.busy = false;
+      showClaimError(error && error.message);
+      return;
+    }
+    claimState.busy = false;
+  }
+
+  function dismissClaimModal() {
+    if (claimState.busy) return;
+    claimState.token = "";
+    clearClaimTokenFromUrl();
+    hideClaimModal();
   }
 
   function switchTab(tabName) {
@@ -844,6 +1067,14 @@
         }
       });
     }
+    if (els.claimConfirmBtn) {
+      els.claimConfirmBtn.addEventListener("click", function () {
+        confirmClaimInvite().catch(function (e) { setStatus("error", e.message); });
+      });
+    }
+    if (els.claimDismissBtn) {
+      els.claimDismissBtn.addEventListener("click", dismissClaimModal);
+    }
   }
 
   function cacheElements() {
@@ -852,6 +1083,7 @@
     els.announcement = $("announcement");
     els.serviceList = $("service-list");
     els.calendarSection = $("calendar-section");
+    els.bookingNoticeHint = $("booking-notice-hint");
     els.calendarPlaceholder = $("calendar-placeholder");
     els.calendarGrid = $("calendar-grid");
     els.calendarMonthLabel = $("calendar-month-label");
@@ -863,6 +1095,7 @@
     els.customerName = $("customer-name");
     els.customerPhone = $("customer-phone");
     els.customerBirthday = $("customer-birthday");
+    els.profileLockedHint = $("profile-locked-hint");
     els.bookBtn = $("book-btn");
     els.bookingList = $("booking-list");
     els.depositTransferBox = $("deposit-transfer-box");
@@ -878,10 +1111,15 @@
     els.bookingFailBody = $("booking-fail-body");
     els.bookingFailAck = $("booking-fail-ack");
     els.cancelConfirmModal = $("cancel-confirm-modal");
+    els.cancelConfirmBody = $("cancel-confirm-body");
     els.cancelConfirmYes = $("cancel-confirm-yes");
     els.cancelConfirmNo = $("cancel-confirm-no");
     els.userName = $("user-name");
     els.userAvatar = $("user-avatar");
+    els.claimModal = $("claim-modal");
+    els.claimBody = $("claim-body");
+    els.claimConfirmBtn = $("claim-confirm-btn");
+    els.claimDismissBtn = $("claim-dismiss-btn");
   }
 
   async function boot() {
@@ -910,8 +1148,11 @@
       setStatus("", "載入中…");
       await loadSettings();
       await loadServices();
+      await loadServerProfile();
       await loadBookings();
       setStatus("");
+      // LIFF 與資料就緒後才處理一次性認領邀請（僅 v2 設定啟用）
+      initClaimFlow();
     } catch (error) {
       setStatus("error", error.message || "發生未知錯誤");
     }

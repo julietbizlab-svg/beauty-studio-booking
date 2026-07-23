@@ -2,7 +2,8 @@
  * 美業工作室 — Cloudflare Workers API
  */
 import {
-  ensureNotionEnv,
+  ensureDataEnv,
+  getDataBackendName,
   listServices,
   createService,
   updateService,
@@ -21,27 +22,58 @@ import {
   getSettings,
   updateSettings,
   getServiceById,
-  getServiceDurationMap
-} from "./notion.js";
+  getServiceDurationMap,
+  getCustomerProfileByUserId,
+  updateCustomerByOwner,
+  getOwnerCustomerById,
+  updateCustomerByOwnerById,
+  previewCustomerImport,
+  commitCustomerImport,
+  createCustomerClaimInvite,
+  getCustomerClaimInvite,
+  revokeCustomerClaimInvite,
+  claimCustomerInvite,
+  listCustomerPhotoSets,
+  createCustomerPhotoSet,
+  updateCustomerPhotoSet,
+  deleteCustomerPhotoSet,
+  uploadCustomerComparisonPhoto,
+  getCustomerPhotoContent,
+  deleteCustomerComparisonPhoto,
+  applyOwnerGeneralBookingStatusTransition,
+  rescheduleBookingByOwner,
+  listOwnerRescheduleSlots
+} from "./data-repository.js";
+import {
+  generateOwnerDailySummaryDraft,
+  generateOwnerMessageDraft
+} from "./owner-ai.js";
+import { getOwnerAiCapability } from "./ai-provider.js";
 import { requireOwnerFromRequest } from "./owner-auth.js";
+import { requireCustomerFromRequest } from "./liff-verify.js";
+import { isKnownBookingStatus } from "./booking-state-machine.js";
 import {
   weekdayLabelFromIndex,
   buildAllSlotTimesForDay,
   computeDayAvailability,
   buildMonthAvailability,
   filterAvailableSlots,
+  filterSlotsByBookingNotice,
   buildBusyIntervalsFromBookings,
   CONSERVATIVE_BUSY_DURATION_MINUTES,
   getNowMinutesInTaipei
 } from "./slots.js";
+import { parseNoticeDays, DEFAULT_NOTICE_DAYS } from "./booking-notice-policy.js";
 import { getTaipeiDateString, getTaipeiWeekdayIndex } from "./owner-auth.js";
+
+var MAX_PHOTO_UPLOAD_BYTES = 5 * 1024 * 1024;
 
 export default {
   async fetch(request, env) {
     var url = new URL(request.url);
     var corsHeaders = {
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type, Authorization"
     };
 
@@ -54,24 +86,25 @@ export default {
         return jsonResponse({
           ok: true,
           studio: env.STUDIO_NAME || "美業工作室",
-          notion: Boolean(env.NOTION_TOKEN)
+          notion: Boolean(env.NOTION_TOKEN),
+          dataBackend: getDataBackendName(env)
         }, corsHeaders);
       }
 
       if (url.pathname === "/api/settings" && request.method === "GET") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         var settings = await getSettings(env);
         return jsonResponse(settings, corsHeaders);
       }
 
       if (url.pathname === "/api/services" && request.method === "GET") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         var services = await listServices(env, true);
         return jsonResponse(services, corsHeaders);
       }
 
       if (url.pathname === "/api/slots/month" && request.method === "GET") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         var monthParam = url.searchParams.get("month");
         var monthServiceId = url.searchParams.get("serviceId");
 
@@ -108,6 +141,12 @@ export default {
 
         var monthTodayStr = getTaipeiDateString();
         var monthNowMinutes = getNowMinutesInTaipei();
+        var monthNowUtc = new Date();
+        var monthSettings = await getSettings(env);
+        var monthMinNoticeDays = parseNoticeDays(
+          monthSettings.bookingMinNoticeDays,
+          DEFAULT_NOTICE_DAYS
+        );
         var monthDays = buildMonthAvailability(
           monthParam,
           monthWeeklySlots,
@@ -117,7 +156,9 @@ export default {
           monthNowMinutes,
           function (d) { return weekdayLabelFromIndex(getTaipeiWeekdayIndex(d)); },
           monthDurationMap,
-          monthFallbackBusy
+          monthFallbackBusy,
+          monthMinNoticeDays,
+          monthNowUtc
         );
 
         return jsonResponse({
@@ -125,12 +166,13 @@ export default {
           month: monthBookingsResult.range.month,
           serviceId: monthServiceId,
           durationMinutes: monthService.durationMinutes,
+          bookingMinNoticeDays: monthMinNoticeDays,
           days: monthDays
         }, corsHeaders);
       }
 
       if (url.pathname === "/api/slots" && request.method === "GET") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         var date = url.searchParams.get("date");
         var serviceId = url.searchParams.get("serviceId");
 
@@ -164,13 +206,21 @@ export default {
 
         var todayStr = getTaipeiDateString();
         var nowMinutes = getNowMinutesInTaipei();
+        var nowUtc = new Date();
+        var slotSettings = await getSettings(env);
+        var minNoticeDays = parseNoticeDays(
+          slotSettings.bookingMinNoticeDays,
+          DEFAULT_NOTICE_DAYS
+        );
         var daySummary = computeDayAvailability({
           date: date,
           todayStr: todayStr,
           nowMinutes: nowMinutes,
           daySlots: daySlots,
           durationMinutes: service.durationMinutes,
-          busyIntervals: busyIntervals
+          busyIntervals: busyIntervals,
+          minNoticeDays: minNoticeDays,
+          nowUtc: nowUtc
         });
 
         if (!daySlots.length) {
@@ -178,8 +228,9 @@ export default {
         }
 
         var allTimes = buildAllSlotTimesForDay(daySlots, service.durationMinutes);
+        var afterNotice = filterSlotsByBookingNotice(allTimes, date, minNoticeDays, nowUtc);
         var available = filterAvailableSlots(
-          allTimes,
+          afterNotice,
           service.durationMinutes,
           busyIntervals,
           date === todayStr ? todayStr : null,
@@ -190,38 +241,79 @@ export default {
           date: date,
           serviceId: serviceId,
           durationMinutes: service.durationMinutes,
+          bookingMinNoticeDays: minNoticeDays,
           slots: available,
           bookable: daySummary.bookable,
           reason: daySummary.reason
         }, corsHeaders);
       }
 
+      // 客人 API：一律以驗證後 token 的 sub 為 userId，
+      // body／query 中的 userId 一律忽略，不能覆蓋已驗證身分。
       if (url.pathname === "/api/bookings" && request.method === "POST") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
+        var bookCustomer = await requireCustomerFromRequest(request, env);
         var bookBody = await readJson(request);
-        var bookResult = await createBooking(env, bookBody);
+        // LINE 身分與 LINE profile metadata（暱稱、頭像）一律以
+        // requireCustomerFromRequest 驗證結果為唯一可信來源；
+        // client body 的同名欄位不可優先、不可進入 SQL bind。
+        var bookResult = await createBooking(
+          env,
+          Object.assign({}, bookBody, {
+            userId: bookCustomer.userId,
+            displayName: bookCustomer.name,
+            lineDisplayName: bookCustomer.name,
+            lineNickname: bookCustomer.name,
+            picture: bookCustomer.picture,
+            pictureUrl: bookCustomer.picture
+          })
+        );
         return jsonResponse(bookResult, corsHeaders);
       }
 
       if (url.pathname === "/api/bookings/me" && request.method === "GET") {
-        ensureNotionEnv(env);
-        var meUserId = url.searchParams.get("userId");
-        if (!meUserId) {
-          return jsonResponse({ ok: false, message: "缺少 userId" }, corsHeaders, 400);
-        }
-        var myBookings = await getUserBookings(env, meUserId);
+        ensureDataEnv(env);
+        var meCustomer = await requireCustomerFromRequest(request, env);
+        var myBookings = await getUserBookings(env, meCustomer.userId);
         return jsonResponse(myBookings, corsHeaders);
       }
 
       if (url.pathname === "/api/bookings/cancel" && request.method === "POST") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
+        var cancelCustomer = await requireCustomerFromRequest(request, env);
         var cancelBody = await readJson(request);
-        var cancelResult = await cancelBooking(env, cancelBody.userId, cancelBody.bookingId);
+        var cancelResult = await cancelBooking(env, cancelCustomer.userId, cancelBody.bookingId);
         return jsonResponse(cancelResult, corsHeaders);
       }
 
+      // 客戶一次性認領邀請：身分一律以驗證後 token 的 sub 為準，
+      // body 內任何 userId／lineUserId 一律忽略；原始 token 不落 log
+      if (url.pathname === "/api/customer/claim-invite" && request.method === "POST") {
+        ensureDataEnv(env);
+        var claimVerified = await requireCustomerFromRequest(request, env);
+        var claimBody = await readJson(request);
+        var claimResult = await claimCustomerInvite(env, {
+          claimToken: claimBody.claimToken,
+          lineUserId: claimVerified.userId,
+          displayName: claimVerified.name,
+          pictureUrl: claimVerified.picture
+        });
+        return jsonResponse(claimResult, corsHeaders);
+      }
+
+      if (url.pathname === "/api/customer/me" && request.method === "GET") {
+        ensureDataEnv(env);
+        var profileCustomer = await requireCustomerFromRequest(request, env);
+        var profile = await getCustomerProfileByUserId(env, profileCustomer.userId);
+        return jsonResponse({
+          ok: true,
+          exists: profile.exists,
+          customer: profile.customer
+        }, corsHeaders);
+      }
+
       if (url.pathname === "/api/owner/bookings/cancel" && request.method === "POST") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         await requireOwnerFromRequest(request, env);
         var ownerCancelBody = await readJson(request);
         var ownerCancelResult = await cancelBookingByOwner(
@@ -232,8 +324,85 @@ export default {
         return jsonResponse(ownerCancelResult, corsHeaders);
       }
 
+      var ownerBookingStatusMatch = url.pathname.match(
+        /^\/api\/owner\/bookings\/([^/]+)\/status$/
+      );
+      if (ownerBookingStatusMatch && request.method === "PATCH") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        if (!env.STAFF_ID) {
+          throw Object.assign(new Error("缺少 STAFF_ID 設定"), { status: 500 });
+        }
+        var ownerStatusBookingId = decodeURIComponent(ownerBookingStatusMatch[1]);
+        var ownerStatusBody = await readJson(request);
+        var ownerToStatus = ownerStatusBody.toStatus;
+        if (!ownerToStatus) {
+          return jsonResponse({ ok: false, message: "缺少 toStatus" }, corsHeaders, 400);
+        }
+        if (!isKnownBookingStatus(ownerToStatus)) {
+          return jsonResponse({ ok: false, message: "未知的目標狀態" }, corsHeaders, 400);
+        }
+        var ownerTransitionResult = await applyOwnerGeneralBookingStatusTransition(env, {
+          bookingId: ownerStatusBookingId,
+          toStatus: ownerToStatus,
+          actorId: env.STAFF_ID,
+          reasonCode: ownerStatusBody.reasonCode != null
+            ? String(ownerStatusBody.reasonCode)
+            : "",
+          note: ownerStatusBody.note != null ? String(ownerStatusBody.note) : ""
+        });
+        return jsonResponse(Object.assign({ ok: true }, ownerTransitionResult), corsHeaders);
+      }
+
+      var ownerBookingRescheduleMatch = url.pathname.match(
+        /^\/api\/owner\/bookings\/([^/]+)\/reschedule$/
+      );
+      if (ownerBookingRescheduleMatch && request.method === "POST") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var ownerRescheduleBookingId = decodeURIComponent(ownerBookingRescheduleMatch[1]);
+        var ownerRescheduleBody = await readJson(request);
+        // 合法 JSON null／array／primitive 不得讀 .date 造成 TypeError／500
+        if (
+          ownerRescheduleBody === null ||
+          typeof ownerRescheduleBody !== "object" ||
+          Array.isArray(ownerRescheduleBody)
+        ) {
+          return jsonResponse(
+            { ok: false, message: "請求格式錯誤，需為 JSON 物件" },
+            corsHeaders,
+            400
+          );
+        }
+        var ownerRescheduleResult = await rescheduleBookingByOwner(
+          env,
+          ownerRescheduleBookingId,
+          {
+            date: ownerRescheduleBody.date,
+            time: ownerRescheduleBody.time
+          }
+        );
+        return jsonResponse(ownerRescheduleResult, corsHeaders);
+      }
+
+      var ownerRescheduleSlotsMatch = url.pathname.match(
+        /^\/api\/owner\/bookings\/([^/]+)\/reschedule-slots$/
+      );
+      if (ownerRescheduleSlotsMatch && request.method === "GET") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var ownerSlotsBookingId = decodeURIComponent(ownerRescheduleSlotsMatch[1]);
+        var ownerSlotsDate = url.searchParams.get("date");
+        var ownerSlotsResult = await listOwnerRescheduleSlots(
+          env,
+          ownerSlotsBookingId,
+          ownerSlotsDate
+        );
+        return jsonResponse(ownerSlotsResult, corsHeaders);
+      }
+
       if (url.pathname === "/api/owner/bookings/month" && request.method === "GET") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         await requireOwnerFromRequest(request, env);
 
         var month = url.searchParams.get("month");
@@ -245,7 +414,7 @@ export default {
       }
 
       if (url.pathname === "/api/owner/today" && request.method === "GET") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         await requireOwnerFromRequest(request, env);
 
         var targetDate = url.searchParams.get("date") || getTaipeiDateString();
@@ -256,15 +425,46 @@ export default {
         }, corsHeaders);
       }
 
+      // Owner AI：能力查詢（唯讀、不呼叫 provider）／摘要／草稿（零寫入）
+      if (url.pathname === "/api/owner/ai/capability" && request.method === "GET") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        return jsonResponse(getOwnerAiCapability(env), corsHeaders);
+      }
+
+      if (url.pathname === "/api/owner/ai/daily-summary" && request.method === "POST") {
+        ensureDataEnv(env);
+        var summaryOwnerId = await requireOwnerFromRequest(request, env);
+        var summaryBody = await readJson(request);
+        var summaryResult = await generateOwnerDailySummaryDraft(
+          env,
+          summaryBody,
+          summaryOwnerId
+        );
+        return jsonResponse(summaryResult, corsHeaders);
+      }
+
+      if (url.pathname === "/api/owner/ai/message-draft" && request.method === "POST") {
+        ensureDataEnv(env);
+        var draftOwnerId = await requireOwnerFromRequest(request, env);
+        var draftBody = await readJson(request);
+        var draftResult = await generateOwnerMessageDraft(
+          env,
+          draftBody,
+          draftOwnerId
+        );
+        return jsonResponse(draftResult, corsHeaders);
+      }
+
       if (url.pathname === "/api/owner/services" && request.method === "GET") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         await requireOwnerFromRequest(request, env);
         var allServices = await listServices(env, false);
         return jsonResponse(allServices, corsHeaders);
       }
 
       if (url.pathname === "/api/owner/services" && request.method === "POST") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         var ownerCreateBody = await readJson(request);
         await requireOwnerFromRequest(request, env);
         var newService = await createService(env, ownerCreateBody);
@@ -273,7 +473,7 @@ export default {
 
       var servicePatchMatch = url.pathname.match(/^\/api\/owner\/services\/([^/]+)$/);
       if (servicePatchMatch && request.method === "PATCH") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         var ownerPatchBody = await readJson(request);
         await requireOwnerFromRequest(request, env);
         var patched = await updateService(env, servicePatchMatch[1], ownerPatchBody);
@@ -281,14 +481,14 @@ export default {
       }
 
       if (url.pathname === "/api/owner/slots" && request.method === "GET") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         await requireOwnerFromRequest(request, env);
         var currentSlots = await listWeeklySlots(env);
         return jsonResponse(currentSlots, corsHeaders);
       }
 
       if (url.pathname === "/api/owner/slots" && request.method === "POST") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         var slotsBody = await readJson(request);
         await requireOwnerFromRequest(request, env);
         var savedSlots = await replaceWeeklySlots(env, slotsBody.slots || []);
@@ -296,14 +496,14 @@ export default {
       }
 
       if (url.pathname === "/api/owner/settings" && request.method === "GET") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         await requireOwnerFromRequest(request, env);
         var ownerSettings = await getSettings(env);
         return jsonResponse(ownerSettings, corsHeaders);
       }
 
       if (url.pathname === "/api/owner/settings" && request.method === "PATCH") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         var settingsBody = await readJson(request);
         await requireOwnerFromRequest(request, env);
         var updatedSettings = await updateSettings(env, settingsBody);
@@ -311,15 +511,219 @@ export default {
       }
 
       if (url.pathname === "/api/owner/customers" && request.method === "GET") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         await requireOwnerFromRequest(request, env);
         var customerQuery = url.searchParams.get("q") || "";
         var customerList = await getOwnerCustomersFromBookings(env, customerQuery);
         return jsonResponse(customerList, corsHeaders);
       }
 
+      // 客戶 CSV 匯入：不 log CSV、canonicalString 或完整電話；
+      // 回應中的電話只出現在 maskedPreview 遮罩值
+      if (url.pathname === "/api/owner/customers/import/preview" && request.method === "POST") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var importPreviewBody = await readJson(request);
+        var importPreview = await previewCustomerImport(env, importPreviewBody);
+        return jsonResponse(importPreview, corsHeaders);
+      }
+
+      if (url.pathname === "/api/owner/customers/import/commit" && request.method === "POST") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var importCommitBody = await readJson(request);
+        var importCommit = await commitCustomerImport(env, importCommitBody);
+        return jsonResponse(importCommit, corsHeaders);
+      }
+
+      // 業主一次性認領邀請：POST 建立（僅該次回應含原始 token）、
+      // GET 查狀態（永不回 token）、DELETE 撤銷
+      var ownerClaimInviteMatch = url.pathname.match(
+        /^\/api\/owner\/customers\/by-id\/([^/]+)\/claim-invite$/
+      );
+      if (ownerClaimInviteMatch && request.method === "POST") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var createdInvite = await createCustomerClaimInvite(
+          env,
+          decodeURIComponent(ownerClaimInviteMatch[1])
+        );
+        return jsonResponse(createdInvite, corsHeaders);
+      }
+      if (ownerClaimInviteMatch && request.method === "GET") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var inviteStatus = await getCustomerClaimInvite(
+          env,
+          decodeURIComponent(ownerClaimInviteMatch[1])
+        );
+        return jsonResponse(inviteStatus, corsHeaders);
+      }
+      if (ownerClaimInviteMatch && request.method === "DELETE") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var revokedInvite = await revokeCustomerClaimInvite(
+          env,
+          decodeURIComponent(ownerClaimInviteMatch[1])
+        );
+        return jsonResponse(revokedInvite, corsHeaders);
+      }
+
+      // 前後對比照片（owner-only、D1-only）：
+      // 圖片 binary 走私有 R2，僅經 Worker 串流，不回公開 URL 或 object key
+      var ownerPhotoSetsMatch = url.pathname.match(
+        /^\/api\/owner\/customers\/by-id\/([^/]+)\/photo-sets$/
+      );
+      if (ownerPhotoSetsMatch && request.method === "GET") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var photoSetList = await listCustomerPhotoSets(
+          env,
+          decodeURIComponent(ownerPhotoSetsMatch[1])
+        );
+        return jsonResponse(photoSetList, corsHeaders);
+      }
+      if (ownerPhotoSetsMatch && request.method === "POST") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var createSetBody = await readJson(request);
+        var createdSet = await createCustomerPhotoSet(
+          env,
+          decodeURIComponent(ownerPhotoSetsMatch[1]),
+          createSetBody
+        );
+        return jsonResponse(createdSet, corsHeaders);
+      }
+
+      var ownerPhotoSetMatch = url.pathname.match(
+        /^\/api\/owner\/customers\/by-id\/([^/]+)\/photo-sets\/([^/]+)$/
+      );
+      if (ownerPhotoSetMatch && request.method === "PATCH") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var patchSetBody = await readJson(request);
+        var patchedSet = await updateCustomerPhotoSet(
+          env,
+          decodeURIComponent(ownerPhotoSetMatch[1]),
+          decodeURIComponent(ownerPhotoSetMatch[2]),
+          patchSetBody
+        );
+        return jsonResponse(patchedSet, corsHeaders);
+      }
+      if (ownerPhotoSetMatch && request.method === "DELETE") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var deletedSet = await deleteCustomerPhotoSet(
+          env,
+          decodeURIComponent(ownerPhotoSetMatch[1]),
+          decodeURIComponent(ownerPhotoSetMatch[2])
+        );
+        return jsonResponse(deletedSet, corsHeaders);
+      }
+
+      var ownerPhotoUploadMatch = url.pathname.match(
+        /^\/api\/owner\/customers\/by-id\/([^/]+)\/photo-sets\/([^/]+)\/photos\/([^/]+)$/
+      );
+      if (ownerPhotoUploadMatch && request.method === "PUT") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        // binary body：不經 JSON 解析；格式與大小由 repository 以
+        // magic bytes 獨立驗證，不信任 Content-Type
+        var uploadBytes = await readBinaryWithLimit(
+          request,
+          MAX_PHOTO_UPLOAD_BYTES,
+          "圖片超過 5 MB 上限，請重新壓縮後上傳"
+        );
+        var uploadedPhoto = await uploadCustomerComparisonPhoto(
+          env,
+          decodeURIComponent(ownerPhotoUploadMatch[1]),
+          decodeURIComponent(ownerPhotoUploadMatch[2]),
+          {
+            kind: decodeURIComponent(ownerPhotoUploadMatch[3]),
+            bytes: uploadBytes,
+            contentType: request.headers.get("Content-Type") || "",
+            width: url.searchParams.get("width"),
+            height: url.searchParams.get("height")
+          }
+        );
+        return jsonResponse(uploadedPhoto, corsHeaders);
+      }
+
+      var ownerPhotoContentMatch = url.pathname.match(
+        /^\/api\/owner\/customers\/by-id\/([^/]+)\/photos\/([^/]+)\/content$/
+      );
+      if (ownerPhotoContentMatch && request.method === "GET") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var photoContent = await getCustomerPhotoContent(
+          env,
+          decodeURIComponent(ownerPhotoContentMatch[1]),
+          decodeURIComponent(ownerPhotoContentMatch[2])
+        );
+        return new Response(photoContent.body, {
+          status: 200,
+          headers: Object.assign({}, corsHeaders, {
+            "Content-Type": photoContent.mimeType,
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, no-store"
+          })
+        });
+      }
+
+      var ownerPhotoMatch = url.pathname.match(
+        /^\/api\/owner\/customers\/by-id\/([^/]+)\/photos\/([^/]+)$/
+      );
+      if (ownerPhotoMatch && request.method === "DELETE") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var deletedPhoto = await deleteCustomerComparisonPhoto(
+          env,
+          decodeURIComponent(ownerPhotoMatch[1]),
+          decodeURIComponent(ownerPhotoMatch[2])
+        );
+        return jsonResponse(deletedPhoto, corsHeaders);
+      }
+
+      // customerId 版客戶詳情／更新：必須先於舊的 /:userId 動態比對，
+      // 支援未綁 LINE／無預約的匯入客戶
+      var ownerCustomerByIdMatch = url.pathname.match(/^\/api\/owner\/customers\/by-id\/([^/]+)$/);
+      if (ownerCustomerByIdMatch && request.method === "GET") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var customerByIdDetail = await getOwnerCustomerById(
+          env,
+          decodeURIComponent(ownerCustomerByIdMatch[1])
+        );
+        return jsonResponse(customerByIdDetail, corsHeaders);
+      }
+
+      if (ownerCustomerByIdMatch && request.method === "PATCH") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var customerByIdBody = await readJson(request);
+        var customerByIdUpdated = await updateCustomerByOwnerById(
+          env,
+          decodeURIComponent(ownerCustomerByIdMatch[1]),
+          customerByIdBody
+        );
+        return jsonResponse(customerByIdUpdated, corsHeaders);
+      }
+
+      var ownerCustomerPatchMatch = url.pathname.match(/^\/api\/owner\/customers\/([^/]+)$/);
+      if (ownerCustomerPatchMatch && request.method === "PATCH") {
+        ensureDataEnv(env);
+        await requireOwnerFromRequest(request, env);
+        var ownerCustomerBody = await readJson(request);
+        var updatedCustomer = await updateCustomerByOwner(
+          env,
+          decodeURIComponent(ownerCustomerPatchMatch[1]),
+          ownerCustomerBody
+        );
+        return jsonResponse(updatedCustomer, corsHeaders);
+      }
+
       if (url.pathname === "/api/owner/customer-bookings" && request.method === "GET") {
-        ensureNotionEnv(env);
+        ensureDataEnv(env);
         await requireOwnerFromRequest(request, env);
         var customerUserId = url.searchParams.get("userId");
         if (!customerUserId) {
@@ -333,7 +737,12 @@ export default {
     } catch (error) {
       var status = error.status || 500;
       var message = error.message || "伺服器發生錯誤";
-      return jsonResponse({ ok: false, message: message }, corsHeaders, status);
+      return jsonResponse(
+        { ok: false, message: message },
+        corsHeaders,
+        status,
+        error.headers || null
+      );
     }
   }
 };
@@ -346,9 +755,62 @@ async function readJson(request) {
   }
 }
 
-function jsonResponse(data, corsHeaders, status) {
+async function readBinaryWithLimit(request, maxBytes, tooLargeMessage) {
+  var contentLength = Number(request.headers.get("Content-Length"));
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw Object.assign(new Error(tooLargeMessage), { status: 413 });
+  }
+
+  if (!request.body || typeof request.body.getReader !== "function") {
+    var fallbackBytes = new Uint8Array(await request.arrayBuffer());
+    if (fallbackBytes.length > maxBytes) {
+      throw Object.assign(new Error(tooLargeMessage), { status: 413 });
+    }
+    return fallbackBytes;
+  }
+
+  var reader = request.body.getReader();
+  var chunks = [];
+  var totalBytes = 0;
+
+  while (true) {
+    var result = await reader.read();
+    if (result.done) {
+      break;
+    }
+    var chunk = result.value instanceof Uint8Array
+      ? result.value
+      : new Uint8Array(result.value || []);
+    totalBytes += chunk.length;
+    if (totalBytes > maxBytes) {
+      try {
+        await reader.cancel();
+      } catch (ignore) {
+        // 已超限；取消串流失敗不改變 413 結果。
+      }
+      throw Object.assign(new Error(tooLargeMessage), { status: 413 });
+    }
+    chunks.push(chunk);
+  }
+
+  var bytes = new Uint8Array(totalBytes);
+  var offset = 0;
+  chunks.forEach(function (chunk) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  });
+  return bytes;
+}
+
+function jsonResponse(data, corsHeaders, status, extraHeaders) {
+  var headers = Object.assign({ "Content-Type": "application/json" }, corsHeaders);
+  if (extraHeaders && typeof extraHeaders === "object") {
+    Object.keys(extraHeaders).forEach(function (key) {
+      headers[key] = extraHeaders[key];
+    });
+  }
   return new Response(JSON.stringify(data), {
     status: status || 200,
-    headers: Object.assign({ "Content-Type": "application/json" }, corsHeaders)
+    headers: headers
   });
 }

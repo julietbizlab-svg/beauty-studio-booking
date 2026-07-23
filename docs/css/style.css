@@ -417,6 +417,11 @@ input[type="date"] {
   color: var(--danger);
 }
 
+.booking-status.noshow {
+  background: #F3EDE7;
+  color: #8A6B4A;
+}
+
 .booking-card--confirmed {
   border-color: #D7EBD9;
   box-shadow: 0 1px 0 rgba(92, 158, 110, 0.08);
@@ -424,6 +429,12 @@ input[type="date"] {
 
 .booking-card--confirmed .booking-status.confirmed {
   margin-top: 8px;
+}
+
+.booking-card--noshow {
+  border-color: #E8DFD5;
+  background: #FBF8F5;
+  opacity: 0.92;
 }
 
 .booking-card--cancelled {
@@ -465,6 +476,23 @@ input[type="date"] {
   margin-bottom: 12px;
 }
 
+/* v2 專屬：預約四個步驟標題加強視覺層級（iPhone 驗收回饋）。
+   以 html.is-v2 scope（config.js 依 isV2Host 加 class），Demo v1 不受影響。 */
+html.is-v2 .step-hint {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text);
+  background: #FDF1F2;
+  border-left: 4px solid var(--primary);
+  border-radius: 0 8px 8px 0;
+  padding: 8px 12px;
+  margin: 0 0 12px;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .customer-profile-form {
   background: var(--card);
   border: 1px solid var(--border);
@@ -500,6 +528,19 @@ input[type="date"] {
   font-family: inherit;
   color: var(--text);
   background: #fff;
+}
+
+.customer-profile-form input.input-locked {
+  background: #f3efee;
+  color: var(--muted);
+  border-style: dashed;
+  cursor: not-allowed;
+}
+
+.profile-locked-hint {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin: 0 0 10px;
 }
 
 .empty {
@@ -554,6 +595,26 @@ input[type="date"] {
   margin: 8px 0 0;
   font-size: 0.85rem;
   color: var(--muted);
+}
+
+.booking-notice-hint {
+  margin: 8px 0 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.booking-cancel-deadline {
+  margin: 8px 0 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.booking-cancel-blocked {
+  margin: 8px 0 0;
+  font-size: 0.85rem;
+  color: var(--danger);
+  font-weight: 600;
 }
 
 .btn-secondary {
@@ -824,4 +885,26 @@ input[type="date"] {
   .cancel-confirm-card h2 {
     font-size: 1.3rem;
   }
+}
+
+/* LINE 認領邀請 */
+.claim-card h2 {
+  margin: 0 0 10px;
+  font-size: 1.3rem;
+}
+
+.claim-body p {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+  overflow-wrap: anywhere;
+}
+
+.claim-hint {
+  color: var(--muted, #7A758C);
+  font-size: 0.85rem;
+}
+
+.claim-error {
+  color: #C45C5C;
+  font-weight: 600;
 }

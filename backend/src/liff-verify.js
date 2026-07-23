@@ -68,3 +68,14 @@ export async function verifyLineIdToken(idToken, env) {
     picture: body.picture || ""
   };
 }
+
+/**
+ * 從 request 驗證客人身分（fail closed）。
+ * 真實 userId 一律取自驗證後 token 的 sub，
+ * 呼叫端不得再信任 body／query 中的 userId。
+ * @returns {Promise<{userId: string, name: string, picture: string}>}
+ */
+export async function requireCustomerFromRequest(request, env) {
+  var idToken = extractIdTokenFromRequest(request);
+  return verifyLineIdToken(idToken, env);
+}

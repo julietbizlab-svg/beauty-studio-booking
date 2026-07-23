@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
   <title>工作室管理</title>
-  <link rel="stylesheet" href="css/style.css?v=20260718001">
+  <link rel="stylesheet" href="css/style.css?v=20260722003">
 </head>
 <body>
   <div class="app">
@@ -37,22 +37,143 @@
       <div class="calendar-grid" id="calendar-grid"></div>
       <p class="booking-date-summary" id="booking-date-summary"></p>
       <button type="button" class="btn btn-small" id="refresh-today" style="margin-bottom:12px">重新整理</button>
+
+      <div class="card ai-summary-card hidden" id="ai-summary-card" hidden>
+        <h3 class="ai-card-title">AI 當日預約摘要</h3>
+        <p class="panel-hint ai-disclaimer">
+          AI 草稿僅供參考，業主須自行審核；系統不會自動傳送、不會儲存。
+        </p>
+        <div class="form-group">
+          <label for="ai-summary-date">摘要日期</label>
+          <input type="date" id="ai-summary-date">
+        </div>
+        <button type="button" class="btn btn-primary btn-small" id="ai-summary-generate">產生摘要草稿</button>
+        <p class="ai-status" id="ai-summary-status" role="status" aria-live="polite"></p>
+        <label class="ai-result-label" for="ai-summary-result">摘要草稿（唯讀）</label>
+        <textarea id="ai-summary-result" class="ai-result" rows="6" readonly placeholder="產生後會顯示於此"></textarea>
+        <button type="button" class="btn btn-small" id="ai-summary-copy" disabled>複製摘要</button>
+      </div>
+
       <div id="today-list"></div>
     </section>
 
     <!-- 客戶資料 -->
     <section class="panel" data-panel="customers">
       <div id="customer-list-view">
-        <p class="panel-hint">從預約紀錄整理客戶名單，可用姓名或電話搜尋。</p>
+        <p class="panel-hint">客戶名單包含預約與 CSV 匯入的客戶，可用姓名、電話或編號搜尋。</p>
         <div class="customer-search-row">
-          <input type="search" id="customer-search" placeholder="搜尋姓名或電話" enterkeyhint="search">
+          <input type="search" id="customer-search" placeholder="搜尋姓名、電話或編號" enterkeyhint="search">
           <button type="button" class="btn btn-small" id="customer-search-btn">搜尋</button>
         </div>
         <div id="customer-list"></div>
+
+        <div class="card import-card">
+          <h3 class="import-title">CSV 匯入客戶</h3>
+          <p class="panel-hint">選擇 CSV 檔案並設定欄位對應，先產生預覽再確認匯入。每批正式匯入最多 100 列（以伺服器驗證為準）。</p>
+          <div class="form-group">
+            <label for="import-file">CSV 檔案</label>
+            <input type="file" id="import-file" accept=".csv">
+          </div>
+          <div id="import-mapping" class="import-mapping hidden">
+            <h4 class="import-subtitle">欄位對應</h4>
+            <div class="form-group import-map-row">
+              <label for="import-map-name">姓名（必填）</label>
+              <select id="import-map-name"></select>
+            </div>
+            <div class="form-group import-map-row">
+              <label for="import-map-phone">電話（選填）</label>
+              <select id="import-map-phone"></select>
+            </div>
+            <div class="form-group import-map-row">
+              <label for="import-map-birthday">生日（選填）</label>
+              <select id="import-map-birthday"></select>
+            </div>
+            <div class="form-group import-map-row">
+              <label for="import-map-note">備註／特別事項（選填）</label>
+              <select id="import-map-note"></select>
+            </div>
+            <div class="form-group import-map-row">
+              <label for="import-map-customer_no">會員／客戶編號（選填）</label>
+              <select id="import-map-customer_no"></select>
+            </div>
+          </div>
+          <div class="import-actions">
+            <button type="button" class="btn btn-primary" id="import-preview-btn" disabled>產生預覽</button>
+            <button type="button" class="btn btn-primary" id="import-commit-btn" disabled>確認匯入</button>
+          </div>
+          <div id="import-summary" class="import-summary hidden" aria-live="polite"></div>
+          <div id="import-preview-list" class="import-preview-list"></div>
+          <div id="import-result" class="import-result hidden" role="status" aria-live="polite"></div>
+        </div>
       </div>
       <div id="customer-detail-view" class="hidden">
         <button type="button" class="btn btn-small" id="customer-back-btn">← 返回客戶名單</button>
         <div id="customer-detail-header" class="card customer-detail-header"></div>
+        <div class="card customer-edit-card">
+          <h3 class="customer-edit-title">編輯客戶資料</h3>
+          <div class="form-group">
+            <label for="customer-edit-name">姓名（必填）</label>
+            <input type="text" id="customer-edit-name" maxlength="40" placeholder="客戶真實姓名">
+          </div>
+          <div class="form-group">
+            <label for="customer-edit-phone">電話（選填）</label>
+            <input type="tel" id="customer-edit-phone" inputmode="tel" maxlength="20" placeholder="例：0912345678">
+          </div>
+          <div class="form-group">
+            <label for="customer-edit-birthday">生日（選填）</label>
+            <input type="date" id="customer-edit-birthday">
+          </div>
+          <div class="form-group">
+            <label for="customer-edit-note">客戶特別事項（僅業主可見，選填）</label>
+            <textarea id="customer-edit-note" rows="4" maxlength="2000"
+              placeholder="例：對精油過敏、偏好安靜服務"></textarea>
+            <p class="panel-hint" id="customer-edit-note-count">0 / 2000</p>
+          </div>
+          <button type="button" class="btn btn-primary" id="customer-edit-save">儲存客戶資料</button>
+        </div>
+        <div class="card claim-invite-card" id="claim-invite-card">
+          <h3 class="claim-invite-title">LINE 認領邀請</h3>
+          <p class="panel-hint">
+            邀請未綁定 LINE 的客戶掃描 QR Code 或開啟連結完成綁定。
+            邀請連結 24 小時內有效、只能使用一次。
+          </p>
+          <div id="claim-invite-status" class="claim-invite-status" aria-live="polite"></div>
+          <div class="claim-invite-actions">
+            <button type="button" class="btn btn-primary" id="claim-invite-create">建立邀請連結</button>
+            <button type="button" class="btn btn-danger" id="claim-invite-revoke" hidden>撤銷邀請</button>
+          </div>
+          <div id="claim-invite-result" class="claim-invite-result" hidden>
+            <p class="panel-hint">
+              為安全起見，邀請連結只會顯示這一次；離開此頁後無法再次取得，只能重新產生。
+            </p>
+            <label for="claim-invite-link">邀請連結</label>
+            <input type="text" id="claim-invite-link" class="claim-invite-link" readonly>
+            <button type="button" class="btn btn-small" id="claim-invite-copy">複製連結</button>
+            <div class="claim-invite-qr-wrap">
+              <canvas id="claim-invite-qr" width="0" height="0" aria-label="LINE 認領邀請 QR Code"></canvas>
+            </div>
+          </div>
+        </div>
+        <div class="card photo-sets-card" id="photo-sets-card">
+          <h3 class="photo-sets-title">前後對比照片</h3>
+          <p class="panel-hint">
+            照片僅供業主查看，不會提供公開網址。
+            上傳前會在您的裝置上重新處理，自動移除位置（GPS）等隱私資訊；
+            單張上限 5 MB。
+          </p>
+          <div class="photo-set-create">
+            <div class="form-group">
+              <label for="photo-set-title">標題／療程名稱（選填）</label>
+              <input type="text" id="photo-set-title" maxlength="100" placeholder="例：臉部護理第 3 次">
+            </div>
+            <div class="form-group">
+              <label for="photo-set-date">拍攝日期（選填）</label>
+              <input type="date" id="photo-set-date">
+            </div>
+            <button type="button" class="btn btn-primary" id="photo-set-create-btn">建立照片組</button>
+          </div>
+          <div id="photo-set-list" class="photo-set-list" aria-live="polite"></div>
+        </div>
         <h3 class="customer-history-title">歷史預約</h3>
         <div id="customer-booking-list"></div>
       </div>
@@ -112,8 +233,23 @@
         <textarea id="announcement" placeholder="顯示在客人端首頁的公告"></textarea>
       </div>
       <div class="form-group">
-        <label for="cancel-policy">取消規則</label>
+        <label for="cancel-policy">取消規則說明（顯示給客人）</label>
         <textarea id="cancel-policy" placeholder="例：預約日前 24 小時可免費取消"></textarea>
+      </div>
+
+      <div class="settings-section notice-settings">
+        <h3 class="settings-section-title">預約與取消時間限制</h3>
+        <p class="panel-hint">以下天數均以 24 小時為一日計算。「取消時間」修改後只套用新建立的預約，不影響既有預約的取消期限。</p>
+        <div class="form-group">
+          <label for="booking-min-notice-days">客戶最晚預約時間（天前）</label>
+          <input type="number" id="booking-min-notice-days" min="0" max="30" step="1" inputmode="numeric" placeholder="1">
+          <p class="field-hint">0 代表可預約尚未開始的當日時段；1 代表至少提前 1 天（24 小時）。</p>
+        </div>
+        <div class="form-group">
+          <label for="cancellation-min-notice-days">客戶最晚取消時間（天前）</label>
+          <input type="number" id="cancellation-min-notice-days" min="0" max="30" step="1" inputmode="numeric" placeholder="1">
+          <p class="field-hint">修改後只套用新建立的預約，不影響既有預約的取消期限。</p>
+        </div>
       </div>
 
       <div class="settings-section deposit-settings">
@@ -183,9 +319,72 @@
     </div>
   </div>
 
-  <script src="js/config.js?v=20260718001"></script>
-  <script src="js/liff-init.js?v=20260718001"></script>
-  <script src="js/api.js?v=20260718001"></script>
-  <script src="js/app.js?v=20260718001"></script>
+  <div id="owner-reschedule-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="owner-reschedule-title">
+    <div class="modal-card">
+      <h3 id="owner-reschedule-title">預約改期</h3>
+      <p class="modal-booking-summary" id="owner-reschedule-summary"></p>
+      <p class="panel-hint">請選擇新的預約日期與時間（必填）</p>
+      <div class="form-group">
+        <label for="owner-reschedule-date">新日期</label>
+        <input type="date" id="owner-reschedule-date" required>
+      </div>
+      <div class="form-group">
+        <label for="owner-reschedule-time">新時間</label>
+        <select id="owner-reschedule-time" required disabled>
+          <option value="">請先選擇日期</option>
+        </select>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-small" id="owner-reschedule-dismiss">取消</button>
+        <button type="button" class="btn btn-primary" id="owner-reschedule-confirm">確認改期</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="owner-ai-draft-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="owner-ai-draft-title">
+    <div class="modal-card">
+      <h3 id="owner-ai-draft-title">AI 客戶訊息草稿</h3>
+      <p class="modal-booking-summary" id="owner-ai-draft-summary"></p>
+      <p class="panel-hint ai-disclaimer">
+        AI 草稿僅供參考，業主須自行審核後再使用；系統不會自動傳送、不會儲存。
+      </p>
+      <div class="form-group">
+        <label for="owner-ai-draft-type">草稿類型</label>
+        <select id="owner-ai-draft-type" required>
+          <option value="">請選擇</option>
+          <option value="booking_reminder">預約提醒</option>
+          <option value="reschedule_coordination">改期協調</option>
+          <option value="cancellation_reply">取消回覆</option>
+          <option value="pre_service_reminder">服務前叮嚀</option>
+          <option value="post_service_care">服務後保養</option>
+        </select>
+      </div>
+      <button type="button" class="btn btn-primary btn-small" id="owner-ai-draft-generate">產生訊息草稿</button>
+      <p class="ai-status" id="owner-ai-draft-status" role="status" aria-live="polite"></p>
+      <label class="ai-result-label" for="owner-ai-draft-result">訊息草稿（唯讀）</label>
+      <textarea id="owner-ai-draft-result" class="ai-result" rows="8" readonly placeholder="產生後會顯示於此"></textarea>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-small" id="owner-ai-draft-dismiss">關閉</button>
+        <button type="button" class="btn btn-small" id="owner-ai-draft-copy" disabled>複製草稿</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="photo-lightbox" class="photo-lightbox hidden" role="dialog" aria-modal="true" aria-labelledby="photo-lightbox-title">
+    <button type="button" class="photo-lightbox-close" id="photo-lightbox-close" aria-label="關閉照片檢視">×</button>
+    <p id="photo-lightbox-title" class="photo-lightbox-title"></p>
+    <div class="photo-lightbox-body" id="photo-lightbox-body">
+      <p class="photo-lightbox-status" id="photo-lightbox-status">照片載入中…</p>
+      <img class="photo-lightbox-img" id="photo-lightbox-img" alt="" hidden>
+    </div>
+  </div>
+
+  <!-- 本機 QR 產生器：qrcode-generator 1.4.4（MIT, Kazuhiko Arase），
+       本機託管，不使用 CDN 或第三方 QR 服務 -->
+  <script src="js/vendor/qrcode.js?v=20260722003"></script>
+  <script src="js/config.js?v=20260722003"></script>
+  <script src="js/liff-init.js?v=20260722003"></script>
+  <script src="js/api.js?v=20260722003"></script>
+  <script src="js/app.js?v=20260722003"></script>
 </body>
 </html>
