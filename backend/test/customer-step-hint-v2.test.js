@@ -2,7 +2,7 @@
  * customer-ui v2 步驟標題樣式測試（node:test ＋ assert，零依賴）
  *
  * 驗證：
- * - config.js：v2 hostname 在 documentElement 加 is-v2 class；Demo v1 hostname 不加
+ * - config.js：僅 v2 preview hostname 加 is-v2 class；正式站與 Demo v1 不加
  * - CSS：步驟標題加強樣式以 html.is-v2 scope，基礎 .step-hint 不變（Demo v1 不受影響）
  * - customer-ui 與 docs 靜態副本逐位元一致
  */
@@ -32,26 +32,24 @@ function runConfig(hostname) {
   return { config: fakeWindow.BEAUTY_CONFIG, rootClasses: rootClasses };
 }
 
-test("config.js：v2 hostname 加 is-v2 class（正式與 preview）", function () {
-  [
-    {
-      host: "juliet-studio.pages.dev",
-      api: "https://beauty-studio-api-v2-production.gosu-chill-book.workers.dev"
-    },
-    {
-      host: "abc123.juliet-studio.pages.dev",
-      api: "https://beauty-studio-api-v2-test.gosu-chill-book.workers.dev"
-    }
-  ].forEach(function (item) {
-    var result = runConfig(item.host);
-    assert.ok(result.rootClasses.has("is-v2"), item.host + " 必須加 is-v2");
-    assert.equal(result.config.CLAIM_ENABLED, true);
-    assert.equal(result.config.API_BASE_URL, item.api);
-  });
+test("config.js：僅 v2 preview hostname 加 is-v2 class", function () {
+  var host = "abc123.juliet-studio.pages.dev";
+  var result = runConfig(host);
+  assert.ok(result.rootClasses.has("is-v2"), host + " 必須加 is-v2");
+  assert.equal(result.config.CLAIM_ENABLED, true);
+  assert.equal(
+    result.config.API_BASE_URL,
+    "https://beauty-studio-api-v2-test.gosu-chill-book.workers.dev"
+  );
 });
 
-test("config.js：Demo v1 hostname 不加 is-v2 class，設定不變", function () {
-  ["demo.example.com", "localhost", "gosu-chill-book.github.io"].forEach(function (host) {
+test("config.js：正式站與 Demo v1 hostname 不加 is-v2 class，設定不變", function () {
+  [
+    "juliet-studio.pages.dev",
+    "demo.example.com",
+    "localhost",
+    "gosu-chill-book.github.io"
+  ].forEach(function (host) {
     var result = runConfig(host);
     assert.equal(result.rootClasses.size, 0, host + " 不得加任何 class");
     assert.equal(result.config.CLAIM_ENABLED, false);

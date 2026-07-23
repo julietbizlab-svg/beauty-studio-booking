@@ -457,6 +457,19 @@ test("上傳：超過 5 MB 硬上限拒絕", async function () {
   assert.equal(db.batches.length, 0);
 });
 
+test("上傳：Content-Length 已超限時不讀取完整 body 即回 413", async function () {
+  var db = makeFakeDb(makeHandler({ set: activeSetRow() }));
+  var r2 = makeFakeR2();
+  var request = binaryRequest(UPLOAD_PATH, jpegBytes(), "image/jpeg", OWNER_TOKEN);
+  request.headers.set("Content-Length", String(5 * 1024 * 1024 + 1));
+
+  var response = await worker.fetch(request, makeD1Env(db, r2));
+
+  assert.equal(response.status, 413);
+  assert.equal(r2.puts.length, 0);
+  assert.equal(db.batches.length, 0);
+});
+
 test("上傳：kind 只能 before／after", async function () {
   var db = makeFakeDb(makeHandler({ set: activeSetRow() }));
   var response = await worker.fetch(

@@ -45,7 +45,7 @@ bucket_name = "beauty-studio-photos-v2-test"
 name = "beauty-studio-api-v2-production"
 
 [env.v2-production.vars]
-STUDIO_NAME = "美業工作室 v2 測試"
+STUDIO_NAME = "美業工作室 v2"
 TENANT_ID = "tenant_beauty_studio_default"
 LOCATION_ID = "location_main"
 STAFF_ID = "staff_owner"

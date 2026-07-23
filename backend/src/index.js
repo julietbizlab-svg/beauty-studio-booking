@@ -66,6 +66,8 @@ import {
 import { parseNoticeDays, DEFAULT_NOTICE_DAYS } from "./booking-notice-policy.js";
 import { getTaipeiDateString, getTaipeiWeekdayIndex } from "./owner-auth.js";
 
+var MAX_PHOTO_UPLOAD_BYTES = 5 * 1024 * 1024;
+
 export default {
   async fetch(request, env) {
     var url = new URL(request.url);
@@ -627,7 +629,11 @@ export default {
         await requireOwnerFromRequest(request, env);
         // binary body：不經 JSON 解析；格式與大小由 repository 以
         // magic bytes 獨立驗證，不信任 Content-Type
-        var uploadBytes = new Uint8Array(await request.arrayBuffer());
+        var uploadBytes = await readBinaryWithLimit(
+          request,
+          MAX_PHOTO_UPLOAD_BYTES,
+          "圖片超過 5 MB 上限，請重新壓縮後上傳"
+        );
         var uploadedPhoto = await uploadCustomerComparisonPhoto(
           env,
           decodeURIComponent(ownerPhotoUploadMatch[1]),
@@ -747,6 +753,53 @@ async function readJson(request) {
   } catch (ignore) {
     throw Object.assign(new Error("請求格式錯誤，需為 JSON"), { status: 400 });
   }
+}
+
+async function readBinaryWithLimit(request, maxBytes, tooLargeMessage) {
+  var contentLength = Number(request.headers.get("Content-Length"));
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw Object.assign(new Error(tooLargeMessage), { status: 413 });
+  }
+
+  if (!request.body || typeof request.body.getReader !== "function") {
+    var fallbackBytes = new Uint8Array(await request.arrayBuffer());
+    if (fallbackBytes.length > maxBytes) {
+      throw Object.assign(new Error(tooLargeMessage), { status: 413 });
+    }
+    return fallbackBytes;
+  }
+
+  var reader = request.body.getReader();
+  var chunks = [];
+  var totalBytes = 0;
+
+  while (true) {
+    var result = await reader.read();
+    if (result.done) {
+      break;
+    }
+    var chunk = result.value instanceof Uint8Array
+      ? result.value
+      : new Uint8Array(result.value || []);
+    totalBytes += chunk.length;
+    if (totalBytes > maxBytes) {
+      try {
+        await reader.cancel();
+      } catch (ignore) {
+        // 已超限；取消串流失敗不改變 413 結果。
+      }
+      throw Object.assign(new Error(tooLargeMessage), { status: 413 });
+    }
+    chunks.push(chunk);
+  }
+
+  var bytes = new Uint8Array(totalBytes);
+  var offset = 0;
+  chunks.forEach(function (chunk) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  });
+  return bytes;
 }
 
 function jsonResponse(data, corsHeaders, status, extraHeaders) {

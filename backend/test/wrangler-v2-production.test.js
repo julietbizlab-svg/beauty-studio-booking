@@ -33,7 +33,7 @@ test("v2-production 綁定既有 D1／R2 與非秘密 vars（同 v2-test）", fu
   var prodStart = wranglerToml.indexOf("[env.v2-production]");
   var prod = wranglerToml.slice(prodStart);
 
-  assert.ok(/STUDIO_NAME\s*=\s*"美業工作室 v2 測試"/.test(prod));
+  assert.ok(/STUDIO_NAME\s*=\s*"美業工作室 v2"/.test(prod));
   assert.ok(/TENANT_ID\s*=\s*"tenant_beauty_studio_default"/.test(prod));
   assert.ok(/LOCATION_ID\s*=\s*"location_main"/.test(prod));
   assert.ok(/STAFF_ID\s*=\s*"staff_owner"/.test(prod));
