@@ -3,7 +3,7 @@
  *
  * 以假 window 執行 customer-ui／owner-admin／docs 四份 config.js，
  * 驗證：
- * - 精確 juliet-studio.pages.dev → Demo v1（正式切換前保持不變）
+ * - 精確 juliet-studio.pages.dev → v2-production Worker
  * - preview 子網域 → v2-test Worker
  * - 其他 hostname 維持 Demo v1
  * - 四份檔案行為一致（靜態副本）
@@ -23,8 +23,11 @@ var CONFIG_FILES = [
   "docs/owner/js/config.js"
 ];
 
+var V2_PRODUCTION_API =
+  "https://beauty-studio-api-v2-production.gosu-chill-book.workers.dev";
 var V2_TEST_API =
   "https://beauty-studio-api-v2-test.gosu-chill-book.workers.dev";
+var V2_PRODUCTION_LIFF_ID = "2010530394-orSKMGcU";
 var V2_TEST_LIFF_ID = "2010530394-QcklvIHd";
 
 function v2Config(hostname, apiBaseUrl, liffId) {
@@ -50,13 +53,14 @@ function evalConfig(relativePath, hostname) {
   return fakeWindow.BEAUTY_CONFIG;
 }
 
-test("精確 juliet-studio.pages.dev 在正式切換前維持 Demo v1（四份 config 一致）", function () {
+test("精確 juliet-studio.pages.dev 取得 v2-production 設定（四份 config 一致）", function () {
   var hostname = "juliet-studio.pages.dev";
+  var expected = v2Config(hostname, V2_PRODUCTION_API, V2_PRODUCTION_LIFF_ID);
   CONFIG_FILES.forEach(function (file) {
     assert.deepEqual(
       evalConfig(file, hostname),
-      DEMO_V1,
-      file + " @ " + hostname + " 應維持 Demo v1 設定"
+      expected,
+      file + " @ " + hostname + " 應取得 v2-production 設定"
     );
   });
 });
@@ -77,11 +81,11 @@ test("preview 子網域取得 v2-test 設定（四份 config 一致）", functio
   });
 });
 
-test("僅 preview 子網域啟用 LINE 認領（正式站與 Demo v1 停用）", function () {
+test("正式與 preview 的 v2 hostname 皆啟用 LINE 認領（Demo v1 一律停用）", function () {
   CONFIG_FILES.forEach(function (file) {
     assert.equal(
-      evalConfig(file, "juliet-studio.pages.dev").CLAIM_ENABLED, false,
-      file + " production hostname 在正式切換前不得啟用認領"
+      evalConfig(file, "juliet-studio.pages.dev").CLAIM_ENABLED, true,
+      file + " production hostname 應啟用認領"
     );
     assert.equal(
       evalConfig(file, "abc123.juliet-studio.pages.dev").CLAIM_ENABLED, true,
