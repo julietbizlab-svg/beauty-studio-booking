@@ -27,10 +27,12 @@ var V2_PRODUCTION_API =
   "https://beauty-studio-api-v2-production.gosu-chill-book.workers.dev";
 var V2_TEST_API =
   "https://beauty-studio-api-v2-test.gosu-chill-book.workers.dev";
+var V2_PRODUCTION_LIFF_ID = "2010530394-orSKMGcU";
+var V2_TEST_LIFF_ID = "2010530394-QcklvIHd";
 
-function v2Config(hostname, apiBaseUrl) {
+function v2Config(hostname, apiBaseUrl, liffId) {
   return {
-    LIFF_ID: "2010530394-orSKMGcU",
+    LIFF_ID: liffId,
     API_BASE_URL: apiBaseUrl,
     CLAIM_ENABLED: true,
     CUSTOMER_APP_URL: "https://" + hostname + "/"
@@ -53,7 +55,7 @@ function evalConfig(relativePath, hostname) {
 
 test("精確 juliet-studio.pages.dev 取得 v2-production 設定（四份 config 一致）", function () {
   var hostname = "juliet-studio.pages.dev";
-  var expected = v2Config(hostname, V2_PRODUCTION_API);
+  var expected = v2Config(hostname, V2_PRODUCTION_API, V2_PRODUCTION_LIFF_ID);
   CONFIG_FILES.forEach(function (file) {
     assert.deepEqual(
       evalConfig(file, hostname),
@@ -72,7 +74,7 @@ test("preview 子網域取得 v2-test 設定（四份 config 一致）", functio
     previewHostnames.forEach(function (hostname) {
       assert.deepEqual(
         evalConfig(file, hostname),
-        v2Config(hostname, V2_TEST_API),
+        v2Config(hostname, V2_TEST_API, V2_TEST_LIFF_ID),
         file + " @ " + hostname + " 應取得 v2-test 設定"
       );
     });

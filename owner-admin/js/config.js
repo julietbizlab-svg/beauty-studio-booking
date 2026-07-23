@@ -18,7 +18,9 @@ window.BEAUTY_CONFIG = (function () {
 
   if (isV2Host) {
     return {
-      LIFF_ID: "2010530394-orSKMGcU",
+      LIFF_ID: isV2Production
+        ? "2010530394-orSKMGcU"
+        : "2010530394-QcklvIHd",
       API_BASE_URL: isV2Production
         ? "https://beauty-studio-api-v2-production.gosu-chill-book.workers.dev"
         : "https://beauty-studio-api-v2-test.gosu-chill-book.workers.dev",
