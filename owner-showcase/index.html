@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <title>紋繡旗艦版｜業主展示</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <script>
+    if (/\.juliet-studio\.pages\.dev$/.test(window.location.hostname) &&
+        window.location.pathname !== "/flagship/showcase/") {
+      window.history.replaceState(null, "", "/flagship/showcase/" + window.location.search + window.location.hash);
+    }
+  </script>
+  <base href="/showcase/">
+  <link rel="stylesheet" href="showcase.css?v=20260808001">
+  <link rel="stylesheet" href="customer-flow.css?v=20260808001">
+</head>
+<body>
+  <main class="showcase-shell">
+    <header class="hero">
+      <p class="eyebrow">JULIET STUDIO OS</p>
+      <h1>紋繡師御用工作台</h1>
+      <p>把新客評估、人工審核、補件與預約集中在同一個 LINE 工作流程。</p>
+    </header>
+
+    <section class="summary-grid" aria-label="今日營運摘要">
+      <article><strong>3</strong><span>待人工審核</span></article>
+      <article><strong>2</strong><span>待客戶補件</span></article>
+      <article><strong>1</strong><span>待確認訂金</span></article>
+    </section>
+
+    <nav class="demo-tabs" aria-label="展示功能">
+      <button class="active" data-panel="queue">待辦工作台</button>
+      <button data-panel="review">案件審核</button>
+      <button data-panel="followup">回訪提醒</button>
+      <button data-panel="customer">客戶怎麼用</button>
+    </nav>
+
+    <section class="demo-panel active" data-demo-panel="queue">
+      <div class="section-heading">
+        <div><p class="eyebrow">AI 協助排序</p><h2>優先待辦</h2></div>
+        <span>最後整理：剛剛</span>
+      </div>
+      <p class="safety-note">AI 只整理案件與下一步；是否適合施作，仍由老師本人判斷。</p>
+      <div class="case-list">
+        <article class="case-card urgent">
+          <div><span class="case-tag">待人工審核</span><h3>林小姐｜霧眉新客評估</h3><p>問卷與三張照片已完成，等待老師確認。</p></div>
+          <button data-open-case="review">查看案件</button>
+        </article>
+        <article class="case-card">
+          <div><span class="case-tag">待補照片</span><h3>陳小姐｜霧唇新客評估</h3><p>已通知補充自然光、無濾鏡照片。</p></div>
+          <button data-open-case="review">查看案件</button>
+        </article>
+        <article class="case-card">
+          <div><span class="case-tag">舊客快速預約</span><h3>王小姐｜霧眉補色</h3><p>已有完成服務紀錄，直接進入服務與預約。</p></div>
+          <button data-open-case="review">查看案件</button>
+        </article>
+      </div>
+    </section>
+
+    <section class="demo-panel" data-demo-panel="review" hidden>
+      <p class="eyebrow">老師本人負責最終判斷</p>
+      <h2>案件審核摘要</h2>
+      <div class="review-card">
+        <div class="review-title"><div><span class="case-tag">展示資料</span><h3>林小姐｜霧眉</h3></div><span>新客</span></div>
+        <dl>
+          <div><dt>客戶需求</dt><dd>希望改善眉型不對稱，偏好自然霧感。</dd></div>
+          <div><dt>系統整理</dt><dd>資料已齊全，排入老師人工審核；系統不判斷是否適合施作。</dd></div>
+          <div><dt>下一步</dt><dd>老師查看回答與照片後，選擇開放預約或要求補充資料。</dd></div>
+        </dl>
+        <div class="mock-actions"><span>要求補件</span><span class="primary">審核後開放預約</span></div>
+        <p class="readonly-hint">展示模式不會送出任何操作。</p>
+      </div>
+    </section>
+
+    <section class="demo-panel" data-demo-panel="followup" hidden>
+      <p class="eyebrow">服務後持續經營</p>
+      <h2>自動回訪與補色提醒</h2>
+      <div class="timeline">
+        <article><strong>霧眉第 28 天</strong><p>提醒老師確認補色安排。</p></article>
+        <article><strong>霧唇滿月</strong><p>追蹤恢復狀況與補色需求。</p></article>
+        <article><strong>滿年前</strong><p>建立付費維持提醒，不誤導免費服務。</p></article>
+      </div>
+    </section>
+
+    <section class="demo-panel" data-demo-panel="customer" hidden>
+      <p class="eyebrow">從客戶操作看見業主價值</p>
+      <h2>客戶在 LINE 的使用流程</h2>
+      <p class="customer-flow-intro">客戶只需要跟著畫面逐步完成；每個關鍵結果都會回到業主工作台。</p>
+      <ol class="customer-journey">
+        <li><span>1</span><div><strong>從工作室 LINE 進入</strong><p>不用下載 App，直接開啟專屬預約入口。</p><small>業主端：客戶身分與工作室資料保持隔離。</small></div></li>
+        <li><span>2</span><div><strong>新客填寫霧眉或霧唇評估</strong><p>逐題回答並依需求補充照片；舊客有完成紀錄就直接選服務。</p><small>業主端：收到完整回答、照片與系統整理。</small></div></li>
+        <li><span>3</span><div><strong>等待老師本人審核</strong><p>系統不替老師判斷是否適合施作，也不會自行開放預約。</p><small>業主端：可要求補件，或審核後開放預約。</small></div></li>
+        <li><span>4</span><div><strong>選擇已開放的服務與時段</strong><p>客戶只會看到工作室設定且目前可預約的內容。</p><small>業主端：案件進入待確認與訂金流程。</small></div></li>
+        <li><span>5</span><div><strong>查看預約與工作室回覆</strong><p>客戶回到同一入口即可查看進度、補件與回覆。</p><small>業主端：所有待辦集中，不必在聊天室逐筆翻找。</small></div></li>
+      </ol>
+      <a class="customer-live-link" href="/flagship/showcase/customer">親自體驗客戶端</a>
+      <p class="readonly-hint">離開展示頁後會進入獨立的客戶體驗流程。</p>
+    </section>
+
+    <section class="value-card">
+      <h2>客戶從 LINE 填資料，業主回到這裡處理</h2>
+      <p>想確認客戶會看到什麼？可另外體驗完整的新客評估與預約流程。</p>
+      <button type="button" data-open-case="customer">先看客戶使用導覽</button>
+    </section>
+
+    <footer>這是產品功能展示，不含真實客戶資料，也不會寫入工作室資料。</footer>
+  </main>
+  <script src="showcase.js?v=20260808001"></script>
+</body>
+</html>

@@ -1,3 +1,8 @@
+import {
+  legacyShowcaseLineRoutesEnabled,
+  lineLiffClientIdsForTenant
+} from "./line-channel-routing.js";
+
 /**
  * LINE LIFF ID Token 伺服器端驗證
  */
@@ -17,6 +22,19 @@ function extractBearerToken(request) {
   return match[1].trim();
 }
 
+export function idTokenAudience(idToken) {
+  try {
+    var payloadPart = String(idToken || "").split(".")[1];
+    if (!payloadPart) return "";
+    payloadPart = payloadPart.replace(/-/g, "+").replace(/_/g, "/");
+    while (payloadPart.length % 4) payloadPart += "=";
+    var payload = JSON.parse(atob(payloadPart));
+    return String(payload && payload.aud || "").trim();
+  } catch (ignore) {
+    return "";
+  }
+}
+
 export function extractIdTokenFromRequest(request) {
   var token = extractBearerToken(request);
   if (!token) {
@@ -30,43 +48,62 @@ export async function verifyLineIdToken(idToken, env) {
     throw makeError("缺少登入憑證", 401);
   }
 
-  var channelId = env.LIFF_CHANNEL_ID;
-  if (!channelId) {
+  var tenantChannelIds = lineLiffClientIdsForTenant(env || {}, env && env.TENANT_ID);
+  var legacyChannelIds = [env.LIFF_CHANNEL_ID];
+  if (legacyShowcaseLineRoutesEnabled(env)) {
+    legacyChannelIds.push(env.STANDARD_LIFF_CLIENT_ID, env.FLAGSHIP_LIFF_CLIENT_ID);
+  }
+  legacyChannelIds.push(env.OWNER_LIFF_CLIENT_ID);
+  var channelIds = tenantChannelIds.length ? tenantChannelIds : legacyChannelIds;
+  channelIds = channelIds.map(function (value) {
+    return String(value || "").trim();
+  }).filter(function (value, index, values) {
+    return value && values.indexOf(value) === index;
+  });
+  if (!channelIds.length) {
     throw makeError("伺服器缺少 LIFF_CHANNEL_ID 設定", 500);
   }
 
-  var response = await fetch("https://api.line.me/oauth2/v2.1/verify", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded"
-    },
-    body: "id_token=" + encodeURIComponent(idToken) +
-      "&client_id=" + encodeURIComponent(channelId)
-  });
+  var lastBody = null;
+  for (var i = 0; i < channelIds.length; i++) {
+    var response = await fetch("https://api.line.me/oauth2/v2.1/verify", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: "id_token=" + encodeURIComponent(idToken) +
+        "&client_id=" + encodeURIComponent(channelIds[i])
+    });
 
-  var body = null;
-  try {
-    body = await response.json();
-  } catch (ignore) {
-    body = null;
+    var body = null;
+    try {
+      body = await response.json();
+    } catch (ignore) {
+      body = null;
+    }
+    lastBody = body;
+
+    if (response.ok && body && body.sub) {
+      return {
+        userId: body.sub,
+        name: body.name || "",
+        picture: body.picture || ""
+      };
+    }
   }
 
-  if (!response.ok) {
-    var msg = (body && body.error_description)
-      ? body.error_description
-      : "登入憑證無效或已過期";
-    throw makeError(msg, 401);
+  var msg = (lastBody && lastBody.error_description)
+    ? lastBody.error_description
+    : "登入憑證無效或已過期";
+  if (/invalid idtoken audience/i.test(msg)) {
+    var tokenAudience = idTokenAudience(idToken);
+    msg = !tokenAudience
+      ? "LINE_AUDIENCE_DIAGNOSTIC: token_audience_unreadable"
+      : (channelIds.indexOf(tokenAudience) === -1
+        ? "LINE_AUDIENCE_DIAGNOSTIC: token_channel_not_registered"
+        : "LINE_AUDIENCE_DIAGNOSTIC: registered_channel_rejected");
   }
-
-  if (!body || !body.sub) {
-    throw makeError("登入憑證無效或已過期", 401);
-  }
-
-  return {
-    userId: body.sub,
-    name: body.name || "",
-    picture: body.picture || ""
-  };
+  throw makeError(msg, 401);
 }
 
 /**

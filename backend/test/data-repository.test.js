@@ -209,9 +209,12 @@ test("DATA_BACKEND='d1' 時 listServices 確實走 D1 repository（Fake D1）", 
     name: "基礎護理",
     durationMinutes: 60,
     price: 1200,
-    description: "說明文字",
-    status: "上架",
-    sortOrder: 1
+      description: "說明文字",
+      status: "上架",
+      sortOrder: 1,
+      followUpDays: 21,
+      assessmentTemplateCode: "none",
+      assessmentTemplateReady: true
   }]);
 });
 

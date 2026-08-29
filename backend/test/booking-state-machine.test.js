@@ -111,7 +111,15 @@ test("confirmed 是唯一正式成立狀態", function () {
   assert.equal(isConfirmedBookingStatus(S.CHECKED_IN), false);
 });
 
-test("staff 可 confirmed→checked_in、checked_in→completed、pending→confirmed／checked_in", function () {
+test("staff 受理後開始訂金期限，再人工確認正式成立", function () {
+  assert.deepEqual(
+    listOwnerStaffTransitionTargets(S.PENDING_REVIEW),
+    [S.PENDING_CUSTOMER_CONFIRMATION]
+  );
+  assert.deepEqual(
+    listOwnerStaffTransitionTargets(S.PENDING_CUSTOMER_CONFIRMATION),
+    [S.CONFIRMED]
+  );
   assert.equal(canTransition(S.CONFIRMED, S.CHECKED_IN, BOOKING_ACTORS.STAFF), true);
   assert.equal(canTransition(S.CHECKED_IN, S.COMPLETED, BOOKING_ACTORS.STAFF), true);
   assert.equal(canTransition(S.PENDING, S.CONFIRMED, BOOKING_ACTORS.STAFF), true);
@@ -119,6 +127,14 @@ test("staff 可 confirmed→checked_in、checked_in→completed、pending→conf
 });
 
 test("listOwnerStaffTransitionTargets 僅含 Phase 2 一般操作白名單", function () {
+  assert.deepEqual(
+    listOwnerStaffTransitionTargets(S.PENDING_REVIEW),
+    [S.PENDING_CUSTOMER_CONFIRMATION]
+  );
+  assert.deepEqual(
+    listOwnerStaffTransitionTargets(S.PENDING_CUSTOMER_CONFIRMATION),
+    [S.CONFIRMED]
+  );
   assert.deepEqual(listOwnerStaffTransitionTargets(S.CONFIRMED), [S.CHECKED_IN, S.NO_SHOW]);
   assert.deepEqual(listOwnerStaffTransitionTargets(S.CHECKED_IN), [S.COMPLETED]);
   assert.deepEqual(listOwnerStaffTransitionTargets(S.PENDING), [S.CONFIRMED, S.CHECKED_IN]);
@@ -191,18 +207,23 @@ test("assertOwnerNoShowStartAtReached：毫秒比較與 fail closed", function (
   );
 });
 
-test("legacy slot blocking 含 pending／checked_in／confirmed", function () {
-  assert.deepEqual(SLOT_BLOCKING_STATUSES, [S.PENDING, S.CONFIRMED, S.CHECKED_IN]);
+test("slot blocking 含待審核、legacy pending、confirmed、checked_in", function () {
+  assert.deepEqual(
+    SLOT_BLOCKING_STATUSES,
+    [S.PENDING, S.PENDING_REVIEW, S.PENDING_CUSTOMER_CONFIRMATION, S.CONFIRMED, S.CHECKED_IN]
+  );
   assert.deepEqual(LEGACY_SLOT_BLOCKING_STATUSES, [S.PENDING, S.CHECKED_IN]);
   assert.equal(isSlotBlockingStatus(S.PENDING), true);
   assert.equal(isSlotBlockingStatus(S.CHECKED_IN), true);
   assert.equal(isSlotBlockingStatus(S.CONFIRMED), true);
+  assert.equal(isSlotBlockingStatus(S.PENDING_REVIEW), true);
+  assert.equal(isSlotBlockingStatus(S.PENDING_CUSTOMER_CONFIRMATION), true);
   assert.equal(isLegacySlotBlockingStatus(S.PENDING), true);
   assert.equal(isLegacySlotBlockingStatus(S.CONFIRMED), false);
 });
 
-test("pending_review／draft／held 不占用空檔", function () {
-  [S.PENDING_REVIEW, S.DRAFT, S.EXPIRED, S.HELD, S.PENDING_CUSTOMER_CONFIRMATION]
+test("draft／held 等非申請狀態不占用空檔", function () {
+  [S.DRAFT, S.EXPIRED, S.HELD]
     .forEach(function (status) {
       assert.equal(isSlotBlockingStatus(status), false);
     });
@@ -252,11 +273,12 @@ test("未確認狀態 legacy status 不得顯示已確認", function () {
   assert.equal(bookingStatusToLegacyApiLabel(S.CONFIRMED), "已確認");
 });
 
-test("customer 可取消 held／confirmed／legacy pending", function () {
+test("customer 可取消 held／待本工作室確認／confirmed／legacy pending", function () {
   assert.equal(isCustomerCancellableStatus(S.HELD), true);
   assert.equal(isCustomerCancellableStatus(S.CONFIRMED), true);
   assert.equal(isCustomerCancellableStatus(S.PENDING), true);
-  assert.equal(isCustomerCancellableStatus(S.PENDING_REVIEW), false);
+  assert.equal(isCustomerCancellableStatus(S.PENDING_REVIEW), true);
+  assert.equal(isCustomerCancellableStatus(S.CHECKED_IN), false);
 });
 
 test("DTO：pending 阻擋空檔但非正式成立", function () {
@@ -268,5 +290,5 @@ test("DTO：pending 阻擋空檔但非正式成立", function () {
   assert.equal(confirmedDto.isConfirmed, true);
   assert.equal(confirmedDto.occupiesFormalSlot, true);
   var reviewDto = bookingStatusToDtoExtensions(S.PENDING_REVIEW);
-  assert.equal(reviewDto.occupiesFormalSlot, false);
+  assert.equal(reviewDto.occupiesFormalSlot, true);
 });

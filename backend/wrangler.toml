@@ -5,6 +5,7 @@ compatibility_date = "2024-01-01"
 [vars]
 STUDIO_NAME = "美業工作室"
 TENANT_ID = "tenant_beauty_studio_default"
+DEFAULT_LINE_TENANT_ID = "tenant_beauty_studio_default"
 LOCATION_ID = "location_main"
 STAFF_ID = "staff_owner"
 
@@ -20,9 +21,34 @@ name = "beauty-studio-api-v2-test"
 [env.v2-test.vars]
 STUDIO_NAME = "美業工作室 v2 測試"
 TENANT_ID = "tenant_beauty_studio_default"
+DEFAULT_LINE_TENANT_ID = "tenant_beauty_studio_default"
 LOCATION_ID = "location_main"
 STAFF_ID = "staff_owner"
 DATA_BACKEND = "d1"
+CUSTOMER_AI_ENABLED = "true"
+CUSTOMER_AI_MODEL = "@cf/meta/llama-3.1-8b-instruct-fast"
+OWNER_AI_ENABLED = "true"
+OWNER_AI_MODEL = "@cf/meta/llama-3.1-8b-instruct-fast"
+BOOKING_REQUIRES_OWNER_CONFIRMATION = "true"
+OWNER_LIFF_CLIENT_ID = "2010868233"
+FLAGSHIP_LIFF_CLIENT_ID = "2011024067"
+STANDARD_LIFF_CLIENT_ID = "2011029740"
+STANDARD_SHOWCASE_TENANT_ID = "acceptance-tenant_beauty_studio_default-beige"
+STANDARD_SHOWCASE_LOCATION_ID = "acceptance-location-tenant_beauty_studio_default-beige"
+STANDARD_SHOWCASE_STAFF_ID = "acceptance-owner-tenant_beauty_studio_default-beige"
+FLAGSHIP_SHOWCASE_TENANT_ID = "acceptance-tenant_beauty_studio_default-mauve"
+FLAGSHIP_SHOWCASE_LOCATION_ID = "acceptance-location-tenant_beauty_studio_default-mauve"
+FLAGSHIP_SHOWCASE_STAFF_ID = "acceptance-owner-tenant_beauty_studio_default-mauve"
+LINE_PROVIDER_ID = "2005385262"
+LINE_LEGACY_SHOWCASE_ROUTES_ENABLED = "false"
+LINE_SHOWCASE_SHARED_OA_ENABLED = "true"
+
+# 僅 v2-test 啟用客人端與業主端 AI；不影響頂層或 v2-production。
+[env.v2-test.ai]
+binding = "AI"
+
+[env.v2-test.triggers]
+crons = ["*/5 * * * *"]
 
 [[env.v2-test.d1_databases]]
 binding = "DB"

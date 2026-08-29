@@ -9,6 +9,12 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import worker from "../src/index.js";
 import {
+  inferOwnerAiServiceCategory,
+  assertOwnerAiMessageDraftMatchesService,
+  buildOwnerRescheduleCoordinationDraft,
+  buildOwnerPostServiceCareDraft
+} from "../src/owner-ai.js";
+import {
   FIXED_GREETING,
   AI_OUTPUT_MAX_CODE_POINTS,
   AI_RATE_SUMMARY_LIMIT,
@@ -272,10 +278,13 @@ test("固定問候語與 schema：禁止多餘鍵／錯誤型別", function () {
   assert.equal(FIXED_GREETING, "您好");
   assert.throws(function () {
     assertMessageDraftPayloadSchema({
+      arrivalReminderMinutes: 5,
       draftType: "booking_reminder",
       draftTypeLabel: "預約提醒",
       greetingLabel: "王○",
+      serviceCategory: "brow",
       serviceName: "霧眉",
+      studioName: "測試工作室",
       date: TARGET_DATE,
       time: "10:00"
     });
@@ -341,6 +350,134 @@ test("預設環境關閉；Workers AI adapter 缺 model fail closed 且不呼叫
     }
   });
   assert.ok(withModel);
+});
+
+test("服務後保養提示嚴禁混入服務前內容，並要求使用業主店名署名", async function () {
+  var requestPayload = null;
+  var adapter = createWorkersAiProvider({
+    OWNER_AI_MODEL: "test-model",
+    AI: {
+      run: async function (model, input) {
+        requestPayload = input;
+        return { response: "您好，請依照術後注意事項照護。\n測試工作室" };
+      }
+    }
+  });
+  await adapter.generateMessageDraft({
+    arrivalReminderMinutes: 5,
+    draftType: "post_service_care",
+    draftTypeLabel: "服務後保養",
+    greetingLabel: "您好",
+    serviceCategory: "brow",
+    serviceName: "韓系霧眉｜免費補色乙次",
+    studioName: "測試工作室",
+    date: TARGET_DATE,
+    time: "10:00"
+  });
+  var systemPrompt = requestPayload.messages[0].content;
+  assert.match(systemPrompt, /post_service_care 代表服務已完成/);
+  assert.match(systemPrompt, /不得出現預約確認、預約前確認、提前抵達/);
+  assert.match(systemPrompt, /完整使用 payload\.studioName/);
+  assert.match(systemPrompt, /brow 只能寫眉部/);
+  assert.match(systemPrompt, /禁止任何簡體中文字形/);
+  assert.match(systemPrompt, /禁止輸出 draftType、payload/);
+  assert.match(requestPayload.messages[1].content, /"studioName":"測試工作室"/);
+});
+
+test("草稿內容安全閘：霧眉禁止唇部技能，所有服務禁止簡體中文", function () {
+  assert.equal(inferOwnerAiServiceCategory("韓系霧眉｜免費補色乙次"), "brow");
+  assert.equal(inferOwnerAiServiceCategory("霧唇補色"), "lip");
+  assert.doesNotThrow(function () {
+    assertOwnerAiMessageDraftMatchesService(
+      "您好，服務後請保持眉部乾燥並依照業主說明照護。",
+      { serviceCategory: "brow" }
+    );
+  });
+  assert.throws(function () {
+    assertOwnerAiMessageDraftMatchesService(
+      "您好，請定期保養您的唇部。",
+      { serviceCategory: "brow" }
+    );
+  }, /內容與服務項目不符/);
+  assert.throws(function () {
+    assertOwnerAiMessageDraftMatchesService(
+      "请在服务后保持皮肤清洁。",
+      { serviceCategory: "brow" }
+    );
+  }, /簡體中文/);
+  assert.throws(function () {
+    assertOwnerAiMessageDraftMatchesService(
+      '您好，根據系統指示，需要產出草稿類型 "reschedule_coordination" 的訊息。',
+      { serviceCategory: "brow" }
+    );
+  }, /內部系統文字/);
+  assert.throws(function () {
+    assertOwnerAiMessageDraftMatchesService(
+      "以下是草稿：您好，想與您協調改期。",
+      { serviceCategory: "brow" }
+    );
+  }, /格式不符/);
+});
+
+test("改期協調使用預約資料產生固定安全草稿，不暴露內部代碼", function () {
+  var draft = buildOwnerRescheduleCoordinationDraft({
+    date: "2026-08-21",
+    time: "13:00",
+    serviceName: "韓系霧眉",
+    studioName: "霧眉預約工作室"
+  });
+  assert.equal(
+    draft,
+    "您好，關於您原訂於 2026/08/21 13:00 的「韓系霧眉」服務，需要與您協調改期。" +
+      "請回覆方便的日期與時段，待本工作室確認後再為您安排。\n\n霧眉預約工作室"
+  );
+  assert.doesNotMatch(draft, /reschedule_coordination|draftType|payload|系統指示/);
+  assert.doesNotThrow(function () {
+    assertOwnerAiMessageDraftMatchesService(draft, { serviceCategory: "brow" });
+  });
+});
+
+test("服務後保養依預約服務分類產生固定繁體中文內容", function () {
+  var browDraft = buildOwnerPostServiceCareDraft({
+    serviceCategory: "brow",
+    serviceName: "韓系霧眉｜免費補色乙次",
+    studioName: "霧眉預約工作室"
+  });
+  assert.match(browDraft, /^您好，您的「韓系霧眉｜免費補色乙次」服務已完成/);
+  assert.match(browDraft, /眉部清潔與乾燥/);
+  assert.doesNotMatch(browDraft, /本次服務包含免費補色乙次/);
+  assert.doesNotMatch(browDraft, /續色維持/);
+  assert.doesNotMatch(browDraft, /另外計費/);
+  assert.doesNotMatch(browDraft, /唇部|嘴唇|美甲|睫毛|post_service_care/);
+  assert.match(browDraft, /霧眉預約工作室$/);
+  assert.doesNotThrow(function () {
+    assertOwnerAiMessageDraftMatchesService(browDraft, {
+      serviceCategory: "brow",
+      serviceName: "韓系霧眉｜免費補色乙次",
+      studioName: "霧眉預約工作室"
+    });
+  });
+
+  var multiSkillStudioDraft = buildOwnerPostServiceCareDraft({
+    serviceCategory: "brow",
+    serviceName: "韓系霧眉｜免費補色乙次",
+    studioName: "霧眉｜霧唇💋｜預約平台"
+  });
+  assert.doesNotThrow(function () {
+    assertOwnerAiMessageDraftMatchesService(multiSkillStudioDraft, {
+      serviceCategory: "brow",
+      serviceName: "韓系霧眉｜免費補色乙次",
+      studioName: "霧眉｜霧唇💋｜預約平台"
+    });
+  });
+
+  var lipDraft = buildOwnerPostServiceCareDraft({
+    serviceCategory: "lip",
+    serviceName: "霧唇補色",
+    studioName: "唇部工作室"
+  });
+  assert.match(lipDraft, /唇部清潔/);
+  assert.doesNotMatch(lipDraft, /眉部|霧眉|美甲|睫毛/);
 });
 
 test("無 token 401、非 Owner 403", async function () {
@@ -467,16 +604,41 @@ test("訊息草稿：固定您好、SQL 不含 display_name、無身分欄位", 
   }));
   assert.equal(lastDraftPayload.greetingLabel, "您好");
   assert.deepEqual(Object.keys(lastDraftPayload).sort(), [
+    "arrivalReminderMinutes",
     "date",
     "draftType",
     "draftTypeLabel",
     "greetingLabel",
+    "serviceCategory",
     "serviceName",
+    "studioName",
     "time"
   ]);
+  assert.equal(lastDraftPayload.studioName, "租戶");
+  assert.equal(lastDraftPayload.serviceCategory, "brow");
+  assert.equal(lastDraftPayload.arrivalReminderMinutes, 5);
   assertNoSensitiveLeak(JSON.stringify(lastDraftPayload));
   assert.ok(!/王小明|王○/.test(JSON.stringify(lastDraftPayload)));
   assert.ok(body.draft.indexOf("您好") === 0 || body.draft.includes("您好"));
+});
+
+test("改期協調 API 回傳固定客戶訊息，不呼叫生成式 provider", async function () {
+  var env = makeEnv(makeReadyDb());
+  var res = await worker.fetch(
+    jsonRequest(
+      "POST",
+      "/api/owner/ai/message-draft",
+      { bookingId: "bk-ai-1", draftType: "reschedule_coordination" },
+      OWNER_TOKEN
+    ),
+    env
+  );
+  assert.equal(res.status, 200);
+  var body = await res.json();
+  assert.equal(lastDraftPayload, null, "固定交易訊息不得呼叫生成式 provider");
+  assert.match(body.draft, /^您好，關於您原訂於 2099\/08\/03 10:00 的「霧眉」服務/);
+  assert.match(body.draft, /租戶$/);
+  assert.doesNotMatch(body.draft, /reschedule_coordination|draftType|payload|系統指示/);
 });
 
 test("輸出過長截斷；控制字元被清除後仍可用或失敗安全", async function () {
@@ -561,7 +723,7 @@ test("單元限流可注入且不向外洩漏 ownerId", function () {
   );
 });
 
-test("前端：能力閘道、審核標示、副本一致、無寫入／傳送", function () {
+test("前端：能力閘道、審核標示、副本一致、草稿不自動傳送", function () {
   var html = readFileSync(join(repoRoot, "owner-admin/index.html"), "utf8");
   var appJs = readFileSync(join(repoRoot, "owner-admin/js/app.js"), "utf8");
   var apiJs = readFileSync(join(repoRoot, "owner-admin/js/api.js"), "utf8");
@@ -569,13 +731,34 @@ test("前端：能力閘道、審核標示、副本一致、無寫入／傳送",
   assert.ok(html.includes('id="ai-summary-card"') && html.includes("hidden"));
   assert.ok(html.includes("業主須自行審核"));
   assert.ok(html.includes("不會自動傳送"));
-  assert.ok(html.includes("v=20260722003"));
+  assert.ok(html.includes("v=20260723010"));
+  assert.doesNotMatch(html, /標準方案與 AI 秘書方案/);
+  assert.doesNotMatch(html, /業主自行處理/);
+  assert.doesNotMatch(html, /像多一位店務秘書/);
+  assert.match(html, /日常店務/);
+  assert.match(html, /AI 店務秘書/);
+  assert.match(html, /客戶問題與 AI 內部判讀/);
+  assert.match(appJs, /套用 AI 建議回覆/);
+  assert.match(appJs, /AI 建議回覆（客人看不到）/);
+  assert.match(appJs, /data-ai-inquiry-draft-apply/);
+  assert.match(appJs, /input\.value = String\(item\.aiReply/);
+  assert.doesNotMatch(html, /AI 幫我挑服務/);
+  assert.match(html, /預約、客戶與工作室設定/);
+  assert.match(html, /id="owner-ai-plan-block"[^>]*hidden/);
+  assert.doesNotMatch(html, /標準版|旗艦版/);
+  assert.match(html, /AI 店務秘書/);
+  assert.match(html, /data-tab="ai"/);
+  assert.match(html, /data-panel="ai"/);
+  assert.match(appJs, /els\.aiPlanBlock\.hidden = !aiFeatureEnabled/);
   assert.ok(apiJs.includes("getAiCapability"));
   assert.ok(apiJs.includes("/api/owner/ai/capability"));
   assert.ok(appJs.includes("refreshAiCapability"));
   assert.ok(appJs.includes("aiFeatureEnabled"));
   assert.ok(!html.includes('id="owner-ai-draft-send"'));
-  assert.ok(!/pushMessage|ownerApi\.send|儲存草稿/.test(appJs));
+  assert.ok(!/pushMessage|儲存草稿/.test(appJs));
+  assert.match(appJs, /sendAiInquiryReply/);
+  assert.match(appJs, /確認內容後，將直接傳送至客人的 LINE/);
+  assert.match(apiJs, /\/replies/);
 
   ["index.html", "js/api.js", "js/app.js", "css/style.css"].forEach(function (file) {
     assert.equal(
@@ -585,10 +768,21 @@ test("前端：能力閘道、審核標示、副本一致、無寫入／傳送",
   });
 });
 
-test("未改 wrangler／package；無 AI binding", function () {
+test("客人端與 Owner AI binding 僅存在 v2-test", function () {
   var toml = readFileSync(join(repoRoot, "backend/wrangler.toml"), "utf8");
   var pkg = JSON.parse(readFileSync(join(repoRoot, "backend/package.json"), "utf8"));
-  assert.ok(!/ai\s*=|workers_ai|OPENAI|OWNER_AI_ENABLED|OWNER_AI_MODEL/i.test(toml));
+  assert.ok(!/OPENAI/i.test(toml));
+  var testSection = toml.split("[env.v2-test]")[1].split("[env.v2-production]")[0];
+  var productionSection = toml.split("[env.v2-production]")[1];
+  assert.match(testSection, /\[env\.v2-test\.ai\][\s\S]*binding\s*=\s*"AI"/);
+  assert.match(testSection, /CUSTOMER_AI_ENABLED\s*=\s*"true"/);
+  assert.match(testSection, /OWNER_AI_ENABLED\s*=\s*"true"/);
+  assert.match(testSection, /OWNER_AI_MODEL\s*=\s*"@cf\/meta\/llama-3\.1-8b-instruct-fast"/);
+  assert.ok(
+    !/CUSTOMER_AI_ENABLED|CUSTOMER_AI_MODEL|OWNER_AI_ENABLED|OWNER_AI_MODEL|\[env\.v2-production\.ai\]/.test(
+      productionSection
+    )
+  );
   assert.equal(pkg.devDependencies.wrangler, "3.114.17");
   assert.equal(pkg.scripts.deploy, "wrangler deploy --env v2-test");
 });

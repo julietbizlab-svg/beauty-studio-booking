@@ -18,9 +18,18 @@
     if (!baseUrl) {
       throw new Error("API 尚未設定，請在 config.js 填入 API_BASE_URL");
     }
-    var response = await fetch(baseUrl + path, Object.assign({
-      headers: { "Content-Type": "application/json" }
-    }, options || {}));
+    var opts = options || {};
+    var showcaseContext = window.BEAUTY_CONFIG &&
+      window.BEAUTY_CONFIG.SHOWCASE_CONTEXT;
+    var studioEntryKey = window.BEAUTY_CONFIG &&
+      window.BEAUTY_CONFIG.STUDIO_ENTRY_KEY;
+    var headers = Object.assign({ "Content-Type": "application/json" },
+      showcaseContext ? { "X-Beauty-Showcase": showcaseContext } : {},
+      studioEntryKey ? { "X-Beauty-Studio-Entry": studioEntryKey } : {},
+      opts.headers || {});
+    var response = await fetch(baseUrl + path, Object.assign({}, opts, {
+      headers: headers
+    }));
 
     var body = null;
     try {
@@ -29,6 +38,14 @@
 
     if (!response.ok) {
       var message = (body && body.message) ? body.message : "伺服器回應錯誤（" + response.status + "）";
+      if (
+        response.status === 401 &&
+        /(?:access|id)\s*token expired|invalid idtoken audience/i.test(message) &&
+        typeof window.beautyRecoverExpiredLiffToken === "function"
+      ) {
+        window.beautyRecoverExpiredLiffToken();
+        return new Promise(function () {});
+      }
       var error = new Error(message);
       error.status = response.status;
       throw error;
@@ -78,6 +95,47 @@
       return apiFetch("/api/services");
     },
 
+    getCustomerAiCapability: function () {
+      return authedFetch("/api/customer/ai/capability", { cache: "no-store" });
+    },
+
+    getAssessmentTemplate: function (serviceId) {
+      return authedFetch("/api/customer/assessment-template?serviceId=" + encodeURIComponent(serviceId || ""), { cache: "no-store" });
+    },
+
+    submitCustomerInquiry: function (message, serviceId) {
+      return authedFetch("/api/customer/ai/recommend", {
+        method: "POST",
+        body: JSON.stringify({
+          message: message,
+          serviceId: serviceId || ""
+        })
+      });
+    },
+
+    getCustomerAiInquiries: function () {
+      return authedFetch("/api/customer/ai/inquiries", { cache: "no-store" });
+    },
+
+    startAssessment: function (code, serviceId) {
+      return authedFetch("/api/customer/assessments/" + encodeURIComponent(code) + "/start", {
+        method: "POST", body: JSON.stringify({ serviceId: serviceId || "" })
+      });
+    },
+
+    answerAssessment: function (code, answer, serviceId) {
+      return authedFetch("/api/customer/assessments/" + encodeURIComponent(code) + "/answers", {
+        method: "POST", body: JSON.stringify({ answer: answer, serviceId: serviceId || "" })
+      });
+    },
+
+    uploadAssessmentPhoto: function (code, kind, file, serviceId) {
+      return authedFetch("/api/customer/assessments/" + encodeURIComponent(code) +
+        "/photos/" + encodeURIComponent(kind) + "?serviceId=" + encodeURIComponent(serviceId || ""), {
+        method: "PUT", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file
+      });
+    },
+
     getSlots: function (date, serviceId) {
       var query = "/api/slots?date=" + encodeURIComponent(date) +
         "&serviceId=" + encodeURIComponent(serviceId);
@@ -101,6 +159,13 @@
       return authedFetch("/api/bookings/me");
     },
 
+    reportDepositTransfer: function (bookingId, last5) {
+      return authedFetch(
+        "/api/bookings/" + encodeURIComponent(bookingId || "") + "/deposit-report",
+        { method: "PATCH", body: JSON.stringify({ last5: last5 }) }
+      );
+    },
+
     cancelBooking: function (bookingId) {
       return authedFetch("/api/bookings/cancel", {
         method: "POST",
@@ -108,8 +173,56 @@
       });
     },
 
+    requestBookingReschedule: function (bookingId, date, time) {
+      return authedFetch("/api/bookings/" + encodeURIComponent(bookingId || "") +
+        "/reschedule-request", {
+        method: "POST", body: JSON.stringify({ date: date, time: time })
+      });
+    },
+
+    getBookingReview: function (bookingId) {
+      return authedFetch(
+        "/api/bookings/" + encodeURIComponent(bookingId || "") + "/review-intake"
+      );
+    },
+
+    updateBookingReview: function (bookingId, payload) {
+      return authedFetch(
+        "/api/bookings/" + encodeURIComponent(bookingId || "") + "/review-intake",
+        { method: "PATCH", body: JSON.stringify(payload || {}) }
+      );
+    },
+
+    uploadBookingReviewPhoto: function (bookingId, file) {
+      return authedFetch(
+        "/api/bookings/" + encodeURIComponent(bookingId || "") + "/review-photos",
+        {
+          method: "PUT",
+          headers: { "Content-Type": file.type || "application/octet-stream" },
+          body: file
+        }
+      );
+    },
+
     getCustomerMe: function () {
       return authedFetch("/api/customer/me");
+    },
+
+    saveCustomerMe: function (profile) {
+      return authedFetch("/api/customer/me", {
+        method: "PATCH",
+        body: JSON.stringify(profile || {})
+      });
+    },
+
+    getBrowIntake: function () {
+      return authedFetch("/api/customer/brow-intake");
+    },
+
+    uploadBrowIntakePhoto: function (kind, file) {
+      return authedFetch("/api/customer/brow-intake/photos/" + encodeURIComponent(kind), {
+        method: "PUT", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file
+      });
     },
 
     // 一次性認領邀請：token 只放在 request body，不進 URL、log 或儲存

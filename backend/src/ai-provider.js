@@ -23,6 +23,7 @@ export var FIXED_GREETING = "您好";
 
 export var AI_OUTPUT_MAX_CODE_POINTS = 500;
 export var AI_SERVICE_NAME_MAX_CODE_POINTS = 80;
+export var AI_STUDIO_NAME_MAX_CODE_POINTS = 80;
 export var AI_STATUS_MAX_CODE_POINTS = 20;
 export var AI_BOOKINGS_MAX_ITEMS = 48;
 export var AI_DURATION_MAX_MINUTES = 480;
@@ -222,7 +223,7 @@ export function assertDailySummaryPayloadSchema(payload) {
 export function assertMessageDraftPayloadSchema(payload) {
   assertExactKeys(
     payload,
-    ["draftType", "draftTypeLabel", "greetingLabel", "serviceName", "date", "time"],
+    ["arrivalReminderMinutes", "draftType", "draftTypeLabel", "greetingLabel", "serviceCategory", "serviceName", "studioName", "date", "time"],
     "message-draft"
   );
   if (!isAllowedAiDraftType(payload.draftType)) {
@@ -245,7 +246,46 @@ export function assertMessageDraftPayloadSchema(payload) {
       hasControlChars(payload.serviceName)) {
     throw makeError("AI payload serviceName 無效", 500);
   }
+  if (["brow", "lip", "nail", "lash", "other"].indexOf(payload.serviceCategory) === -1) {
+    throw makeError("AI payload serviceCategory 無效", 500);
+  }
+  if (typeof payload.studioName !== "string" || !payload.studioName ||
+      codePointLength(payload.studioName) > AI_STUDIO_NAME_MAX_CODE_POINTS ||
+      hasControlChars(payload.studioName)) {
+    throw makeError("AI payload studioName 無效", 500);
+  }
+  if (!Number.isInteger(payload.arrivalReminderMinutes) ||
+      payload.arrivalReminderMinutes < 0 || payload.arrivalReminderMinutes > 60) {
+    throw makeError("AI payload arrivalReminderMinutes 無效", 500);
+  }
   assertAiPayloadSafe(payload, "message-draft");
+}
+
+export function assertReviewSummaryPayloadSchema(payload) {
+  assertExactKeys(payload, [
+    "status", "surgeryHistory", "diseaseHistory", "lastTreatmentAt",
+    "customerNote", "photoRequested", "photoRequestNote", "photoCount"
+  ], "review-summary");
+  ["status", "surgeryHistory", "diseaseHistory", "lastTreatmentAt",
+    "customerNote", "photoRequestNote"].forEach(function (key) {
+    if (typeof payload[key] !== "string" ||
+        codePointLength(payload[key]) > 2000 ||
+        hasControlChars(payload[key])) {
+      throw makeError("AI payload " + key + " 無效", 500);
+    }
+  });
+  if (typeof payload.photoRequested !== "boolean" ||
+      !Number.isInteger(payload.photoCount) ||
+      payload.photoCount < 0 || payload.photoCount > 3) {
+    throw makeError("AI payload 照片資訊無效", 500);
+  }
+  // 專用 payload 明確允許健康問卷，但仍禁止身分、token、照片內容。
+  var identityPattern = /(line[_-]?user|Bearer\s|CHANNEL_SECRET|ACCESS_TOKEN|\.dev\.vars)/i;
+  Object.keys(payload).forEach(function (key) {
+    if (typeof payload[key] === "string" && identityPattern.test(payload[key])) {
+      throw makeError("AI payload 含禁止內容", 500);
+    }
+  });
 }
 
 export function sanitizeAndValidateAiOutput(text) {
@@ -343,7 +383,29 @@ export function createWorkersAiProvider(env) {
       assertMessageDraftPayloadSchema(payload);
       return runOnce(
         systemBase +
-          "任務：依草稿類型產出給客戶的訊息草稿；開頭使用固定問候「您好」。",
+          "任務：依草稿類型產出給客戶的訊息草稿；開頭使用固定問候「您好」。" +
+          "必須嚴格依 draftType 判斷服務階段：" +
+          "post_service_care 代表服務已完成，只能提供服務後照護與注意事項；" +
+          "不得出現預約確認、預約前確認、提前抵達、攜帶證件、到店準備或改期提醒。" +
+          "pre_service_reminder 才能提供服務前準備與到店提醒。" +
+          "服務前抵達時間只能使用 payload.arrivalReminderMinutes；不得自行杜撰其他分鐘數。" +
+          "若數值為 0，請寫依預約時間抵達，不得寫提前抵達。" +
+          "必須嚴格遵守 payload.serviceCategory：brow 只能寫眉部、lip 只能寫唇部、" +
+          "nail 只能寫美甲、lash 只能寫睫毛；不得混入其他部位或其他技術的照護內容。" +
+          "全文只能使用台灣繁體中文，禁止任何簡體中文字形。" +
+          "只輸出可直接傳給客戶的訊息正文，第一個字必須是「您」（以「您好」開頭）。" +
+          "禁止解釋任務、推理過程或系統規則；禁止輸出 draftType、payload、英文草稿類型代碼、" +
+          "「根據系統指示」、「草稿類型」或「以下是草稿」等幕後文字。" +
+          "結尾署名必須完整使用 payload.studioName，不得自行改成「美業工作室」或泛稱「工作室」。",
+        payload
+      );
+    },
+    generateReviewSummary: async function (payload) {
+      assertReviewSummaryPayloadSchema(payload);
+      return runOnce(
+        systemBase +
+          "任務：整理健康問卷與補件狀態，列出已知資料、缺漏、風險提醒與業主待確認事項。" +
+          "不可作醫療診斷，不可替業主決定是否承接。",
         payload
       );
     }
@@ -454,6 +516,8 @@ export async function invokeAiProviderMethod(provider, methodName, payload) {
     assertDailySummaryPayloadSchema(payload);
   } else if (methodName === "generateMessageDraft") {
     assertMessageDraftPayloadSchema(payload);
+  } else if (methodName === "generateReviewSummary") {
+    assertReviewSummaryPayloadSchema(payload);
   } else {
     throw makeError("AI 產生失敗，請稍後再試", 502);
   }

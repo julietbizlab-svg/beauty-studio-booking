@@ -1,0 +1,572 @@
+.platform-shell {
+  width: min(760px, calc(100% - 24px));
+  margin: 0 auto;
+  padding: 16px 0 40px;
+}
+
+.platform-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.platform-header img {
+  width: 96px;
+  height: auto;
+}
+
+.platform-header h1 {
+  margin: 2px 0 0;
+  color: #35275d;
+  font-size: clamp(1.25rem, 4vw, 1.75rem);
+}
+
+.platform-eyebrow {
+  display: inline-block;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  color: #7a6a8f;
+}
+
+.platform-section-title {
+  margin: 0 0 4px;
+  font-size: 1.1rem;
+  color: #35275d;
+}
+
+.platform-section-hint {
+  margin: 0 0 12px;
+}
+
+.platform-root-account {
+  margin-bottom: 18px;
+  padding: 12px;
+  border: 1px solid #d9cfe8;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #faf7fd 0%, #f3eef9 100%);
+}
+
+.platform-root-warning {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fff4e8;
+  border: 1px solid #f0d3b0;
+  color: #8a4b12;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.platform-root-account-card {
+  display: grid;
+  gap: 8px;
+}
+
+.platform-studio-card--root {
+  border-color: #cfc0e4;
+  background: #fff;
+}
+
+.platform-denied {
+  padding: 18px;
+  border: 1px solid #e6dce9;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.platform-denied h2 {
+  margin-top: 0;
+}
+
+.platform-panel {
+  display: block;
+  margin-bottom: 14px;
+}
+
+.platform-status-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.platform-summary-chip {
+  display: grid;
+  gap: 2px;
+  padding: 10px 8px;
+  border-radius: 12px;
+  background: #f7f3fa;
+  border: 1px solid #e7e0ef;
+  text-align: center;
+  min-width: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.platform-summary-chip.is-active {
+  background: #35275d;
+  border-color: #35275d;
+}
+
+.platform-summary-chip.is-active strong,
+.platform-summary-chip.is-active span {
+  color: #fff;
+}
+
+.platform-summary-chip strong {
+  font-size: 1.15rem;
+  color: #35275d;
+  line-height: 1.2;
+}
+
+.platform-summary-chip span {
+  font-size: 0.72rem;
+  color: #6f5f82;
+}
+
+.platform-toolbar {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.platform-search-label,
+.platform-filter-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+#platform-studio-search,
+#platform-plan-filter {
+  width: 100%;
+  min-height: 44px;
+  box-sizing: border-box;
+  border: 1px solid #d9d0e4;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font: inherit;
+  background: #fff;
+}
+
+.platform-status-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.platform-tab {
+  min-height: 44px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid #d9d0e4;
+  background: #fff;
+  color: #4a3b63;
+  font: inherit;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.platform-tab.is-active {
+  background: #35275d;
+  border-color: #35275d;
+  color: #fff;
+}
+
+.platform-studio-list {
+  display: grid;
+  gap: 14px;
+}
+
+.platform-customer-entry-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.platform-customer-entry-row input,
+.platform-customer-entry-row button {
+  min-width: 0;
+  min-height: 44px;
+}
+
+.platform-studio-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 2px solid #c8b9d8;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 3px 10px rgba(53, 39, 93, 0.08);
+}
+
+.platform-studio-card:has(.platform-studio-actions [aria-expanded="true"]) {
+  border-color: #826aa5;
+  box-shadow: 0 5px 16px rgba(53, 39, 93, 0.16);
+}
+
+.platform-studio-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.platform-studio-card-title {
+  margin: 0;
+  font-size: 1rem;
+  color: #2f2548;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.platform-studio-meta {
+  margin: 0;
+  font-size: 0.86rem;
+  color: #6a5b7d;
+}
+
+.platform-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.platform-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.platform-badge--plan {
+  background: #efe8f8;
+  color: #4a2f7a;
+}
+
+.platform-badge--pending {
+  background: #fff4e5;
+  color: #9a5b00;
+}
+
+.platform-badge--trial {
+  background: #e8f4ff;
+  color: #1d5f99;
+}
+
+.platform-badge--active {
+  background: #e8f6ec;
+  color: #1f6b3a;
+}
+
+.platform-badge--expired {
+  background: #f6e8e8;
+  color: #8a3030;
+}
+
+.platform-badge--expiring {
+  background: #fff0e8;
+  color: #a04510;
+}
+
+.platform-badge--unconfigured {
+  background: #f0eef3;
+  color: #655a74;
+}
+
+.platform-badge--bound {
+  background: #e8f0ff;
+  color: #2f4f8a;
+}
+
+.platform-studio-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.platform-studio-actions .btn,
+.platform-collapsible .btn,
+.platform-subscription-controls .btn {
+  min-height: 44px;
+}
+
+.platform-studio-card,
+.platform-studio-detail,
+.platform-subscription-controls,
+.platform-studio-detail > *,
+.platform-subscription-controls > * {
+  min-width: 0;
+}
+
+.platform-studio-detail {
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 2px solid #d6c9e3;
+}
+
+.platform-studio-detail[hidden] {
+  display: none !important;
+}
+
+.platform-subscription-controls {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 12px;
+  background: #f7f3fa;
+}
+
+.platform-subscription-controls input:not([type="checkbox"]):not([type="radio"]),
+.platform-subscription-controls select,
+.platform-studio-detail input:not([type="checkbox"]):not([type="radio"]) {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 44px;
+  box-sizing: border-box;
+}
+
+.platform-subscription-controls input[type="checkbox"],
+.platform-subscription-controls input[type="radio"],
+.platform-studio-detail input[type="checkbox"],
+.platform-studio-detail input[type="radio"],
+.platform-approval-confirm input[type="checkbox"] {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  max-width: 24px;
+  min-height: 24px;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+}
+
+.platform-subscription-controls label:has(input[type="checkbox"]),
+.platform-subscription-controls label:has(input[type="radio"]) {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 44px;
+}
+
+.platform-collapsible {
+  border: 1px solid #e7e0ef;
+  border-radius: 14px;
+  background: #fff;
+  padding: 0 12px;
+}
+
+.platform-collapsible > summary {
+  list-style: none;
+  cursor: pointer;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  font-weight: 700;
+  color: #35275d;
+}
+
+.platform-collapsible > summary::-webkit-details-marker {
+  display: none;
+}
+
+.platform-collapsible > summary::after {
+  content: "展開";
+  margin-left: auto;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: #7a6a8f;
+}
+
+.platform-collapsible[open] > summary::after {
+  content: "收合";
+}
+
+.platform-collapsible-body {
+  padding: 0 0 14px;
+}
+
+.platform-hero {
+  margin-bottom: 10px;
+}
+
+.platform-hero h2 {
+  margin: 4px 0 6px;
+  font-size: 1.05rem;
+}
+
+.platform-hero p {
+  margin: 0;
+  color: #6a5b7d;
+  font-size: 0.9rem;
+}
+
+.platform-provision-card {
+  display: grid;
+  gap: 10px;
+}
+
+.platform-approval-confirm {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  min-height: 44px;
+}
+
+.platform-confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(48, 35, 39, 0.58);
+  backdrop-filter: blur(4px);
+}
+
+.platform-confirm-dialog {
+  width: min(100%, 430px);
+  box-sizing: border-box;
+  padding: 30px 26px 24px;
+  border: 1px solid #ead7dc;
+  border-radius: 28px;
+  background: #fffafa;
+  box-shadow: 0 24px 70px rgba(52, 34, 40, 0.24);
+  color: #3f3034;
+  text-align: center;
+}
+
+.platform-confirm-mark {
+  display: grid;
+  place-items: center;
+  width: 66px;
+  height: 66px;
+  margin: 0 auto 16px;
+  border-radius: 22px;
+  background: linear-gradient(145deg, #f6e4e8, #ead1d8);
+  color: #915f6c;
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.platform-confirm-eyebrow {
+  display: block;
+  margin-bottom: 7px;
+  color: #a77a85;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+}
+
+.platform-confirm-dialog h3 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.35;
+}
+
+.platform-confirm-studio {
+  margin: 18px 0 12px;
+  padding: 14px 16px;
+  border: 1px solid #ecd9de;
+  border-radius: 16px;
+  background: #fff;
+  font-size: 18px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.platform-confirm-dialog p {
+  margin: 0;
+  color: #79666b;
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+.platform-confirm-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.platform-confirm-actions .btn {
+  min-height: 52px;
+  margin: 0;
+  border-radius: 15px;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+@media (max-width: 420px) {
+  .platform-confirm-backdrop {
+    padding: 18px;
+  }
+
+  .platform-confirm-dialog {
+    padding: 26px 20px 20px;
+    border-radius: 24px;
+  }
+}
+
+.platform-invite-link-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+.platform-invite-link-row input {
+  min-width: 0;
+  min-height: 44px;
+}
+
+.platform-empty {
+  margin: 8px 0 0;
+  padding: 16px;
+  border-radius: 12px;
+  background: #f7f3fa;
+  color: #6a5b7d;
+  text-align: center;
+}
+
+@media (max-width: 560px) {
+  .platform-shell {
+    width: min(100% - 16px, 760px);
+    padding-top: 12px;
+    padding-bottom: 32px;
+  }
+
+  .platform-header img {
+    width: 72px;
+  }
+
+  .platform-status-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .platform-invite-link-row {
+    grid-template-columns: 1fr;
+  }
+
+  .platform-customer-entry-row {
+    grid-template-columns: 1fr;
+  }
+
+  .platform-studio-card {
+    padding: 10px;
+  }
+}

@@ -11,7 +11,7 @@
  */
 
 /** canonical serialization 的 schema 版本；欄位或規則改變時必須遞增 */
-export var IMPORT_SCHEMA_VERSION = "customer-import-v1";
+export var IMPORT_SCHEMA_VERSION = "customer-import-v2";
 
 /** CSV 原文 UTF-8 bytes 上限（512KB） */
 export var CSV_MAX_BYTES = 512 * 1024;
@@ -31,10 +31,13 @@ var TARGET_ALIASES = {
   phone: ["phone", "電話", "手機", "手機號碼", "聯絡電話"],
   birthday: ["birthday", "生日", "出生日期"],
   note: ["note", "備註", "特別事項", "客戶備註"],
-  customer_no: ["customer_no", "客戶編號", "會員編號"]
+  customer_no: ["customer_no", "客戶編號", "會員編號"],
+  previous_service: ["previous_service", "曾做過的服務項目", "曾做服務", "過往服務"],
+  previous_service_date: ["previous_service_date", "服務日期", "曾做服務日期", "過往服務日期"]
 };
 
-var TARGET_FIELDS = ["name", "phone", "birthday", "note", "customer_no"];
+var TARGET_FIELDS = ["name", "phone", "birthday", "note", "customer_no",
+  "previous_service", "previous_service_date"];
 
 function makeError(message, status) {
   var error = new Error(message);
@@ -228,7 +231,9 @@ export function resolveColumnMapping(header, manualMapping) {
     phone: null,
     birthday: null,
     note: null,
-    customer_no: null
+    customer_no: null,
+    previous_service: null,
+    previous_service_date: null
   };
 
   Object.keys(manual).forEach(function (key) {
@@ -310,6 +315,12 @@ export function normalizeImportedPhone(rawPhone) {
     return { value: "", warnings: ["未提供電話"], error: null };
   }
 
+  // CSV 範本以 ="09…" 強制試算表將電話視為文字，避免自動刪除開頭 0。
+  // 僅接受完整包住純電話數字的固定格式，其餘公式仍依非法字元拒絕。
+  if (/^="\+?\d+"$/.test(half)) {
+    half = half.slice(2, -1);
+  }
+
   var cleaned = half.replace(/[\s\-()]/g, "");
   if (!/^\+?\d+$/.test(cleaned)) {
     return { value: "", warnings: [], error: "電話含非法字元" };
@@ -389,13 +400,23 @@ export function normalizeImportRows(header, rows, mapping) {
     }
 
     var customerNo = cellOf("customer_no").trim() || null;
+    var previousService = cellOf("previous_service").trim();
+    if (previousService.length > 100) {
+      errors.push("曾做過的服務項目最長 100 字");
+    }
+    var previousServiceDate = cellOf("previous_service_date").trim();
+    if (previousServiceDate && !isRealDateString(previousServiceDate)) {
+      errors.push("服務日期格式請使用 YYYY-MM-DD");
+    }
 
     var normalized = {
       name: name,
       phone: phoneResult.value,
       birthday: birthday,
       note: note,
-      customerNo: customerNo
+      customerNo: customerNo,
+      previousService: previousService,
+      previousServiceDate: previousServiceDate
     };
 
     var maskedPhone = phoneResult.value
@@ -410,7 +431,9 @@ export function normalizeImportRows(header, rows, mapping) {
         phone: maskedPhone,
         birthday: birthday,
         note: note,
-        customerNo: customerNo
+        customerNo: customerNo,
+        previousService: previousService,
+        previousServiceDate: previousServiceDate
       },
       errors: errors,
       warnings: warnings,
@@ -506,7 +529,9 @@ export function buildCanonicalString(header, mapping, normalizedRows) {
       row.normalized.phone,
       row.normalized.birthday,
       row.normalized.note,
-      row.normalized.customerNo
+      row.normalized.customerNo,
+      row.normalized.previousService,
+      row.normalized.previousServiceDate
     ];
   });
 

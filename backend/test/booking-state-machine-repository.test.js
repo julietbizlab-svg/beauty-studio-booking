@@ -25,7 +25,11 @@ var MIGRATION_FILES = [
   "0006_customer_claim_invites.sql",
   "0007_customer_comparison_photos.sql",
   "0008_booking_notice_policy.sql",
-  "0009_booking_status_machine.sql"
+  "0009_booking_status_machine.sql",
+  "0012_booking_review_deposit_deadline.sql",
+  "0017_owner_hub.sql",
+  "0024_platform_assessment_assignment.sql",
+  "0027_service_assessment_type.sql"
 ];
 
 var NOW = "2026-07-20T00:00:00.000Z";
@@ -62,7 +66,7 @@ function seedBase(db) {
   db.prepare(
     "INSERT INTO services (id, tenant_id, code, name, duration_minutes, price_amount, status, " +
     "sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-  ).run("svc-a", "tenant-a", "brow", "霧眉", 60, 3000, "active", 0, NOW, NOW);
+  ).run("svc-a", "tenant-a", "beauty", "一般美容", 60, 3000, "active", 0, NOW, NOW);
   db.prepare(
     "INSERT INTO tenant_settings (id, tenant_id, setting_key, setting_value, value_type, " +
     "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
@@ -444,12 +448,15 @@ test("createBooking／cancelBooking／cancelBookingByOwner 無退步", async fun
   seedBase(db);
   var env = makeEnv(db);
 
+  var bookingDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Taipei", year: "numeric", month: "2-digit", day: "2-digit"
+  }).format(new Date(Date.now() + 2 * 24 * 60 * 60 * 1000));
   var created = await createBooking(env, {
     userId: "U-test-user",
     customerName: "客戶甲",
     phone: "0912345678",
     serviceId: "svc-a",
-    date: "2027-06-15",
+    date: bookingDate,
     time: "10:00"
   });
   assert.equal(created.booking.status, "已確認");

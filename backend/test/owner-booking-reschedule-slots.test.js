@@ -673,3 +673,16 @@ test("tenant 隔離；缺 STAFF_ID 500", async function () {
     }
   );
 });
+
+test("Android LINE 內建瀏覽器選取改期時段可即時解鎖確認按鈕", function () {
+  var app = readFileSync(join(migrationsDir, "..", "..", "docs", "owner", "js", "app.js"), "utf8");
+  assert.match(
+    app,
+    /ownerRescheduleTime\.addEventListener\("input",[\s\S]*?updateRescheduleConfirmEnabled\(\)/
+  );
+});
+
+test("改期的二次操作確認視窗必須顯示在改期視窗上方", function () {
+  var css = readFileSync(join(migrationsDir, "..", "..", "docs", "owner", "css", "style.css"), "utf8");
+  assert.match(css, /#owner-confirm-modal\s*\{[^}]*z-index:\s*1100/);
+});

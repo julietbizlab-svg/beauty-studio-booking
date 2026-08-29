@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="2500" height="843" viewBox="0 0 2500 843">
+  <rect width="2500" height="843" fill="#fff8f6"/>
+  <rect x="34" y="34" width="1199" height="775" rx="54" fill="#f4ede3" stroke="#d9c6ad" stroke-width="6"/>
+  <rect x="1267" y="34" width="1199" height="775" rx="54" fill="#754954"/>
+
+  <text x="633" y="190" text-anchor="middle" fill="#8b735c" font-family="PingFang TC, Noto Sans TC, sans-serif" font-size="44" font-weight="700" letter-spacing="7">JULIET STUDIO OS</text>
+  <text x="633" y="355" text-anchor="middle" fill="#49392d" font-family="PingFang TC, Noto Sans TC, sans-serif" font-size="92" font-weight="800">標準版展示</text>
+  <text x="633" y="465" text-anchor="middle" fill="#796654" font-family="PingFang TC, Noto Sans TC, sans-serif" font-size="50" font-weight="600">美甲・美睫預約</text>
+  <text x="633" y="545" text-anchor="middle" fill="#9a826b" font-family="PingFang TC, Noto Sans TC, sans-serif" font-size="42">日常店務｜不含 AI</text>
+  <path d="M585 655h96m-48-48 48 48-48 48" fill="none" stroke="#8b735c" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <text x="1867" y="190" text-anchor="middle" fill="#f2dce1" font-family="PingFang TC, Noto Sans TC, sans-serif" font-size="44" font-weight="700" letter-spacing="7">JULIET STUDIO OS</text>
+  <text x="1867" y="355" text-anchor="middle" fill="#ffffff" font-family="PingFang TC, Noto Sans TC, sans-serif" font-size="92" font-weight="800">旗艦 AI 版展示</text>
+  <text x="1867" y="465" text-anchor="middle" fill="#f9e9ed" font-family="PingFang TC, Noto Sans TC, sans-serif" font-size="50" font-weight="600">霧眉・霧唇預約</text>
+  <text x="1867" y="545" text-anchor="middle" fill="#e8cdd4" font-family="PingFang TC, Noto Sans TC, sans-serif" font-size="42">AI 諮詢｜新客評估</text>
+  <path d="M1819 655h96m-48-48 48 48-48 48" fill="none" stroke="#ffffff" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

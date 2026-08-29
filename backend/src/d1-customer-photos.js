@@ -212,6 +212,114 @@ export async function listCustomerPhotoSets(env, customerId) {
   };
 }
 
+/**
+ * 業主客戶相簿：聚合同一客戶散落於各流程的私有照片 metadata。
+ * 不搬動 R2、不回 object_key；每張照片仍沿用原本的 owner-only content API。
+ */
+export async function listCustomerAlbum(env, customerId) {
+  ensurePhotoEnv(env);
+  var id = await fetchActiveCustomer(env, customerId);
+  var results = await Promise.all([
+    env.DB.prepare(
+      "SELECT p.id,p.kind,p.mime_type,p.byte_size,p.created_at,s.title,s.captured_at " +
+      "FROM customer_photos p JOIN customer_photo_sets s " +
+      "ON s.tenant_id=p.tenant_id AND s.id=p.photo_set_id " +
+      "WHERE p.tenant_id=?1 AND p.customer_id=?2 AND p.deleted_at IS NULL " +
+      "AND s.deleted_at IS NULL"
+    ).bind(env.TENANT_ID, id).all(),
+    env.DB.prepare(
+      "SELECT p.id,p.kind,p.mime_type,p.byte_size,p.created_at,p.session_id,t.name AS title " +
+      "FROM assessment_photos p JOIN assessment_sessions s " +
+      "ON s.tenant_id=p.tenant_id AND s.id=p.session_id " +
+      "JOIN assessment_templates t ON t.tenant_id=s.tenant_id AND t.id=s.template_id " +
+      "JOIN line_accounts la ON la.tenant_id=s.tenant_id AND la.line_user_id=s.line_user_id " +
+      "WHERE p.tenant_id=?1 AND la.customer_id=?2"
+    ).bind(env.TENANT_ID, id).all(),
+    env.DB.prepare(
+      "SELECT p.id,p.kind,p.mime_type,p.byte_size,p.created_at,p.session_id " +
+      "FROM brow_intake_photos p JOIN brow_intake_sessions s " +
+      "ON s.tenant_id=p.tenant_id AND s.id=p.session_id " +
+      "JOIN line_accounts la ON la.tenant_id=s.tenant_id AND la.line_user_id=s.line_user_id " +
+      "WHERE p.tenant_id=?1 AND la.customer_id=?2"
+    ).bind(env.TENANT_ID, id).all(),
+    env.DB.prepare(
+      "SELECT p.id,p.mime_type,p.byte_size,p.created_at,p.booking_id," +
+      "(SELECT bi.service_name_snapshot FROM booking_items bi " +
+      "WHERE bi.tenant_id=b.tenant_id AND bi.booking_id=b.id ORDER BY bi.sort_order LIMIT 1) AS title " +
+      "FROM booking_review_photos p JOIN bookings b " +
+      "ON b.tenant_id=p.tenant_id AND b.id=p.booking_id " +
+      "WHERE p.tenant_id=?1 AND b.customer_id=?2 AND p.deleted_at IS NULL"
+    ).bind(env.TENANT_ID, id).all()
+  ]);
+  var items = [];
+  (results[0].results || []).forEach(function (row) {
+    items.push({ photoId: row.id, source: "comparison", kind: row.kind,
+      label: row.kind === "before" ? "施作前" : "施作後", title: row.title || "服務照片",
+      capturedAt: row.captured_at || null, createdAt: row.created_at,
+      mimeType: row.mime_type, byteSize: Number(row.byte_size) || 0,
+      contentPath: albumContentPath(id, "comparison", row.id) });
+  });
+  (results[1].results || []).forEach(function (row) {
+    items.push({ photoId: row.id, source: "assessment", kind: row.kind,
+      label: "新客評估", title: row.title || "新客評估", capturedAt: null,
+      createdAt: row.created_at, mimeType: row.mime_type, byteSize: Number(row.byte_size) || 0,
+      contentPath: albumContentPath(id, "assessment", row.id) });
+  });
+  (results[2].results || []).forEach(function (row) {
+    items.push({ photoId: row.id, source: "brow_intake", kind: row.kind,
+      label: "舊眉評估", title: "舊眉評估", capturedAt: null,
+      createdAt: row.created_at, mimeType: row.mime_type, byteSize: Number(row.byte_size) || 0,
+      contentPath: albumContentPath(id, "brow_intake", row.id) });
+  });
+  (results[3].results || []).forEach(function (row) {
+    items.push({ photoId: row.id, source: "booking_review", kind: "review",
+      label: "預約補充", title: row.title || "預約補充照片", capturedAt: null,
+      createdAt: row.created_at, mimeType: row.mime_type, byteSize: Number(row.byte_size) || 0,
+      contentPath: albumContentPath(id, "booking_review", row.id) });
+  });
+  items.sort(function (a, b) {
+    return String(b.capturedAt || b.createdAt).localeCompare(String(a.capturedAt || a.createdAt));
+  });
+  return { ok: true, photos: items };
+}
+
+function albumContentPath(customerId, source, photoId) {
+  return "/api/owner/customers/by-id/" + encodeURIComponent(customerId) +
+    "/album/" + encodeURIComponent(source) + "/" + encodeURIComponent(photoId) + "/content";
+}
+
+export async function getCustomerAlbumPhotoContent(env, customerId, sourceInput, photoId) {
+  ensurePhotoEnv(env);
+  var id = await fetchActiveCustomer(env, customerId);
+  var source = String(sourceInput || "");
+  var sql = "";
+  if (source === "comparison") {
+    sql = "SELECT p.object_key,p.mime_type FROM customer_photos p " +
+      "WHERE p.tenant_id=?1 AND p.customer_id=?2 AND p.id=?3 AND p.deleted_at IS NULL";
+  } else if (source === "assessment") {
+    sql = "SELECT p.object_key,p.mime_type FROM assessment_photos p " +
+      "JOIN assessment_sessions s ON s.tenant_id=p.tenant_id AND s.id=p.session_id " +
+      "JOIN line_accounts la ON la.tenant_id=s.tenant_id AND la.line_user_id=s.line_user_id " +
+      "WHERE p.tenant_id=?1 AND la.customer_id=?2 AND p.id=?3";
+  } else if (source === "brow_intake") {
+    sql = "SELECT p.object_key,p.mime_type FROM brow_intake_photos p " +
+      "JOIN brow_intake_sessions s ON s.tenant_id=p.tenant_id AND s.id=p.session_id " +
+      "JOIN line_accounts la ON la.tenant_id=s.tenant_id AND la.line_user_id=s.line_user_id " +
+      "WHERE p.tenant_id=?1 AND la.customer_id=?2 AND p.id=?3";
+  } else if (source === "booking_review") {
+    sql = "SELECT p.object_key,p.mime_type FROM booking_review_photos p " +
+      "JOIN bookings b ON b.tenant_id=p.tenant_id AND b.id=p.booking_id " +
+      "WHERE p.tenant_id=?1 AND b.customer_id=?2 AND p.id=?3 AND p.deleted_at IS NULL";
+  } else {
+    throw makeError("照片來源無效", 400);
+  }
+  var row = await env.DB.prepare(sql).bind(env.TENANT_ID, id, String(photoId || "")).first();
+  if (!row) throw makeError("找不到照片", 404);
+  var object = await env.PHOTO_BUCKET.get(row.object_key);
+  if (!object) throw makeError("照片檔案不存在", 404);
+  return { body: object.body, mimeType: row.mime_type };
+}
+
 function normalizeTitle(input) {
   var title = String(input == null ? "" : input).trim();
   if (title.length > PHOTO_SET_TITLE_MAX_LENGTH) {

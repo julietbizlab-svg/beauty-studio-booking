@@ -8,7 +8,7 @@
 
   var state = {
     user: null,
-    settings: null,
+    settings: {},
     services: [],
     selectedService: null,
     selectedDate: "",
@@ -18,10 +18,71 @@
     calendarMonth: "",
     monthDays: {},
     serverProfile: null,
-    profileLocked: false
+    profileLocked: false,
+    requiresAssessment: false,
+    isReturningCustomer: false
   };
 
   var els = {};
+  var assessmentState = { code: "", question: null, status: "", busy: false };
+
+  function renderAssessmentSummary(assessment) {
+    if (!els.assessmentSummary) return;
+    if (!assessment || !Array.isArray(assessment.answers)) {
+      els.assessmentSummary.hidden = true;
+      els.assessmentSummary.innerHTML = "";
+      return;
+    }
+    var rows = assessment.answers.map(function (answer) {
+      var value = Array.isArray(answer.value) ? answer.value.join("、") : String(answer.value || "");
+      return '<div><dt>' + escapeHtml(answer.prompt || answer.key || "評估資料") + '</dt><dd>' +
+        escapeHtml(value || "已填寫") + '</dd></div>';
+    }).join("");
+    els.assessmentSummary.innerHTML = '<strong>您先前送出的評估資料</strong><dl>' + rows +
+      '</dl><p>已上傳照片：' + Number(assessment.photoCount || 0) + ' 張</p>';
+    els.assessmentSummary.hidden = false;
+  }
+
+  function syncBookingWorkflow() {
+    var hasProfile = Boolean(state.serverProfile && state.serverProfile.customerName &&
+      state.serverProfile.phone && state.serverProfile.birthday);
+    if (els.serviceSelection) els.serviceSelection.hidden = !hasProfile;
+    if (els.assessmentPanel) els.assessmentPanel.hidden = !hasProfile ||
+      !state.selectedService || !state.requiresAssessment;
+    if (els.bookingFlow) els.bookingFlow.hidden = !hasProfile || !state.selectedService ||
+      (state.requiresAssessment && assessmentState.status !== "approved");
+    if (els.profileSave) els.profileSave.hidden = state.profileLocked && hasProfile;
+  }
+
+  async function loadAssessmentTemplate(service) {
+    if (!els.assessmentStart || !service) return;
+    try {
+      var previousCode = assessmentState.code;
+      var configured = await window.beautyApi.getAssessmentTemplate(service.id);
+      assessmentState.code = configured.code || "";
+      state.requiresAssessment = configured.required === true;
+      if (configured.status === "approved") assessmentState.status = "approved";
+      else if (previousCode !== assessmentState.code) assessmentState.status = "";
+      renderAssessmentSummary(configured.assessment);
+      if (els.assessmentStepTitle) {
+        els.assessmentStepTitle.textContent = "步驟 3：填寫" + (configured.name || "新客評估");
+      }
+      els.assessmentStart.textContent = "開始問卷評估";
+      els.assessmentStart.hidden = !assessmentState.code || configured.ready === false ||
+        assessmentState.status === "approved";
+      els.assessmentStatus.textContent = configured.ready === false
+        ? (configured.message || "此服務的評估範本準備中")
+        : (assessmentState.status === "approved"
+          ? "評估已通過，先前送出的資料與照片都已保留。請直接選擇日期與時間完成預約。"
+          : "");
+      syncBookingWorkflow();
+    } catch (error) {
+      els.assessmentStart.hidden = true;
+      els.assessmentStatus.textContent = error.message || "此工作室尚未設定新客評估";
+      state.requiresAssessment = true;
+      syncBookingWorkflow();
+    }
+  }
 
   function $(id) {
     return document.getElementById(id);
@@ -32,6 +93,95 @@
     el.className = "status" + (type ? " " + type : "");
     el.textContent = message || "";
     el.style.display = message ? "block" : "none";
+  }
+
+  function renderAssessmentQuestion(question, status) {
+    assessmentState.question = question || null;
+    if (status) assessmentState.status = status;
+    syncBookingWorkflow();
+    if (!question) {
+      els.assessmentStart.hidden = true;
+      els.assessmentForm.hidden = true;
+      els.assessmentOptions.innerHTML = "";
+      els.assessmentDate.hidden = true;
+      els.assessmentPhoto.hidden = true;
+      if (assessmentState.status === "approved") {
+        els.assessmentStatus.textContent = "老師已完成評估，現在可以選擇服務及預約時間。";
+        state.calendarMonth = getCurrentMonthIso();
+        loadMonthCalendar(state.calendarMonth).catch(function (error) {
+          setStatus("error", error.message);
+        });
+      } else {
+        els.assessmentStatus.textContent = "評估資料已送交老師人工審核，審核通過後才會開放服務及預約時間。";
+      }
+      return;
+    }
+    els.assessmentForm.hidden = false;
+    els.assessmentPrompt.textContent = question.prompt || "";
+    els.assessmentOptions.innerHTML = "";
+    els.assessmentDate.hidden = question.type !== "date";
+    els.assessmentPhoto.hidden = question.type !== "photo";
+    els.assessmentSubmit.textContent = question.type === "multiple" ? "完成選擇" :
+      (question.type === "photo" ? "上傳照片" : "送出答案");
+    if (question.type === "single" || question.type === "multiple") {
+      (question.options || []).forEach(function (option) {
+        var label = document.createElement("label"); label.className = "assessment-choice";
+        var input = document.createElement("input"); input.type = question.type === "multiple" ? "checkbox" : "radio";
+        input.name = "assessment-answer"; input.value = option;
+        var span = document.createElement("span"); span.textContent = option;
+        label.appendChild(input); label.appendChild(span); els.assessmentOptions.appendChild(label);
+      });
+    }
+  }
+
+  async function startAssessment(code) {
+    if (assessmentState.busy) return; assessmentState.busy = true;
+    els.assessmentStart.hidden = true;
+    els.assessmentStatus.textContent = "載入評估中…";
+    try {
+      var result = await window.beautyApi.startAssessment(code, state.selectedService && state.selectedService.id);
+      assessmentState.code = code; els.assessmentIntro.hidden = false;
+      els.assessmentIntro.textContent = result.intro || "";
+      renderAssessmentQuestion(result.question, result.status);
+      els.assessmentStatus.textContent = "";
+    } catch (error) {
+      els.assessmentStart.hidden = !assessmentState.code;
+      els.assessmentStatus.textContent = error.message || "目前無法開始評估";
+    }
+    assessmentState.busy = false;
+  }
+
+  async function submitAssessment(event) {
+    event.preventDefault();
+    var question = assessmentState.question;
+    if (!question || !assessmentState.code || assessmentState.busy) return;
+    var answer;
+    if (question.type === "multiple") {
+      answer = Array.from(els.assessmentOptions.querySelectorAll("input:checked")).map(function (input) { return input.value; });
+      if (!answer.length) { els.assessmentStatus.textContent = "請至少選擇一項。"; return; }
+    } else if (question.type === "single") {
+      var selected = els.assessmentOptions.querySelector("input:checked");
+      if (!selected) { els.assessmentStatus.textContent = "請選擇一項。"; return; }
+      answer = selected.value;
+    } else if (question.type === "date") {
+      answer = els.assessmentDate.value;
+      if (!answer) { els.assessmentStatus.textContent = "請選擇日期。"; return; }
+    }
+    assessmentState.busy = true; els.assessmentSubmit.disabled = true;
+    els.assessmentStatus.textContent = question.type === "photo" ? "照片上傳中…" : "答案儲存中…";
+    try {
+      var result;
+      if (question.type === "photo") {
+        var file = els.assessmentPhoto.files && els.assessmentPhoto.files[0];
+        if (!file) throw new Error("請選擇照片。");
+        if (file.size > 5 * 1024 * 1024) throw new Error("照片不可超過 5 MB。");
+        result = await window.beautyApi.uploadAssessmentPhoto(assessmentState.code, question.key, file, state.selectedService && state.selectedService.id);
+        els.assessmentPhoto.value = "";
+      } else result = await window.beautyApi.answerAssessment(assessmentState.code, answer, state.selectedService && state.selectedService.id);
+      renderAssessmentQuestion(result.nextQuestion, result.submitted ? "submitted" : "active");
+      if (result.nextQuestion) els.assessmentStatus.textContent = "已儲存，請繼續下一題。";
+    } catch (error) { els.assessmentStatus.textContent = error.message || "送出失敗，請稍後重試"; }
+    assessmentState.busy = false; els.assessmentSubmit.disabled = false;
   }
 
   function setStatusAlert(type, title, lines) {
@@ -56,8 +206,13 @@
     if (settings.primaryColor) {
       document.documentElement.style.setProperty("--primary", settings.primaryColor);
     }
-    if (settings.brandName) {
-      els.brand.textContent = settings.brandName;
+    var appTitle = window.BEAUTY_CONFIG && window.BEAUTY_CONFIG.APP_TITLE;
+    var brandName = String(settings.brandName || "").trim();
+    els.brand.textContent = brandName || appTitle || "工作室";
+    if (brandName) document.title = brandName;
+    els.brand.classList.remove("is-loading");
+    if (typeof els.brand.removeAttribute === "function") {
+      els.brand.removeAttribute("aria-busy");
     }
     if (settings.announcement) {
       els.announcement.textContent = settings.announcement;
@@ -107,10 +262,24 @@
     return parts[0] + "年" + Number(parts[1]) + "月";
   }
 
+  function formatMainCalendarMonthTitle(month) {
+    var parts = month.split("-");
+    return '<span class="calendar-title-year">' + escapeHtml(parts[0]) + '年</span>' +
+      '<span class="calendar-title-month">' + escapeHtml(String(Number(parts[1]))) + '月</span>';
+  }
+
   function addMonths(month, delta) {
     var parts = month.split("-");
     var date = new Date(Number(parts[0]), Number(parts[1]) - 1 + delta, 1);
     return date.getFullYear() + "-" + pad2(date.getMonth() + 1);
+  }
+
+  function getMaxBookableMonth() {
+    var today = getTodayIso();
+    var parts = today.split("-");
+    var current = parts[0] + "-" + parts[1];
+    var openDay = Number((state.settings || {}).nextMonthBookingOpenDay || 15);
+    return Number(parts[2]) >= openDay ? addMonths(current, 1) : current;
   }
 
   function getWeekdayLabel(iso) {
@@ -181,9 +350,15 @@
     }
 
     var month = state.calendarMonth || getCurrentMonthIso();
+    var maxBookableMonth = getMaxBookableMonth();
+    if (month > maxBookableMonth) {
+      month = maxBookableMonth;
+      state.calendarMonth = month;
+    }
+    if (els.calendarNext) els.calendarNext.disabled = month >= maxBookableMonth;
     var today = getTodayIso();
     if (els.calendarMonthLabel) {
-      els.calendarMonthLabel.textContent = formatMonthTitle(month);
+      els.calendarMonthLabel.innerHTML = formatMainCalendarMonthTitle(month);
     }
 
     var cells = buildCalendarCells(month);
@@ -327,15 +502,234 @@
 
     container.querySelectorAll(".service-item").forEach(function (el) {
       el.addEventListener("click", function () {
-        var id = el.getAttribute("data-id");
-        state.selectedService = state.services.find(function (s) { return s.id === id; });
-        clearDateAndSlots();
-        updateCalendarVisibility();
-        state.calendarMonth = getCurrentMonthIso();
-        loadMonthCalendar(state.calendarMonth).catch(function (e) { setStatus("error", e.message); });
-        renderServices();
+        selectServiceById(el.getAttribute("data-id"));
       });
     });
+  }
+
+  async function selectServiceById(id) {
+    var selected = state.services.find(function (service) {
+      return String(service.id) === String(id);
+    });
+    if (!selected) return;
+    state.selectedService = selected;
+    try {
+      if (window.localStorage) window.localStorage.setItem(getCustomerProfileStorageKey() + ":last-service", String(selected.id));
+    } catch (ignore) {}
+    state.monthDays = {};
+    clearDateAndSlots();
+    renderServices();
+    updateCalendarVisibility();
+    var skipsAssessment =
+      !selected.assessmentTemplateCode || selected.assessmentTemplateCode === "none" ||
+      /美甲|美睫|睫毛/.test(String(selected.name || ""));
+    if (skipsAssessment) {
+      state.requiresAssessment = false;
+      assessmentState.code = "";
+      assessmentState.status = "";
+      syncBookingWorkflow();
+      state.calendarMonth = getCurrentMonthIso();
+      renderCalendar();
+      loadMonthCalendar(state.calendarMonth).catch(function (e) {
+        setStatus("error", e.message);
+      });
+      return;
+    }
+    await loadAssessmentTemplate(selected);
+    if (!state.requiresAssessment || assessmentState.status === "approved") {
+      state.calendarMonth = getCurrentMonthIso();
+      loadMonthCalendar(state.calendarMonth).catch(function (e) {
+        setStatus("error", e.message);
+      });
+    }
+  }
+
+  async function loadAiCapability() {
+    if (!els.aiAssistant) return;
+    if (!window.BEAUTY_CONFIG ||
+        window.BEAUTY_CONFIG.PRODUCT_TIER !== "ai") {
+      els.aiAssistant.hidden = true;
+      return;
+    }
+    try {
+      var capability = await window.beautyApi.getCustomerAiCapability();
+      els.aiAssistant.hidden = !capability.enabled;
+      if (capability.enabled) {
+        await loadCustomerAiHistory();
+        await loadBrowPhotoRequest();
+      }
+    } catch (ignore) {
+      els.aiAssistant.hidden = true;
+    }
+  }
+
+  function formatAiHistoryTime(value) {
+    var date = new Date(String(value || ""));
+    if (!Number.isFinite(date.getTime())) return "";
+    return new Intl.DateTimeFormat("zh-TW", {
+      timeZone: "Asia/Taipei",
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    }).format(date);
+  }
+
+  function renderCustomerAiHistory(items) {
+    if (!els.aiHistoryList) return;
+    if (!items.length) {
+      els.aiHistoryList.innerHTML =
+        '<div class="empty">目前還沒有諮詢紀錄</div>';
+      return;
+    }
+    els.aiHistoryList.innerHTML = items.map(function (item) {
+      var ownerReply = item.ownerReply
+        ? '<div class="ai-history-owner-reply"><strong>工作室回覆</strong>' +
+          '<p>' + escapeHtml(item.ownerReply.text) + '</p>' +
+          '<span>' + escapeHtml(formatAiHistoryTime(item.ownerReply.sentAt)) +
+          '</span></div>'
+        : '<p class="ai-history-waiting">工作室尚未另外回覆</p>';
+      var autoReply = item.autoReply
+        ? '<p><strong>即時回答</strong>' + escapeHtml(item.autoReply) + '</p>' : '';
+      return '<article class="ai-history-item">' +
+        '<div class="ai-history-time">' +
+        escapeHtml(formatAiHistoryTime(item.createdAt)) + '</div>' +
+        '<p><strong>您的問題</strong>' + escapeHtml(item.customerMessage) + '</p>' +
+        autoReply + ownerReply + '</article>';
+    }).join("");
+  }
+
+  async function loadCustomerAiHistory() {
+    if (!els.aiHistoryList || !window.beautyApi ||
+        typeof window.beautyApi.getCustomerAiInquiries !== "function") return;
+    if (els.aiHistoryRefresh) els.aiHistoryRefresh.disabled = true;
+    try {
+      var result = await window.beautyApi.getCustomerAiInquiries();
+      renderCustomerAiHistory((result && result.inquiries) || []);
+    } catch (error) {
+      els.aiHistoryList.innerHTML =
+        '<div class="empty">目前無法載入諮詢紀錄，請稍後重試</div>';
+    } finally {
+      if (els.aiHistoryRefresh) els.aiHistoryRefresh.disabled = false;
+    }
+  }
+
+  async function loadBrowPhotoRequest() {
+    if (!els.browPhotoUpload || !window.beautyApi.getBrowIntake) return;
+    try {
+      var result = await window.beautyApi.getBrowIntake();
+      var intake = result.intake || {};
+      els.browPhotoUpload.hidden = !intake.photoRequested;
+      if (intake.photoRequested) {
+        els.browPhotoRequestNote.textContent = intake.photoRequestNote || "工作室需要您補充眉部照片。";
+        var uploaded = {};
+        (intake.photos || []).forEach(function (photo) { uploaded[photo.kind] = true; });
+        [[els.browPhotoFront, "front"], [els.browPhotoLeft, "left"], [els.browPhotoRight, "right"]]
+          .forEach(function (entry) { entry[0].disabled = Boolean(uploaded[entry[1]]); });
+        els.browPhotoStatus.textContent = Object.keys(uploaded).length
+          ? "已上傳 " + Object.keys(uploaded).length + "／3 張。" : "";
+      }
+    } catch (ignore) { els.browPhotoUpload.hidden = true; }
+  }
+
+  async function uploadBrowPhotos() {
+    var entries = [["front", els.browPhotoFront], ["left", els.browPhotoLeft], ["right", els.browPhotoRight]];
+    var selected = entries.filter(function (entry) { return entry[1].files && entry[1].files[0]; });
+    if (!selected.length) { els.browPhotoStatus.textContent = "請先選擇要上傳的照片。"; return; }
+    els.browPhotoSubmit.disabled = true;
+    try {
+      for (var i = 0; i < selected.length; i++) {
+        els.browPhotoStatus.textContent = "正在上傳 " + (i + 1) + "／" + selected.length + "…";
+        await window.beautyApi.uploadBrowIntakePhoto(selected[i][0], selected[i][1].files[0]);
+      }
+      els.browPhotoStatus.textContent = "照片已安全送交工作室。";
+      await loadBrowPhotoRequest();
+    } catch (error) { els.browPhotoStatus.textContent = error.message || "照片上傳失敗"; }
+    finally { els.browPhotoSubmit.disabled = false; }
+  }
+
+  async function askAiAssistant() {
+    var message = String(els.aiMessage.value || "").trim();
+    if (!message) {
+      els.aiAnswer.textContent = "請先輸入想詢問工作室的問題。";
+      els.aiAnswer.hidden = false;
+      return;
+    }
+    els.aiAskBtn.disabled = true;
+    els.aiAskBtn.textContent = "送出中…";
+    els.aiAnswer.textContent = "已收到您的問題，正在送交工作室…";
+    els.aiAnswer.hidden = false;
+    if (els.aiHistoryList) {
+      var pendingItem = '<article class="ai-history-item ai-history-pending">' +
+        '<div class="ai-history-time">送出中…</div>' +
+        '<p><strong>您的問題</strong>' + escapeHtml(message) + '</p>' +
+        '<p class="ai-history-waiting">正在送交工作室</p></article>';
+      if (els.aiHistoryList.querySelector(".empty")) {
+        els.aiHistoryList.innerHTML = pendingItem;
+      } else {
+        els.aiHistoryList.insertAdjacentHTML("afterbegin", pendingItem);
+      }
+    }
+    try {
+      var result = await window.beautyApi.submitCustomerInquiry(
+        message,
+        state.selectedService ? state.selectedService.id : ""
+      );
+      var answerMessage = result.message || "問題已送出，將由工作室確認後回覆。";
+      var answerOptions = Array.isArray(result.options) ? result.options : [];
+      var nextAction = result.nextAction && result.nextAction.type === "start_booking"
+        ? result.nextAction : null;
+      els.aiAnswer.innerHTML = '<p>' + escapeHtml(answerMessage).replace(/\n/g, "<br>") + '</p>' +
+        (answerOptions.length ? '<div class="ai-answer-options">' +
+          answerOptions.map(function (option) {
+            return '<button type="button" class="btn btn-small" data-ai-answer-option="' +
+              escapeHtml(option) + '">' + escapeHtml(option) + '</button>';
+          }).join("") + '</div>' : "") +
+        (nextAction ? '<button type="button" class="btn btn-primary ai-booking-action" data-ai-service-id="' +
+          escapeHtml(nextAction.serviceId || "") + '">' + escapeHtml(nextAction.label || "開始預約") +
+          '</button>' : "");
+      els.aiAnswer.hidden = false;
+      els.aiMessage.value = "";
+      els.aiAnswer.querySelectorAll("[data-ai-answer-option]").forEach(function (button) {
+        button.addEventListener("click", function () {
+          els.aiMessage.value = button.getAttribute("data-ai-answer-option") || "";
+          askAiAssistant();
+        });
+      });
+      var bookingAction = els.aiAnswer.querySelector("[data-ai-service-id]");
+      if (bookingAction) bookingAction.addEventListener("click", async function () {
+        var serviceId = bookingAction.getAttribute("data-ai-service-id") || "";
+        bookingAction.disabled = true;
+        try {
+          await selectServiceById(serviceId);
+          if (els.serviceSelection) {
+            els.serviceSelection.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+          setStatus("success", state.requiresAssessment
+            ? "已為您選好服務，請先完成此服務的評估。"
+            : "已為您選好服務，請選擇日期與時間後確認預約。");
+        } finally {
+          bookingAction.disabled = false;
+        }
+      });
+      await loadCustomerAiHistory();
+      await loadBrowPhotoRequest();
+    } catch (error) {
+      els.aiAnswer.textContent = "問題尚未送出，請再試一次。" +
+        (error && error.message ? "（" + error.message + "）" : "");
+      els.aiAnswer.hidden = false;
+      var pending = els.aiHistoryList && els.aiHistoryList.querySelector(".ai-history-pending");
+      if (pending) {
+        pending.classList.add("ai-history-failed");
+        pending.querySelector(".ai-history-time").textContent = "尚未送出";
+        pending.querySelector(".ai-history-waiting").textContent = "請重新送出";
+      }
+    } finally {
+      els.aiAskBtn.disabled = false;
+      els.aiAskBtn.textContent = "送出問題";
+    }
   }
 
   function renderSlots() {
@@ -415,35 +809,280 @@
     });
   }
 
+  var reviewBookingId = "";
+  var reviewSaving = false;
+  var reviewMode = "existing";
+  var reviewSurgeryHistoryValue = "";
+  var additionalBookingResolver = null;
+
+  function requiresReviewBeforeBooking() {
+    var code = state.selectedService && state.selectedService.assessmentTemplateCode;
+    var serviceName = state.selectedService && state.selectedService.name;
+    if (assessmentState.status === "approved") return false;
+    return Boolean(window.BEAUTY_CONFIG &&
+      window.BEAUTY_CONFIG.ENVIRONMENT !== "demo-v1" &&
+      !/美甲|美睫|睫毛/.test(String(serviceName || "")) &&
+      code && code !== "none");
+  }
+
+  function setSurgeryHistoryValue(value) {
+    var text = String(value || "").trim();
+    reviewSurgeryHistoryValue = text;
+    var isNone = /^(?:無|沒有|無手術史)$/.test(text);
+    els.reviewSurgeryNone.checked = isNone;
+    els.reviewSurgeryYes.checked = Boolean(text) && !isNone;
+    els.reviewSurgeryHistory.value = isNone ? "" : text;
+    els.reviewSurgeryDetailWrap.hidden = !els.reviewSurgeryYes.checked;
+  }
+
+  function getSurgeryHistoryValue() {
+    return reviewSurgeryHistoryValue ||
+      "未另外詢問（請依服務需要確認）";
+  }
+
+  function syncSurgeryHistoryChoice() {
+    els.reviewSurgeryDetailWrap.hidden = !els.reviewSurgeryYes.checked;
+    if (els.reviewSurgeryNone.checked) {
+      els.reviewSurgeryHistory.value = "";
+    }
+  }
+
+  function openNewBookingReview() {
+    var profile = getCustomerProfileFromForm();
+    if (!profile.customerName) {
+      setStatus("error", "請填寫姓名");
+      return;
+    }
+    if (!profile.phone) {
+      setStatus("error", "請填寫電話");
+      return;
+    }
+    reviewMode = "new-booking";
+    reviewBookingId = "";
+    els.reviewIntakeTitle.textContent = "填寫預約評估資料";
+    setSurgeryHistoryValue("");
+    els.reviewDiseaseHistory.value = "";
+    els.reviewLastTreatment.value = "";
+    els.reviewCustomerNote.value = "";
+    els.reviewPhotoFiles.value = "";
+    els.reviewPhotoRequest.hidden = true;
+    els.reviewIntakeStatus.textContent =
+      "請先填寫資料，工作室會在受理前進行確認。";
+    els.reviewIntakeSave.textContent = "送出評估資料";
+    els.reviewIntakeDismiss.textContent = "返回";
+    els.reviewIntakeModal.classList.remove("hidden");
+  }
+
+  function photoRequestTextForBooking(note, serviceName) {
+    var text = String(note || "").trim();
+    var service = String(serviceName || "");
+    var mismatched = (/霧唇|紋唇|唇部|嘴唇/.test(service) && /眉毛|眉部|霧眉/.test(text)) ||
+      (/霧眉|紋眉|飄眉|眉部|眉毛/.test(service) && /嘴唇|唇部|霧唇/.test(text));
+    if (mismatched) {
+      return "請補充清楚的施作部位照片；若不確定需要拍攝的部位，請先聯絡工作室確認。";
+    }
+    return text || "請依服務人員指示上傳";
+  }
+
+  function confirmAdditionalBooking() {
+    var selectedDate = state.selectedDate;
+    var today = getTodayIso();
+    var activeStatuses = [
+      "pending", "pending_review", "pending_customer_confirmation",
+      "confirmed", "checked_in"
+    ];
+    var existing = (state.bookings || []).filter(function (booking) {
+      var internal = booking.internalStatus || "";
+      var active = activeStatuses.indexOf(internal) !== -1 ||
+        booking.status === "已確認";
+      return active && booking.date >= today && booking.date !== selectedDate;
+    });
+    if (!existing.length) return Promise.resolve(true);
+    els.additionalBookingList.replaceChildren();
+    existing.slice(0, 3).forEach(function (booking) {
+      var item = document.createElement("li");
+      item.innerHTML =
+        "<strong>" + escapeHtml(formatDateZh(booking.date)) + " " +
+        escapeHtml(booking.time || "") + "</strong>" +
+        "<span>" + escapeHtml(booking.serviceName || "") + "</span>";
+      els.additionalBookingList.appendChild(item);
+    });
+    els.additionalBookingMore.hidden = existing.length <= 3;
+    els.additionalBookingMore.textContent = existing.length > 3
+      ? "另有 " + (existing.length - 3) + " 筆預約"
+      : "";
+    els.additionalBookingModal.classList.remove("hidden");
+    return new Promise(function (resolve) {
+      additionalBookingResolver = resolve;
+    });
+  }
+
+  function closeAdditionalBookingModal(confirmed) {
+    els.additionalBookingModal.classList.add("hidden");
+    if (!additionalBookingResolver) return;
+    var resolve = additionalBookingResolver;
+    additionalBookingResolver = null;
+    resolve(Boolean(confirmed));
+  }
+
+  async function openReviewIntake(bookingId) {
+    reviewMode = "existing";
+    reviewBookingId = bookingId || "";
+    if (!reviewBookingId) return;
+    els.reviewIntakeTitle.textContent = "補充服務評估資料";
+    els.reviewIntakeSave.textContent = "送出評估資料";
+    els.reviewIntakeDismiss.textContent = "關閉";
+    els.reviewIntakeModal.classList.remove("hidden");
+    els.reviewIntakeStatus.textContent = "載入中…";
+    try {
+      var result = await window.beautyApi.getBookingReview(reviewBookingId);
+      var intake = result.intake || {};
+      setSurgeryHistoryValue(intake.surgeryHistory || "");
+      els.reviewDiseaseHistory.value = intake.diseaseHistory || "";
+      els.reviewLastTreatment.value = intake.lastTreatmentAt || "";
+      els.reviewCustomerNote.value = intake.customerNote || "";
+      els.reviewPhotoFiles.value = "";
+      var requestedQuestions = [];
+      if (intake.diseaseHistoryRequested) {
+        requestedQuestions.push("疤痕、過敏、健康狀況、用藥或其他需留意事項");
+      }
+      if (intake.lastTreatmentRequested) requestedQuestions.push("上次相關施作時間");
+      var requestMessages = [];
+      if (requestedQuestions.length) {
+        requestMessages.push("服務人員請您補答：" + requestedQuestions.join("、") +
+          (intake.questionRequestNote ? "；" + intake.questionRequestNote : ""));
+      }
+      if (intake.photoRequested) {
+        var reviewBooking = (state.bookings || []).find(function (booking) {
+          return booking.id === reviewBookingId;
+        });
+        requestMessages.push("請補充照片：" +
+          photoRequestTextForBooking(
+            intake.photoRequestNote,
+            reviewBooking && reviewBooking.serviceName
+          ));
+      }
+      els.reviewPhotoRequest.hidden = !requestMessages.length;
+      els.reviewPhotoRequest.textContent = requestMessages.join(" ");
+      els.reviewIntakeStatus.textContent = intake.submittedAt
+        ? "已儲存；目前有 " + (intake.photos || []).length + " 張照片"
+        : "";
+    } catch (error) {
+      els.reviewIntakeStatus.textContent = error.message;
+    }
+  }
+
+  function closeReviewIntake() {
+    if (reviewSaving) return;
+    reviewMode = "existing";
+    reviewBookingId = "";
+    els.reviewIntakeModal.classList.add("hidden");
+  }
+
+  async function saveReviewIntake() {
+    if (reviewSaving || (reviewMode !== "new-booking" && !reviewBookingId)) return;
+    var files = Array.prototype.slice.call(els.reviewPhotoFiles.files || []);
+    if (files.length > 3) {
+      els.reviewIntakeStatus.textContent = "一次最多選擇 3 張照片";
+      return;
+    }
+    for (var i = 0; i < files.length; i++) {
+      if (files[i].size > 5 * 1024 * 1024) {
+        els.reviewIntakeStatus.textContent = "每張照片不可超過 5 MB";
+        return;
+      }
+    }
+    var intakePayload = {
+      surgeryHistory: getSurgeryHistoryValue(),
+      diseaseHistory: els.reviewDiseaseHistory.value.trim(),
+      lastTreatmentAt: els.reviewLastTreatment.value,
+      customerNote: els.reviewCustomerNote.value
+    };
+    reviewSaving = true;
+    els.reviewIntakeSave.disabled = true;
+    els.reviewIntakeStatus.textContent =
+      reviewMode === "new-booking" ? "送出預約申請中…" : "儲存中…";
+    try {
+      if (reviewMode === "new-booking") {
+        var completed = await handleBook(intakePayload, files);
+        if (completed) {
+          els.reviewIntakeModal.classList.add("hidden");
+          reviewMode = "existing";
+          reviewBookingId = "";
+        }
+        return;
+      }
+      await window.beautyApi.updateBookingReview(reviewBookingId, intakePayload);
+      for (var j = 0; j < files.length; j++) {
+        els.reviewIntakeStatus.textContent =
+          "上傳照片 " + (j + 1) + "／" + files.length + "…";
+        await window.beautyApi.uploadBookingReviewPhoto(reviewBookingId, files[j]);
+      }
+      els.reviewPhotoFiles.value = "";
+      els.reviewIntakeStatus.textContent = "評估資料已送出";
+    } catch (error) {
+      els.reviewIntakeStatus.textContent = error.message;
+    } finally {
+      reviewSaving = false;
+      els.reviewIntakeSave.disabled = false;
+    }
+  }
+
   function renderBookings() {
     var container = els.bookingList;
+    var bookingSettings = state.settings && typeof state.settings === "object"
+      ? state.settings
+      : {};
+    hideDepositTransferBox();
     if (!state.bookings.length) {
       container.innerHTML = '<div class="empty">尚無預約紀錄</div>';
       return;
     }
     var sorted = sortBookingsForDisplay(state.bookings);
     container.innerHTML = sorted.map(function (b) {
-      var isConfirmed = b.status === "已確認";
+      var isConfirmed = b.internalStatus === "confirmed";
+      var isCompleted = b.internalStatus === "completed";
+      var isPendingReview = b.internalStatus === "pending_review";
+      var isPendingDeposit = b.internalStatus === "pending_customer_confirmation";
       var isNoShow = b.status === "未到" ||
         b.internalStatus === "no_show" ||
         b.publicStatus === "no_show";
-      var statusClass = isConfirmed
+      var statusClass = isCompleted
+        ? "completed"
+        : (isPendingReview || isPendingDeposit)
+        ? "pending"
+        : isConfirmed
         ? "confirmed"
         : (isNoShow ? "noshow" : "cancelled");
-      var cardClass = isConfirmed
+      var cardClass = isCompleted
+        ? "card booking-card booking-card--completed"
+        : (isPendingReview || isPendingDeposit)
+        ? "card booking-card booking-card--pending"
+        : isConfirmed
         ? "card booking-card booking-card--confirmed"
         : (isNoShow
           ? "card booking-card booking-card--noshow"
           : "card booking-card booking-card--cancelled");
-      var canCancel = isConfirmed && b.canCancel === true;
+      var canCancel = (isConfirmed || isPendingReview || isPendingDeposit) &&
+        b.canCancel === true;
       var cancelBtn = canCancel
         ? '<button type="button" class="btn btn-danger" data-cancel="' + b.id + '">取消預約</button>'
+        : "";
+      var rescheduleBtn = isConfirmed && b.depositConfirmedAt &&
+          bookingDateTimeKey(b) > getNowDateTimeKey()
+        ? '<button type="button" class="btn btn-secondary" data-customer-reschedule="' +
+          escapeHtml(b.id) + '">變更時間</button>'
+        : "";
+      var reviewBtn = (isPendingReview || isPendingDeposit)
+        ? '<button type="button" class="btn btn-secondary" data-review="' +
+          escapeHtml(b.id) + '">補充評估資料／照片</button>'
         : "";
       var deadlineLine = canCancel && b.cancellationDeadlineDisplay
         ? '<p class="booking-cancel-deadline">取消截止：' +
           escapeHtml(b.cancellationDeadlineDisplay) + "（台北時間）</p>"
         : "";
-      var blockedLine = isConfirmed && !canCancel && b.cancelBlockedReason
+      var blockedLine = (isConfirmed || isPendingReview || isPendingDeposit) &&
+        !canCancel && b.cancelBlockedReason
         ? '<p class="booking-cancel-blocked">' + escapeHtml(b.cancelBlockedReason) + "</p>"
         : "";
       var reasonLine = b.status === "已取消" && b.cancelReason
@@ -452,14 +1091,97 @@
           ? '<p class="booking-cancel-reason">此預約由業主取消</p>'
           : "");
       var displayStatus = b.statusLabel || b.status;
+      var depositDueLine = isPendingDeposit && b.depositDueAt
+        ? '<p class="booking-cancel-deadline">請於 ' +
+          escapeHtml(new Date(b.depositDueAt).toLocaleString("zh-TW", {
+            timeZone: "Asia/Taipei",
+            hour12: false
+          })) + " 前完成匯款（台北時間）</p>"
+        : "";
+      var depositTransfer = isPendingDeposit
+        ? '<div class="deposit-transfer-box booking-card-deposit">' +
+          buildDepositTransferHtml(bookingSettings, {
+            accountTextId: "deposit-account-" + escapeHtml(b.id),
+            copyBtnId: "copy-deposit-account-" + escapeHtml(b.id)
+          }) +
+          "</div>"
+        : "";
+      var depositReport = isPendingDeposit
+        ? (b.depositReportedAt
+          ? '<p class="deposit-report-status">已回報末五碼：' +
+            escapeHtml(b.depositTransferLast5 || "") + "，等待工作室核對。</p>"
+          : '<div class="deposit-report-form">' +
+            '<label>匯款後請輸入轉帳帳號末五碼</label>' +
+            '<input type="text" inputmode="numeric" maxlength="5" pattern="[0-9]{5}" ' +
+            'data-deposit-last5="' + escapeHtml(b.id) + '" placeholder="例：12345">' +
+            '<button type="button" class="btn btn-secondary btn-small" data-deposit-report="' +
+            escapeHtml(b.id) + '">回報已匯款</button></div>')
+        : "";
+      var confirmedDepositAmount = bookingSettings.depositAmount != null
+        ? Number(bookingSettings.depositAmount)
+        : 0;
+      var servicePrice = Number(b.servicePrice) || 0;
+      var balanceAmount = Math.max(0, servicePrice - confirmedDepositAmount);
+      var complimentaryTouchup = servicePrice === 0 && /補色/.test(String(b.serviceName || ""));
+      var paymentSummary = isConfirmed && b.depositConfirmedAt && servicePrice > 0
+        ? '<div class="booking-payment-summary">' +
+          '<span>服務費用 <strong>NT$ ' + escapeHtml(servicePrice.toLocaleString("zh-TW")) + '</strong></span>' +
+          '<span>已收訂金 <strong>− NT$ ' + escapeHtml(confirmedDepositAmount.toLocaleString("zh-TW")) + '</strong></span>' +
+          '<span class="booking-payment-balance">到店應付 <strong>NT$ ' + escapeHtml(balanceAmount.toLocaleString("zh-TW")) + '</strong></span>' +
+          '</div>'
+        : "";
+      var complimentaryNotice = complimentaryTouchup
+        ? '<div class="booking-courtesy-notice"><strong>本次為免費補色・免收訂金</strong>' +
+          '<span>為讓每一位客人的時光都被妥善珍惜，敬請準時赴約；如行程有變，也請提前告知我們。</span></div>'
+        : "";
+      var depositConfirmedLine = isConfirmed && b.depositConfirmedAt
+        ? '<div class="booking-deposit-confirmed" role="status">' +
+          '<strong>✓ 已收訂金' +
+          (confirmedDepositAmount > 0
+            ? ' NT$ ' + escapeHtml(confirmedDepositAmount.toLocaleString("zh-TW"))
+            : '') +
+          '</strong>' +
+          '<span>本次預約已保留</span>' +
+          '<small>確認時間：' +
+          escapeHtml(new Date(b.depositConfirmedAt).toLocaleString("zh-TW", {
+            timeZone: "Asia/Taipei",
+            hour12: false
+          })) + '（台北時間）</small>' +
+          '</div>'
+        : "";
+      var rescheduleHistory = Array.isArray(b.rescheduleHistory) ? b.rescheduleHistory : [];
+      var rescheduleHistoryLine = rescheduleHistory.length
+        ? '<div class="booking-reschedule-history"><strong>變更紀錄</strong>' +
+          rescheduleHistory.map(function (entry) {
+            var changedAt = entry.changedAt
+              ? new Date(entry.changedAt).toLocaleString("zh-TW", {
+                timeZone: "Asia/Taipei",
+                hour12: false
+              })
+              : "";
+            return '<p>原預約日期：' + escapeHtml(formatDateZh(entry.originalDate)) +
+              ' ' + escapeHtml(entry.originalTime || "") +
+              (changedAt ? '<br><small>操作變更時間：' + escapeHtml(changedAt) + '</small>' : '') +
+              '</p>';
+          }).join("") + '</div>'
+        : "";
       return (
         '<div class="' + cardClass + '">' +
           '<h3>' + escapeHtml(b.serviceName) + '</h3>' +
-          '<p>' + formatDateZh(b.date) + ' ' + escapeHtml(b.time) + '</p>' +
+          '<p class="booking-current-date">' + formatDateZh(b.date) + ' ' + escapeHtml(b.time) + '</p>' +
+          rescheduleHistoryLine +
           '<span class="booking-status ' + statusClass + '">' + escapeHtml(displayStatus) + '</span>' +
+          depositConfirmedLine +
+          paymentSummary +
+          complimentaryNotice +
+          depositDueLine +
+          depositTransfer +
+          depositReport +
           deadlineLine +
           blockedLine +
           reasonLine +
+          reviewBtn +
+          rescheduleBtn +
           cancelBtn +
         '</div>'
       );
@@ -470,12 +1192,47 @@
         openCancelConfirmModal(btn.getAttribute("data-cancel"));
       });
     });
+    container.querySelectorAll("[data-customer-reschedule]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        openCustomerRescheduleModal(btn.getAttribute("data-customer-reschedule"));
+      });
+    });
+    container.querySelectorAll("[data-review]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        openReviewIntake(btn.getAttribute("data-review"));
+      });
+    });
+    sorted.forEach(function (b) {
+      if (b.internalStatus === "pending_customer_confirmation") {
+        wireDepositCopyButton("copy-deposit-account-" + b.id, bookingSettings.bankAccount);
+      }
+    });
+    container.querySelectorAll("[data-deposit-report]").forEach(function (btn) {
+      btn.addEventListener("click", async function () {
+        var bookingId = btn.getAttribute("data-deposit-report");
+        var input = container.querySelector('[data-deposit-last5="' + bookingId + '"]');
+        var last5 = input ? input.value.trim() : "";
+        if (!/^\d{5}$/.test(last5)) {
+          setStatus("error", "請輸入 5 位數字的轉帳帳號末五碼");
+          return;
+        }
+        btn.disabled = true;
+        try {
+          await window.beautyApi.reportDepositTransfer(bookingId, last5);
+          setStatus("success", "已回報匯款，請等待工作室核對");
+          await loadBookings();
+        } catch (error) {
+          setStatus("error", error.message);
+          btn.disabled = false;
+        }
+      });
+    });
   }
 
   function updateBookButton() {
     var profile = getCustomerProfileFromForm();
     var ready = state.selectedService && state.selectedDate && state.selectedTime &&
-      profile.customerName && profile.phone;
+      profile.customerName && profile.phone && profile.birthday;
     els.bookBtn.disabled = !ready;
   }
 
@@ -544,8 +1301,10 @@
     }
   }
 
-  function applyServerProfile(profile) {
+  function applyServerProfile(profile, requiresAssessment) {
     state.serverProfile = profile || null;
+    state.isReturningCustomer = requiresAssessment === false;
+    state.requiresAssessment = false;
     if (!els.customerName || !els.customerPhone || !els.customerBirthday) return;
     if (profile) {
       // 伺服器資料為準，不得以 localStorage 值覆蓋
@@ -553,16 +1312,43 @@
       els.customerPhone.value = profile.phone || "";
       els.customerBirthday.value = profile.birthday || "";
       setProfileFieldsLocked(true);
+      if (!profile.birthday) {
+        els.customerBirthday.disabled = false;
+        els.customerBirthday.classList.remove("input-locked");
+      }
+      if (state.isReturningCustomer && els.profileStatus) {
+        els.profileStatus.textContent = "您已有完成服務紀錄；首次選擇其他需評估服務時，仍須先完成評估。";
+      }
     } else {
       setProfileFieldsLocked(false);
       fillCustomerProfileForm();
     }
     updateBookButton();
+    syncBookingWorkflow();
+  }
+
+  async function saveCustomerProfile() {
+    var profile = getCustomerProfileFromForm();
+    if (!profile.customerName) { els.profileStatus.textContent = "請填寫姓名。"; return; }
+    if (!profile.phone) { els.profileStatus.textContent = "請填寫電話。"; return; }
+    if (!profile.birthday) { els.profileStatus.textContent = "請填寫生日。"; return; }
+    els.profileSave.disabled = true;
+    els.profileStatus.textContent = "儲存資料中…";
+    try {
+      var result = await window.beautyApi.saveCustomerMe(profile);
+      applyServerProfile(result.customer, result.requiresAssessment);
+      els.profileStatus.textContent = "基本資料已儲存，請先選擇服務項目。";
+    } catch (error) {
+      els.profileStatus.textContent = error.message || "資料儲存失敗，請稍後再試。";
+    } finally {
+      els.profileSave.disabled = false;
+    }
   }
 
   async function loadServerProfile() {
     var result = await window.beautyApi.getCustomerMe();
-    applyServerProfile(result && result.exists ? result.customer : null);
+    applyServerProfile(result && result.exists ? result.customer : null,
+      result ? result.requiresAssessment : true);
   }
 
   function escapeHtml(str) {
@@ -574,7 +1360,8 @@
   }
 
   async function loadSettings() {
-    state.settings = await window.beautyApi.getSettings();
+    var settings = await window.beautyApi.getSettings();
+    state.settings = settings && typeof settings === "object" ? settings : {};
     applyTheme(state.settings);
   }
 
@@ -596,7 +1383,8 @@
 
     return (
       "<h3>訂金轉帳資訊</h3>" +
-      "<p>若需支付訂金，請轉帳至以下帳戶：</p>" +
+      "<p>請轉帳訂金至以下帳戶；工作室核對後，預約才會正式成立：</p>" +
+      "<p><strong>轉帳後請記得通知工作室核對。未於 24 小時內完成訂金確認，系統將自動取消預約並釋放時段。</strong></p>" +
       (amount !== "" ? "<p>金額：NT$ " + escapeHtml(String(amount)) + "</p>" : "") +
       (bankLine ? "<p>銀行：" + bankLine + "</p>" : "") +
       "<p>帳號：<span class=\"deposit-account\" id=\"" + ids.accountTextId + "\">" +
@@ -653,16 +1441,33 @@
 
   function showBookingSuccessModal(details) {
     if (!els.bookingSuccessModal) return;
+    var pendingReview = details.internalStatus === "pending_review";
+    var pendingDeposit = details.internalStatus === "pending_customer_confirmation";
+    if (els.bookingSuccessTitle) {
+      els.bookingSuccessTitle.textContent = pendingReview ? "預約申請已送出" : "預約成功";
+    }
+    if (els.bookingSuccessLead) {
+      els.bookingSuccessLead.textContent = pendingReview
+        ? "此時段已為您保留，工作室確認受理後才會開始 24 小時訂金期限，請留意後續通知。"
+        : pendingDeposit
+          ? "此時段已暫時保留。請於 24 小時內完成訂金轉帳，轉帳後記得通知工作室核對；逾期系統將自動取消並釋放時段。"
+          : "您的預約已完成，請確認以下資訊。";
+    }
     els.bookingSuccessName.textContent = details.guestName || "";
     els.bookingSuccessService.textContent = details.serviceName || "";
     els.bookingSuccessDate.textContent =
       formatDateZh(details.date) +
       (details.date ? "（" + getWeekdayLabel(details.date) + "）" : "");
     els.bookingSuccessTime.textContent = details.time || "";
-    fillDepositContainer(els.bookingSuccessDeposit, state.settings, {
-      accountTextId: "success-deposit-account-text",
-      copyBtnId: "copy-success-deposit-account"
-    });
+    if (pendingDeposit) {
+      fillDepositContainer(els.bookingSuccessDeposit, state.settings, {
+        accountTextId: "success-deposit-account-text",
+        copyBtnId: "copy-success-deposit-account"
+      });
+    } else if (els.bookingSuccessDeposit) {
+      els.bookingSuccessDeposit.hidden = true;
+      els.bookingSuccessDeposit.innerHTML = "";
+    }
     els.bookingSuccessModal.classList.remove("hidden");
     var card = els.bookingSuccessModal.querySelector(".modal-card");
     if (card) {
@@ -676,6 +1481,30 @@
     state.services = await window.beautyApi.getServices();
     renderServices();
     updateCalendarVisibility();
+  }
+
+  async function resumeApprovedAssessmentService() {
+    var savedServiceId = "";
+    try {
+      if (window.localStorage) savedServiceId = window.localStorage.getItem(getCustomerProfileStorageKey() + ":last-service") || "";
+    } catch (ignore) {}
+    if (savedServiceId && state.services.some(function (service) { return String(service.id) === savedServiceId; })) {
+      await selectServiceById(savedServiceId);
+      if (assessmentState.status === "approved") return true;
+    }
+    var candidates = state.services.filter(function (service) {
+      return service.assessmentTemplateCode && service.assessmentTemplateCode !== "none";
+    });
+    var results = await Promise.all(candidates.map(async function (service) {
+      try { return { service: service, configured: await window.beautyApi.getAssessmentTemplate(service.id) }; }
+      catch (ignore) { return null; }
+    }));
+    var approved = results.find(function (entry) {
+      return entry && entry.configured && entry.configured.status === "approved";
+    });
+    if (!approved) return false;
+    await selectServiceById(approved.service.id);
+    return assessmentState.status === "approved";
   }
 
   async function loadSlots() {
@@ -698,24 +1527,29 @@
     renderBookings();
   }
 
-  async function handleBook() {
-    if (!state.selectedService || !state.selectedDate || !state.selectedTime) return;
+  async function handleBook(reviewIntake, reviewFiles) {
+    if (!state.selectedService || !state.selectedDate || !state.selectedTime) return false;
     var profile = getCustomerProfileFromForm();
     if (!profile.customerName) {
       setStatus("error", "請填寫姓名");
-      return;
+      return false;
     }
     if (!profile.phone) {
       setStatus("error", "請填寫電話");
-      return;
+      return false;
+    }
+    if (!profile.birthday) {
+      setStatus("error", "請填寫生日");
+      return false;
     }
     els.bookBtn.disabled = true;
     setStatus("", "送出預約中…");
     var bookedServiceName = state.selectedService.name || "";
     var bookedDate = state.selectedDate;
     var bookedTime = state.selectedTime;
+    var createdBookingId = "";
     try {
-      await window.beautyApi.createBooking({
+      var createResult = await window.beautyApi.createBooking({
         displayName: state.user.displayName,
         customerName: profile.customerName,
         phone: profile.phone,
@@ -724,32 +1558,61 @@
         date: bookedDate,
         time: bookedTime
       });
+      createdBookingId = createResult && createResult.booking
+        ? createResult.booking.id
+        : "";
+      if (reviewIntake && createdBookingId) {
+        await window.beautyApi.updateBookingReview(createdBookingId, reviewIntake);
+        var files = reviewFiles || [];
+        for (var fileIndex = 0; fileIndex < files.length; fileIndex++) {
+          els.reviewIntakeStatus.textContent =
+            "上傳照片 " + (fileIndex + 1) + "／" + files.length + "…";
+          await window.beautyApi.uploadBookingReviewPhoto(
+            createdBookingId, files[fileIndex]
+          );
+        }
+      }
       if (!state.profileLocked) {
         saveCustomerProfileLocal(profile);
       }
       setStatus("");
       state.selectedTime = "";
-      try {
-        state.settings = await window.beautyApi.getSettings();
-        applyTheme(state.settings);
-      } catch (ignore) {}
-      renderDepositTransferBox(state.settings);
       showBookingSuccessModal({
         guestName: profile.customerName,
         serviceName: bookedServiceName,
         date: bookedDate,
-        time: bookedTime
+        time: bookedTime,
+        internalStatus: createResult && createResult.booking
+          ? createResult.booking.internalStatus
+          : ""
       });
-      // 第一次預約成功後改以伺服器 profile 為準並鎖定姓名／電話
-      try {
-        await loadServerProfile();
-      } catch (ignore) {}
-      await loadMonthCalendar(state.calendarMonth || getCurrentMonthIso());
-      await loadSlots();
-      await loadBookings();
+      // 成功畫面先回應客人；設定、profile、月曆與預約紀錄在背景同步。
+      Promise.allSettled([
+        window.beautyApi.getSettings().then(function (settings) {
+          state.settings = settings && typeof settings === "object" ? settings : {};
+          applyTheme(state.settings);
+        }),
+        loadServerProfile(),
+        loadMonthCalendar(state.calendarMonth || getCurrentMonthIso()),
+        loadBookings()
+      ]).then(function () {
+        if (state.selectedDate) loadSlots().catch(function () {});
+      });
+      return true;
     } catch (error) {
       setStatus("");
-      showBookingFailModal(error && error.message);
+      if (createdBookingId) {
+        reviewMode = "existing";
+        reviewBookingId = createdBookingId;
+        els.reviewIntakeTitle.textContent = "補充服務評估資料";
+        els.reviewIntakeSave.textContent = "重新送出評估資料";
+        els.reviewIntakeDismiss.textContent = "稍後再填";
+        els.reviewIntakeStatus.textContent =
+          "預約申請已建立，但評估資料尚未完整送出，請再按一次送出。";
+      } else {
+        showBookingFailModal(error && error.message);
+      }
+      return false;
     } finally {
       updateBookButton();
     }
@@ -802,6 +1665,165 @@
   }
 
   var cancelModalState = { bookingId: "", submitting: false };
+  var customerRescheduleState = {
+    bookingId: "", serviceId: "", month: "", days: {},
+    date: "", time: "", slots: [], submitting: false, requestSeq: 0
+  };
+
+  function renderCustomerRescheduleCalendar() {
+    var month = customerRescheduleState.month || getCurrentMonthIso();
+    els.customerRescheduleMonthLabel.textContent = formatMonthTitle(month);
+    els.customerReschedulePrev.disabled = month <= getCurrentMonthIso();
+    els.customerRescheduleCalendarGrid.innerHTML = buildCalendarCells(month).map(function (cell) {
+      if (cell.empty) return '<div class="calendar-cell calendar-cell--empty"></div>';
+      var summary = customerRescheduleState.days[cell.date] || { bookable: false };
+      var classes = ["calendar-day", summary.bookable
+        ? "calendar-day--bookable" : "calendar-day--disabled"];
+      if (cell.date === customerRescheduleState.date) classes.push("calendar-day--selected");
+      var attrs = summary.bookable
+        ? ' data-reschedule-date="' + cell.date + '"'
+        : ' disabled aria-disabled="true"';
+      return '<button type="button" class="' + classes.join(" ") + '"' + attrs + '>' +
+        '<span class="calendar-day-num">' + Number(cell.date.split("-")[2]) + '</span></button>';
+    }).join("");
+    els.customerRescheduleCalendarGrid.querySelectorAll("[data-reschedule-date]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        selectCustomerRescheduleDate(btn.getAttribute("data-reschedule-date"));
+      });
+    });
+  }
+
+  function renderCustomerRescheduleSlots() {
+    els.customerRescheduleDateSummary.textContent = customerRescheduleState.date
+      ? "已選：" + formatDateZh(customerRescheduleState.date) +
+        "（" + getWeekdayLabel(customerRescheduleState.date) + "）"
+      : "";
+    if (!customerRescheduleState.date) {
+      els.customerRescheduleSlotGrid.innerHTML = '<div class="empty">請先選擇日期</div>';
+    } else if (!customerRescheduleState.slots.length) {
+      els.customerRescheduleSlotGrid.innerHTML = '<div class="empty">此日期沒有可預約時段</div>';
+    } else {
+      els.customerRescheduleSlotGrid.innerHTML = customerRescheduleState.slots.map(function (time) {
+        var selected = time === customerRescheduleState.time ? " selected" : "";
+        return '<button type="button" class="slot-btn' + selected +
+          '" data-reschedule-time="' + escapeHtml(time) + '">' + escapeHtml(time) + '</button>';
+      }).join("");
+      els.customerRescheduleSlotGrid.querySelectorAll("[data-reschedule-time]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          customerRescheduleState.time = btn.getAttribute("data-reschedule-time") || "";
+          renderCustomerRescheduleSlots();
+          els.customerRescheduleSubmit.disabled = !customerRescheduleState.time;
+        });
+      });
+    }
+  }
+
+  async function loadCustomerRescheduleMonth(month) {
+    var seq = ++customerRescheduleState.requestSeq;
+    customerRescheduleState.month = month;
+    customerRescheduleState.date = "";
+    customerRescheduleState.time = "";
+    customerRescheduleState.slots = [];
+    els.customerRescheduleSubmit.disabled = true;
+    els.customerRescheduleStatus.textContent = "正在載入業主開放日期…";
+    renderCustomerRescheduleCalendar();
+    renderCustomerRescheduleSlots();
+    try {
+      var result = await window.beautyApi.getSlotsForMonth(month, customerRescheduleState.serviceId);
+      if (seq !== customerRescheduleState.requestSeq) return;
+      customerRescheduleState.month = result.month || month;
+      customerRescheduleState.days = result.days || {};
+      els.customerRescheduleStatus.textContent = "";
+      renderCustomerRescheduleCalendar();
+    } catch (error) {
+      if (seq !== customerRescheduleState.requestSeq) return;
+      customerRescheduleState.days = {};
+      els.customerRescheduleStatus.textContent = error.message || "目前無法載入可預約日期";
+      renderCustomerRescheduleCalendar();
+    }
+  }
+
+  async function selectCustomerRescheduleDate(date) {
+    var summary = customerRescheduleState.days[date];
+    if (!summary || !summary.bookable) return;
+    var seq = ++customerRescheduleState.requestSeq;
+    customerRescheduleState.date = date;
+    customerRescheduleState.time = "";
+    customerRescheduleState.slots = [];
+    els.customerRescheduleSubmit.disabled = true;
+    els.customerRescheduleStatus.textContent = "正在載入業主開放時段…";
+    renderCustomerRescheduleCalendar();
+    renderCustomerRescheduleSlots();
+    try {
+      var result = await window.beautyApi.getSlots(date, customerRescheduleState.serviceId);
+      if (seq !== customerRescheduleState.requestSeq) return;
+      customerRescheduleState.slots = result.slots || [];
+      els.customerRescheduleStatus.textContent = customerRescheduleState.slots.length
+        ? "請選擇一個可預約時段" : "此日期目前沒有可預約時段";
+      renderCustomerRescheduleSlots();
+    } catch (error) {
+      if (seq !== customerRescheduleState.requestSeq) return;
+      els.customerRescheduleStatus.textContent = error.message || "目前無法載入可預約時段";
+      renderCustomerRescheduleSlots();
+    }
+  }
+
+  function openCustomerRescheduleModal(bookingId) {
+    var booking = (state.bookings || []).find(function (item) {
+      return item.id === String(bookingId || "");
+    });
+    if (!booking || !booking.serviceId) {
+      setStatus("error", "找不到此預約的服務項目，請重新整理後再試");
+      return;
+    }
+    customerRescheduleState.bookingId = String(bookingId || "");
+    customerRescheduleState.serviceId = String(booking.serviceId);
+    customerRescheduleState.month = getCurrentMonthIso();
+    customerRescheduleState.days = {};
+    customerRescheduleState.date = "";
+    customerRescheduleState.time = "";
+    customerRescheduleState.slots = [];
+    customerRescheduleState.submitting = false;
+    els.customerRescheduleStatus.textContent = "";
+    els.customerRescheduleSubmit.disabled = true;
+    els.customerRescheduleModal.classList.remove("hidden");
+    loadCustomerRescheduleMonth(customerRescheduleState.month);
+  }
+
+  function closeCustomerRescheduleModal() {
+    if (customerRescheduleState.submitting) return;
+    customerRescheduleState.requestSeq += 1;
+    customerRescheduleState.bookingId = "";
+    customerRescheduleState.serviceId = "";
+    els.customerRescheduleModal.classList.add("hidden");
+  }
+
+  async function submitCustomerRescheduleRequest() {
+    if (!customerRescheduleState.bookingId || customerRescheduleState.submitting) return;
+    var date = customerRescheduleState.date;
+    var time = customerRescheduleState.time;
+    if (!date || !time) {
+      els.customerRescheduleStatus.textContent = "請選擇希望變更的日期與時間";
+      return;
+    }
+    customerRescheduleState.submitting = true;
+    els.customerRescheduleSubmit.disabled = true;
+    els.customerRescheduleStatus.textContent = "正在通知工作室…";
+    try {
+      await window.beautyApi.requestBookingReschedule(
+        customerRescheduleState.bookingId, date, time
+      );
+      customerRescheduleState.submitting = false;
+      els.customerRescheduleStatus.textContent = "";
+      els.customerRescheduleModal.classList.add("hidden");
+      customerRescheduleState.bookingId = "";
+      setStatus("success", "變更時間需求已通知工作室；原預約仍保留，請等待工作室聯絡");
+    } catch (error) {
+      customerRescheduleState.submitting = false;
+      els.customerRescheduleSubmit.disabled = false;
+      els.customerRescheduleStatus.textContent = error.message || "通知失敗，請稍後再試";
+    }
+  }
 
   function openCancelConfirmModal(bookingId) {
     if (!els.cancelConfirmModal || !bookingId) return;
@@ -1030,7 +2052,16 @@
       goToTodayOnCalendar();
     });
 
-    els.bookBtn.addEventListener("click", handleBook);
+    els.bookBtn.addEventListener("click", function () {
+      confirmAdditionalBooking().then(function (confirmed) {
+        if (!confirmed) return;
+        if (requiresReviewBeforeBooking()) {
+          openNewBookingReview();
+        } else {
+          handleBook();
+        }
+      });
+    });
     if (els.customerName) {
       els.customerName.addEventListener("input", updateBookButton);
     }
@@ -1067,6 +2098,30 @@
         }
       });
     }
+    if (els.customerRescheduleSubmit) {
+      els.customerRescheduleSubmit.addEventListener("click", submitCustomerRescheduleRequest);
+    }
+    if (els.customerRescheduleClose) {
+      els.customerRescheduleClose.addEventListener("click", closeCustomerRescheduleModal);
+    }
+    if (els.customerRescheduleModal) {
+      els.customerRescheduleModal.addEventListener("click", function (event) {
+        if (event.target === els.customerRescheduleModal) {
+          closeCustomerRescheduleModal();
+        }
+      });
+    }
+    if (els.customerReschedulePrev) {
+      els.customerReschedulePrev.addEventListener("click", function () {
+        var previous = addMonths(customerRescheduleState.month, -1);
+        if (previous >= getCurrentMonthIso()) loadCustomerRescheduleMonth(previous);
+      });
+    }
+    if (els.customerRescheduleNext) {
+      els.customerRescheduleNext.addEventListener("click", function () {
+        loadCustomerRescheduleMonth(addMonths(customerRescheduleState.month, 1));
+      });
+    }
     if (els.claimConfirmBtn) {
       els.claimConfirmBtn.addEventListener("click", function () {
         confirmClaimInvite().catch(function (e) { setStatus("error", e.message); });
@@ -1074,6 +2129,51 @@
     }
     if (els.claimDismissBtn) {
       els.claimDismissBtn.addEventListener("click", dismissClaimModal);
+    }
+    if (els.aiAskBtn) {
+      els.aiAskBtn.addEventListener("click", function () {
+        askAiAssistant();
+      });
+    }
+    if (els.assessmentStart) els.assessmentStart.addEventListener("click", function () {
+      if (assessmentState.code) startAssessment(assessmentState.code);
+    });
+    if (els.profileSave) els.profileSave.addEventListener("click", saveCustomerProfile);
+    if (els.assessmentForm) els.assessmentForm.addEventListener("submit", submitAssessment);
+    if (els.aiHistoryRefresh) {
+      els.aiHistoryRefresh.addEventListener("click", function () {
+        loadCustomerAiHistory();
+      });
+    }
+    if (els.browPhotoSubmit) els.browPhotoSubmit.addEventListener("click", uploadBrowPhotos);
+    if (els.reviewIntakeDismiss) {
+      els.reviewIntakeDismiss.addEventListener("click", closeReviewIntake);
+    }
+    if (els.reviewIntakeSave) {
+      els.reviewIntakeSave.addEventListener("click", saveReviewIntake);
+    }
+    if (els.reviewSurgeryNone) {
+      els.reviewSurgeryNone.addEventListener("change", syncSurgeryHistoryChoice);
+    }
+    if (els.reviewSurgeryYes) {
+      els.reviewSurgeryYes.addEventListener("change", syncSurgeryHistoryChoice);
+    }
+    if (els.additionalBookingContinue) {
+      els.additionalBookingContinue.addEventListener("click", function () {
+        closeAdditionalBookingModal(true);
+      });
+    }
+    if (els.additionalBookingCancel) {
+      els.additionalBookingCancel.addEventListener("click", function () {
+        closeAdditionalBookingModal(false);
+      });
+    }
+    if (els.additionalBookingModal) {
+      els.additionalBookingModal.addEventListener("click", function (event) {
+        if (event.target === els.additionalBookingModal) {
+          closeAdditionalBookingModal(false);
+        }
+      });
     }
   }
 
@@ -1096,10 +2196,18 @@
     els.customerPhone = $("customer-phone");
     els.customerBirthday = $("customer-birthday");
     els.profileLockedHint = $("profile-locked-hint");
+    els.profileSave = $("profile-save");
+    els.profileStatus = $("profile-status");
+    els.assessmentPanel = $("assessment-panel");
+    els.serviceSelection = $("service-selection");
+    els.assessmentStepTitle = $("assessment-step-title");
+    els.bookingFlow = $("booking-flow");
     els.bookBtn = $("book-btn");
     els.bookingList = $("booking-list");
     els.depositTransferBox = $("deposit-transfer-box");
     els.bookingSuccessModal = $("booking-success-modal");
+    els.bookingSuccessTitle = $("booking-success-title");
+    els.bookingSuccessLead = $("booking-success-lead");
     els.bookingSuccessName = $("booking-success-name");
     els.bookingSuccessService = $("booking-success-service");
     els.bookingSuccessDate = $("booking-success-date");
@@ -1114,12 +2222,64 @@
     els.cancelConfirmBody = $("cancel-confirm-body");
     els.cancelConfirmYes = $("cancel-confirm-yes");
     els.cancelConfirmNo = $("cancel-confirm-no");
+    els.customerRescheduleModal = $("customer-reschedule-modal");
+    els.customerReschedulePrev = $("customer-reschedule-prev");
+    els.customerRescheduleNext = $("customer-reschedule-next");
+    els.customerRescheduleMonthLabel = $("customer-reschedule-month-label");
+    els.customerRescheduleCalendarGrid = $("customer-reschedule-calendar-grid");
+    els.customerRescheduleDateSummary = $("customer-reschedule-date-summary");
+    els.customerRescheduleSlotGrid = $("customer-reschedule-slot-grid");
+    els.customerRescheduleStatus = $("customer-reschedule-status");
+    els.customerRescheduleSubmit = $("customer-reschedule-submit");
+    els.customerRescheduleClose = $("customer-reschedule-close");
     els.userName = $("user-name");
     els.userAvatar = $("user-avatar");
     els.claimModal = $("claim-modal");
     els.claimBody = $("claim-body");
     els.claimConfirmBtn = $("claim-confirm-btn");
     els.claimDismissBtn = $("claim-dismiss-btn");
+    els.aiAssistant = $("ai-assistant");
+    els.aiMessage = $("ai-message");
+    els.aiAskBtn = $("ai-ask-btn");
+    els.aiAnswer = $("ai-answer");
+    els.assessmentIntro = $("assessment-intro");
+    els.assessmentSummary = $("assessment-summary");
+    els.assessmentForm = $("assessment-form");
+    els.assessmentPrompt = $("assessment-prompt");
+    els.assessmentOptions = $("assessment-options");
+    els.assessmentDate = $("assessment-date");
+    els.assessmentPhoto = $("assessment-photo");
+    els.assessmentSubmit = $("assessment-submit");
+    els.assessmentStatus = $("assessment-status");
+    els.assessmentStart = $("assessment-start");
+    els.aiHistoryRefresh = $("ai-history-refresh");
+    els.aiHistoryList = $("ai-history-list");
+    els.browPhotoUpload = $("brow-photo-upload");
+    els.browPhotoRequestNote = $("brow-photo-request-note");
+    els.browPhotoFront = $("brow-photo-front");
+    els.browPhotoLeft = $("brow-photo-left");
+    els.browPhotoRight = $("brow-photo-right");
+    els.browPhotoSubmit = $("brow-photo-submit");
+    els.browPhotoStatus = $("brow-photo-status");
+    els.reviewIntakeModal = $("review-intake-modal");
+    els.reviewIntakeTitle = $("review-intake-title");
+    els.reviewSurgeryNone = $("review-surgery-none");
+    els.reviewSurgeryYes = $("review-surgery-yes");
+    els.reviewSurgeryDetailWrap = $("review-surgery-detail-wrap");
+    els.reviewSurgeryHistory = $("review-surgery-history");
+    els.reviewDiseaseHistory = $("review-disease-history");
+    els.reviewLastTreatment = $("review-last-treatment");
+    els.reviewCustomerNote = $("review-customer-note");
+    els.reviewPhotoFiles = $("review-photo-files");
+    els.reviewPhotoRequest = $("review-photo-request");
+    els.reviewIntakeStatus = $("review-intake-status");
+    els.reviewIntakeDismiss = $("review-intake-dismiss");
+    els.reviewIntakeSave = $("review-intake-save");
+    els.additionalBookingModal = $("additional-booking-modal");
+    els.additionalBookingList = $("additional-booking-list");
+    els.additionalBookingMore = $("additional-booking-more");
+    els.additionalBookingContinue = $("additional-booking-continue");
+    els.additionalBookingCancel = $("additional-booking-cancel");
   }
 
   async function boot() {
@@ -1145,12 +2305,43 @@
         throw new Error("API 尚未設定");
       }
 
+      var customerConfig = window.BEAUTY_CONFIG || {};
+      if (customerConfig.ENVIRONMENT === "v2-test" &&
+          !customerConfig.STUDIO_ENTRY_KEY && !customerConfig.SHOWCASE_CONTEXT) {
+        throw new Error("請從工作室提供的專屬預約連結進入");
+      }
+
       setStatus("", "載入中…");
-      await loadSettings();
-      await loadServices();
-      await loadServerProfile();
-      await loadBookings();
+      var aiCapabilityPromise = loadAiCapability();
+      var bookingsPromise = loadBookings();
+      var deferredStartupPromise = Promise.allSettled([aiCapabilityPromise, bookingsPromise]);
+      await Promise.all([
+        loadSettings(),
+        loadServices(),
+        loadServerProfile()
+      ]);
+      // 訂金顯示依賴 settings；並行載入時 bookings 可能先完成，統一補渲染一次。
+      renderBookings();
       setStatus("");
+      deferredStartupPromise.then(function () {
+        renderBookings();
+      });
+      var requestedServiceId = "";
+      try {
+        requestedServiceId = new URLSearchParams(window.location.search || "").get("serviceId") || "";
+      } catch (_error) {}
+      if (requestedServiceId) {
+        await selectServiceById(requestedServiceId);
+        if (state.selectedService) {
+          setStatus("success", state.requiresAssessment
+            ? "已為您帶入上次服務，請先完成此服務的評估。"
+            : "已為您帶入上次服務，請選擇日期與時間完成預約。");
+          if (els.serviceSelection) els.serviceSelection.scrollIntoView({ block: "start" });
+        }
+      } else if (await resumeApprovedAssessmentService()) {
+        setStatus("success", "已帶回您先前核准的評估與服務，請直接選擇日期與時間完成預約。");
+        if (els.assessmentPanel) els.assessmentPanel.scrollIntoView({ block: "start" });
+      }
       // LIFF 與資料就緒後才處理一次性認領邀請（僅 v2 設定啟用）
       initClaimFlow();
     } catch (error) {

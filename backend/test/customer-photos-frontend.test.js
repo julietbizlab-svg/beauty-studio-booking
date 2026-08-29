@@ -574,7 +574,7 @@ test("owner：上傳期間防重複觸發", async function () {
   assert.equal(app.spy.uploads.length, 1, "處理期間重複選檔只能觸發一次上傳");
 });
 
-test("owner：刪除照片需 confirm，取消則不呼叫 API", async function () {
+test("owner：刪除照片需品牌確認視窗，取消則不呼叫 API", async function () {
   var app = await bootOwnerApp({
     photoSets: [photoSetDto({ before: photoDto() })],
     confirmResult: false
@@ -584,8 +584,11 @@ test("owner：刪除照片需 confirm，取消則不呼叫 API", async function 
   var deleteBtn = findByAttr(app, "data-photo-delete", "photo-1");
   deleteBtn.fire("click");
   await tick(2);
-  assert.equal(app.spy.confirms.length, 1, "刪除照片前必須 confirm");
-  assert.equal(app.spy.photoDeletes.length, 0, "取消 confirm 不得刪除");
+  assert.equal(app.els["owner-confirm-modal"].classList.contains("hidden"), false);
+  assert.match(app.els["owner-confirm-message"].textContent, /刪除這張照片/);
+  app.els["owner-confirm-cancel"].fire("click");
+  await tick(1);
+  assert.equal(app.spy.photoDeletes.length, 0, "取消確認不得刪除");
 });
 
 test("owner：刪除整組需 confirm，確認後呼叫 deletePhotoSet 並重新載入", async function () {
@@ -595,10 +598,11 @@ test("owner：刪除整組需 confirm，確認後呼叫 deletePhotoSet 並重新
 
   var deleteBtn = findByAttr(app, "data-photo-set-delete", "set-1");
   deleteBtn.fire("click");
+  await tick(1);
+  assert.match(app.els["owner-confirm-message"].textContent, /整組/);
+  app.els["owner-confirm-submit"].fire("click");
   await tick(3);
 
-  assert.equal(app.spy.confirms.length, 1);
-  assert.ok(app.spy.confirms[0].indexOf("整組") !== -1);
   assert.deepEqual(app.spy.deletePhotoSet, [{ customerId: "cus-1", setId: "set-1" }]);
   assert.equal(app.spy.listPhotoSets.length, 2, "刪除後必須重新載入照片組");
 });

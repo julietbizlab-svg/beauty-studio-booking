@@ -39,6 +39,9 @@ var MIGRATION_FILES = [
   "0008_booking_notice_policy.sql",
   "0009_booking_status_machine.sql",
   "0010_cleanup_duplicate_renamed_indexes.sql"
+  ,"0011_ai_customer_inquiries.sql"
+  ,"0012_booking_review_deposit_deadline.sql"
+  ,"0014_deposit_transfer_report.sql"
 ];
 
 var TENANT = "tenant-resched-001";
@@ -389,6 +392,13 @@ test("成功改期：欄位、parent、items、兩筆 status log、reason_code",
   // 兩項合計 90 分；更新舊 end_at 以符合快照總時長（成功路徑以 item 時長重算）
   db.prepare("UPDATE bookings SET end_at = ? WHERE id = ?")
     .run("2099-08-01T03:30:00.000Z", "bk-ok");
+  db.prepare(
+    "UPDATE bookings SET review_accepted_at=?, deposit_due_at=?, deposit_confirmed_at=?, " +
+    "deposit_transfer_last5=?, deposit_reported_at=? WHERE id=?"
+  ).run(
+    "2099-07-20T01:00:00.000Z", "2099-07-21T01:00:00.000Z",
+    "2099-07-20T02:00:00.000Z", "12345", "2099-07-20T01:30:00.000Z", "bk-ok"
+  );
 
   var response = await worker.fetch(
     jsonRequest(
@@ -437,7 +447,9 @@ test("成功改期：欄位、parent、items、兩筆 status log、reason_code",
   var newRow = db.prepare(
     "SELECT id, status, parent_booking_id, source, created_by_type, created_by_id, " +
     "customer_id, staff_id, location_id, start_at, end_at, " +
-    "cancellation_notice_days_snapshot, cancellation_deadline_at, booking_no " +
+    "cancellation_notice_days_snapshot, cancellation_deadline_at, booking_no, " +
+    "review_accepted_at, deposit_due_at, deposit_confirmed_at, deposit_transfer_last5, " +
+    "deposit_reported_at " +
     "FROM bookings WHERE id = ?"
   ).get(body.newBookingId);
   assert.equal(newRow.status, S.CONFIRMED);
@@ -457,6 +469,11 @@ test("成功改期：欄位、parent、items、兩筆 status log、reason_code",
   );
   assert.ok(String(newRow.booking_no).indexOf("BK-") === 0);
   assert.notEqual(newRow.booking_no, "bk-ok");
+  assert.equal(newRow.review_accepted_at, "2099-07-20T01:00:00.000Z");
+  assert.equal(newRow.deposit_due_at, "2099-07-21T01:00:00.000Z");
+  assert.equal(newRow.deposit_confirmed_at, "2099-07-20T02:00:00.000Z");
+  assert.equal(newRow.deposit_transfer_last5, "12345");
+  assert.equal(newRow.deposit_reported_at, "2099-07-20T01:30:00.000Z");
 
   var newItems = db.prepare(
     "SELECT id, service_id, service_name_snapshot, duration_minutes, quantity, " +

@@ -3,6 +3,7 @@
  */
 (function () {
   "use strict";
+  var selectedOwnerTenantId = "";
 
   function getApiBaseUrl() {
     var config = window.BEAUTY_CONFIG || {};
@@ -52,7 +53,7 @@
     var idToken = getIdToken();
     if (!idToken) {
       if (triggerOwnerReLogin()) {
-        throw makeAuthError("登入已過期，正在重新導向 LINE 登入…");
+        return new Promise(function () {});
       }
       throw new Error("尚未完成 LINE 登入，無法呼叫管理 API");
     }
@@ -62,6 +63,9 @@
       "Content-Type": "application/json",
       "Authorization": "Bearer " + idToken
     }, opts.headers || {});
+    if (selectedOwnerTenantId) {
+      headers["X-Owner-Tenant-Id"] = selectedOwnerTenantId;
+    }
 
     var response = await fetch(baseUrl + path, Object.assign({}, opts, {
       headers: headers
@@ -76,7 +80,7 @@
       var message = (body && body.message) ? body.message : "伺服器回應錯誤（" + response.status + "）";
       if (response.status === 401 || looksLikeTokenExpiredMessage(message)) {
         if (triggerOwnerReLogin()) {
-          throw makeAuthError("登入已過期，正在重新導向 LINE 登入…");
+          return new Promise(function () {});
         }
         message = "登入已過期，請重新開啟此頁";
       } else if (response.status === 403 && (!body || !body.message)) {
@@ -104,7 +108,7 @@
     var idToken = getIdToken();
     if (!idToken) {
       if (triggerOwnerReLogin()) {
-        throw makeAuthError("登入已過期，正在重新導向 LINE 登入…");
+        return new Promise(function () {});
       }
       throw new Error("尚未完成 LINE 登入，無法呼叫管理 API");
     }
@@ -113,6 +117,9 @@
     var headers = Object.assign({
       "Authorization": "Bearer " + idToken
     }, opts.headers || {});
+    if (selectedOwnerTenantId) {
+      headers["X-Owner-Tenant-Id"] = selectedOwnerTenantId;
+    }
 
     var response = await fetch(baseUrl + path, Object.assign({}, opts, {
       headers: headers
@@ -126,7 +133,7 @@
       var message = (body && body.message) ? body.message : "伺服器回應錯誤（" + response.status + "）";
       if (response.status === 401 || looksLikeTokenExpiredMessage(message)) {
         if (triggerOwnerReLogin()) {
-          throw makeAuthError("登入已過期，正在重新導向 LINE 登入…");
+          return new Promise(function () {});
         }
         message = "登入已過期，請重新開啟此頁";
       } else if (response.status === 403 && (!body || !body.message)) {
@@ -145,6 +152,70 @@
   }
 
   window.ownerApi = {
+    setOwnerTenant: function (tenantId) {
+      selectedOwnerTenantId = String(tenantId || "").trim();
+    },
+
+    getHubSession: function () {
+      return apiFetch("/api/owner/hub/session");
+    },
+
+    getPlatformCapability: function () {
+      return apiFetch("/api/platform/capability");
+    },
+
+    provisionOwnerStudio: function (data) {
+      return apiFetch("/api/platform/studios", {
+        method: "POST",
+        body: JSON.stringify(data || {})
+      });
+    },
+
+    listPlatformStudios: function () {
+      return apiFetch("/api/platform/studios");
+    },
+
+    ensurePlatformAcceptanceStudios: function () {
+      return apiFetch("/api/platform/acceptance-studios", { method: "POST" });
+    },
+
+    updatePlatformStudioIdentity: function (tenantId, data) {
+      return apiFetch("/api/platform/studios/" + encodeURIComponent(tenantId), {
+        method: "PATCH",
+        body: JSON.stringify(data || {})
+      });
+    },
+
+    managePlatformStudioSubscription: function (tenantId, data) {
+      return apiFetch("/api/platform/studios/" + encodeURIComponent(tenantId) + "/subscription", {
+        method: "PATCH",
+        body: JSON.stringify(data || {})
+      });
+    },
+
+    setPlatformStudioAssessmentTemplate: function (tenantId, assessmentTemplateCode) {
+      return apiFetch("/api/platform/studios/" + encodeURIComponent(tenantId) + "/assessment-template", {
+        method: "PATCH",
+        body: JSON.stringify({ assessmentTemplateCode: assessmentTemplateCode })
+      });
+    },
+
+    reissuePlatformOwnerInvite: function (tenantId) {
+      return apiFetch("/api/platform/studios/" + encodeURIComponent(tenantId) + "/owner-invite", {
+        method: "POST"
+      });
+    },
+
+    ensurePlatformStudioCustomerEntry: function (tenantId) {
+      return apiFetch("/api/platform/studios/" + encodeURIComponent(tenantId) + "/customer-entry", {
+        method: "POST"
+      });
+    },
+
+    exportPlatformStudioCustomers: function (tenantId) {
+      return apiFetchRaw("/api/platform/studios/" + encodeURIComponent(tenantId) + "/customers.csv");
+    },
+
     getBookingsForMonth: function (month) {
       return apiFetch("/api/owner/bookings/month?month=" + encodeURIComponent(month));
     },
@@ -184,6 +255,17 @@
       });
     },
 
+    getClosedDates: function (month) {
+      return apiFetch("/api/owner/closed-dates?month=" + encodeURIComponent(month || ""));
+    },
+
+    setDateClosed: function (date, closed) {
+      return apiFetch("/api/owner/closed-dates", {
+        method: "PUT",
+        body: JSON.stringify({ date: date, closed: closed })
+      });
+    },
+
     getSettings: function (userId) {
       return apiFetch("/api/owner/settings");
     },
@@ -216,6 +298,13 @@
           method: "PATCH",
           body: JSON.stringify(body)
         }
+      );
+    },
+
+    updatePigmentReminderDates: function (bookingId, data) {
+      return apiFetch(
+        "/api/owner/bookings/" + encodeURIComponent(bookingId || "") + "/pigment-reminders",
+        { method: "PATCH", body: JSON.stringify(data || {}) }
       );
     },
 
@@ -283,6 +372,17 @@
     // （不強制 JSON Content-Type、不記錄 blob／object key）
     listPhotoSets: function (customerId) {
       return apiFetch(photoSetBasePath(customerId));
+    },
+
+    listCustomerAlbum: function (customerId) {
+      return apiFetch("/api/owner/customers/by-id/" + encodeURIComponent(customerId || "") + "/album");
+    },
+
+    fetchCustomerAlbumPhoto: async function (contentPath) {
+      var path = String(contentPath || "");
+      if (!/^\/api\/owner\//.test(path)) throw new Error("照片路徑無效");
+      var response = await apiFetchRaw(path);
+      return response.blob();
     },
 
     createPhotoSet: function (customerId, data) {
@@ -410,7 +510,124 @@
     },
 
     getAiCapability: function () {
-      return apiFetch("/api/owner/ai/capability");
+      return apiFetch("/api/owner/ai/capability", { cache: "no-store" });
+    },
+
+    getSubscriptionStatus: function () {
+      return apiFetch("/api/owner/subscription-status", { cache: "no-store" });
+    },
+
+    getAiInquiries: function () {
+      return apiFetch("/api/owner/ai/inquiries", { cache: "no-store" });
+    },
+
+    getAiWorkQueue: function () {
+      return apiFetch("/api/owner/ai/work-queue", { cache: "no-store" });
+    },
+
+    getBrowIntakes: function () {
+      return apiFetch("/api/owner/brow-intakes", { cache: "no-store" });
+    },
+
+    getAssessments: function () {
+      return apiFetch("/api/owner/assessments", { cache: "no-store" });
+    },
+
+    reviewAssessment: function (assessmentId, status, message) {
+      return apiFetch("/api/owner/assessments/" + encodeURIComponent(assessmentId) + "/status", {
+        method: "PATCH", body: JSON.stringify({ status: status, message: message || "" })
+      });
+    },
+
+    fetchAssessmentPhoto: function (assessmentId, photoId) {
+      return apiFetchRaw("/api/owner/assessments/" + encodeURIComponent(assessmentId) +
+        "/photos/" + encodeURIComponent(photoId) + "/content");
+    },
+
+    getAssessmentTemplates: function () {
+      return apiFetch("/api/owner/assessment-templates", { cache: "no-store" });
+    },
+
+    updateAssessmentQuestion: function (templateCode, questionKey, payload) {
+      return apiFetch("/api/owner/assessment-templates/" + encodeURIComponent(templateCode) +
+        "/questions/" + encodeURIComponent(questionKey), {
+        method: "PATCH", body: JSON.stringify(payload || {})
+      });
+    },
+
+    reviewBrowIntake: function (intakeId, status, message) {
+      return apiFetch(
+        "/api/owner/brow-intakes/" + encodeURIComponent(intakeId) + "/status",
+        { method: "PATCH", body: JSON.stringify({ status: status, message: message || "" }) }
+      );
+    },
+
+    fetchBrowIntakePhoto: function (intakeId, photoId) {
+      return apiFetchRaw("/api/owner/brow-intakes/" + encodeURIComponent(intakeId) +
+        "/photos/" + encodeURIComponent(photoId) + "/content");
+    },
+
+    updateAiInquiryStatus: function (inquiryId, status) {
+      return apiFetch(
+        "/api/owner/ai/inquiries/" + encodeURIComponent(inquiryId),
+        {
+          method: "PATCH",
+          body: JSON.stringify({ status: status })
+        }
+      );
+    },
+
+    sendAiInquiryReply: function (inquiryId, message, requestId) {
+      return apiFetch(
+        "/api/owner/ai/inquiries/" + encodeURIComponent(inquiryId) + "/replies",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            message: message || "",
+            requestId: requestId || ""
+          })
+        }
+      );
+    },
+
+    getBookingReview: function (bookingId) {
+      return apiFetch(
+        "/api/owner/bookings/" + encodeURIComponent(bookingId || "") + "/review-intake"
+      );
+    },
+
+    generateBookingReviewSummary: function (bookingId) {
+      return apiFetch("/api/owner/ai/review-summary", {
+        method: "POST",
+        body: JSON.stringify({ bookingId: bookingId || "" })
+      });
+    },
+
+    requestBookingReviewPhoto: function (bookingId, requested, note) {
+      return apiFetch(
+        "/api/owner/bookings/" + encodeURIComponent(bookingId || "") + "/review-intake",
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            photoRequested: Boolean(requested),
+            photoRequestNote: note || ""
+          })
+        }
+      );
+    },
+
+    requestBookingReviewAnswers: function (bookingId, payload) {
+      return apiFetch(
+        "/api/owner/bookings/" + encodeURIComponent(bookingId || "") + "/review-intake",
+        { method: "PATCH", body: JSON.stringify(payload || {}) }
+      );
+    },
+
+    fetchBookingReviewPhoto: function (bookingId, photoId) {
+      return apiFetchRaw(
+        "/api/owner/bookings/" + encodeURIComponent(bookingId || "") +
+        "/review-photos/" + encodeURIComponent(photoId || "") + "/content"
+      );
     },
 
     isConfigured: function () {

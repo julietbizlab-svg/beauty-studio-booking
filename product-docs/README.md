@@ -1,6 +1,8 @@
 ## 中文導航
 
 - [中文總目錄.md](中文總目錄.md)：中文文件導航，不用記英文檔名
+- [CURRENT-AND-INVALID-FILES-2026-08-20.md](CURRENT-AND-INVALID-FILES-2026-08-20.md)：目前有效、過期與不可交付檔案清單
+- [V2-HANDOFF-2026-08-20-CURRENT.md](V2-HANDOFF-2026-08-20-CURRENT.md)：目前線上版本、測試與工程交接
 
 # 商品化標準文件區
 
@@ -18,6 +20,9 @@
 | CLIENT-NOTION-SETUP-FLOW.md | 在 Notion 建立四個資料庫、連接 Integration、填入 Database ID |
 | CLIENT-LINE-SETUP-FLOW.md | 新客戶 LINE / LIFF 逐步設定與驗收紀錄（含 Channel ID、LIFF ID、Endpoint） |
 | **LINE-ENTRY-SETUP-FLOW.md** | **LINE 入口設定 SOP**：官方帳號圖文選單／按鈕、客人與業主入口、可公開網址、Demo 與正式切開、交付檢查 |
+| **OWNER-SUBSCRIPTION-ONBOARDING-SOP.md** | **業主訂閱開通 SOP**：共用 LINE OA 模式下，平台建工作室、一次性邀請、業主綁定、實機驗收與客製 OA 分流 |
+| **V2-WORKLOG-2026-08-09-LINE-OA-OWNER-FLOW.md** | **2026-08-09 工作紀錄**：標準／旗艦 OA、Owner Hub、部署版本、待辦與踩坑避雷 |
+| **V2-MASTER-BLUEPRINT-AND-PROGRESS-2026-08-09.md** | **v2 總藍圖與進度報告**：產品、平台、OA、方案、權限、部署、進度與後續順序的單一總覽 |
 | PRICING-DRAFT.md | 報價方案草稿，協助判斷建置費與月維護費 |
 | CLIENT-DELIVERY-CHECKLIST.md | 系統完成後，交付給客戶前逐項確認 |
 | DEMO-ACCEPTANCE-2026-07-14.md | Demo 上線驗收紀錄（含客人端／業主端月曆），供交付 SOP 參考 |
@@ -27,17 +32,14 @@
 
 ## 使用順序
 
-1. **母版斷點**：先看 [BASELINE-V1-SNAPSHOT.md](BASELINE-V1-SNAPSHOT.md)（基礎款 v1.0 賣什麼、不賣什麼）
-2. **整套架設總覽**：再讀 [INSTALLATION-PACKAGE-SOP.md](INSTALLATION-PACKAGE-SOP.md)（新客戶從複製到交付的安裝包 SOP）
-3. **新客戶套版細節**：再讀 [TEMPLATE-CLONE-GUIDE.md](TEMPLATE-CLONE-GUIDE.md)（複製什麼、換什麼、怎麼驗收）
-4. 先填 `CLIENT-INFO-CHECKLIST.md`
-5. 依 `CLIENT-NOTION-SETUP-FLOW.md` 建立 Notion 四個資料庫
-6. 依 `CLIENT-LINE-SETUP-FLOW.md` 完成 LINE / LIFF 設定
-7. 依 [LINE-ENTRY-SETUP-FLOW.md](LINE-ENTRY-SETUP-FLOW.md) 設定官方帳號「預約／管理」入口（圖文選單或按鈕）
-8. 再依需求評估 `PRICING-DRAFT.md`
-9. 建置完成後使用 `CLIENT-DELIVERY-CHECKLIST.md`
-10. Demo 或正式上線後，可參考 `DEMO-ACCEPTANCE-2026-07-14.md` 作為驗收紀錄範本（含月曆選日期、月曆預約查詢）
-11. 客人基本資料功能上線後，用 `ACCEPTANCE-customer-profile-2026-07-15.md` 做手機勾選驗收
+1. **先確認有效版本**：看 [CURRENT-AND-INVALID-FILES-2026-08-20.md](CURRENT-AND-INVALID-FILES-2026-08-20.md) 與 [V2-HANDOFF-2026-08-20-CURRENT.md](V2-HANDOFF-2026-08-20-CURRENT.md)
+2. **平台開通業主**：讀 [OWNER-SUBSCRIPTION-ONBOARDING-SOP.md](OWNER-SUBSCRIPTION-ONBOARDING-SOP.md)
+3. **整套架設總覽**：再讀 [INSTALLATION-PACKAGE-SOP.md](INSTALLATION-PACKAGE-SOP.md)
+4. 需要獨立客製部署時，再把 `TEMPLATE-CLONE-GUIDE.md` 當歷史套版參考，不得直接沿用 v1 secrets／Notion 步驟
+5. 收集業主資料時填 `CLIENT-INFO-CHECKLIST.md` 或 `CLIENT-INFO-FORM.md`
+6. 依 `CLIENT-LINE-SETUP-FLOW.md` 與 `LINE-ENTRY-SETUP-FLOW.md` 完成 LINE／LIFF／OA 入口
+7. 依需求確認標準版、旗艦版與加購範圍
+8. 建置完成後使用 `CLIENT-DELIVERY-CHECKLIST.md` 做手機實機驗收
 
 ## 基礎款月曆功能（交付新客戶必知）
 

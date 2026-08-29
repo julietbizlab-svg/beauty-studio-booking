@@ -355,13 +355,14 @@ export function buildMonthAvailability(
   return days;
 }
 
-export function getNowMinutesInTaipei() {
+export function getNowMinutesInTaipei(dateInput) {
+  var date = dateInput instanceof Date ? dateInput : new Date();
   var parts = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Asia/Taipei",
     hour: "2-digit",
     minute: "2-digit",
     hour12: false
-  }).formatToParts(new Date());
+  }).formatToParts(date);
 
   var hour = 0;
   var minute = 0;

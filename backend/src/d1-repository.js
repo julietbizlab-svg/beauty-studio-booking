@@ -55,10 +55,20 @@ import {
   OWNER_RESCHEDULED_REASON_CODE
 } from "./booking-state-machine.js";
 import {
+  dispatchLineNotificationById,
+  enqueueBookingNotification,
+  hasLineNotificationRoute
+} from "./d1-notifications.js";
+import { schedulePigmentFollowUpReminders } from "./d1-brow-reminders.js";
+import {
+  buildAllSlotTimesForDay,
   buildAllSlotTimesForDayWithStep,
   filterAvailableSlots,
+  filterSlotsByBookingNotice,
+  buildBusyIntervalsFromBookings,
   buildBusyIntervalClippedToDay,
   getNowMinutesInTaipei,
+  CONSERVATIVE_BUSY_DURATION_MINUTES,
   OWNER_RESCHEDULE_SLOT_STEP_MINUTES
 } from "./slots.js";
 import { getTaipeiDateString, getTaipeiWeekdayIndex } from "./owner-auth.js";
@@ -94,6 +104,16 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function customerHistoryCutoffIso(env, days) {
+  var configured = env && env.BOOKING_HISTORY_NOW_ISO
+    ? Date.parse(String(env.BOOKING_HISTORY_NOW_ISO))
+    : Date.now();
+  if (!Number.isFinite(configured)) {
+    throw makeError("BOOKING_HISTORY_NOW_ISO 設定錯誤", 500);
+  }
+  return new Date(configured - days * 24 * 60 * 60 * 1000).toISOString();
+}
+
 // ─────────────────────────────── services ───────────────────────────────
 
 var SERVICE_STATUS_TO_API = {
@@ -116,6 +136,10 @@ function serviceApiStatusToDb(status) {
 }
 
 function serviceRowToDto(row) {
+  var settings = {};
+  try { settings = JSON.parse(row.settings_json || "{}"); } catch (_error) {}
+  var assessmentCode = serviceCategorySkipsAssessment(row.name)
+    ? "none" : String(row.assessment_template_code || "none");
   return {
     id: row.id,
     name: row.name,
@@ -123,15 +147,41 @@ function serviceRowToDto(row) {
     price: Number(row.price_amount) || 0,
     description: row.description || "",
     status: SERVICE_STATUS_TO_API[row.status] || "下架",
-    sortOrder: Number(row.sort_order) || 0
+    sortOrder: Number(row.sort_order) || 0,
+    followUpDays: Number.isInteger(Number(settings.followUpDays))
+      ? Math.max(0, Math.min(365, Number(settings.followUpDays))) : 21,
+    assessmentTemplateCode: assessmentCode,
+    assessmentTemplateReady: SERVICE_ASSESSMENT_CODES.has(assessmentCode)
   };
+}
+
+function serviceCategorySkipsAssessment(name) {
+  return /美甲|美睫|睫毛/.test(String(name || ""));
+}
+
+const SERVICE_ASSESSMENT_CODES = new Set([
+  "none", "brow_new_client", "lip_blush_new_client",
+  "eyeliner_new_client", "under_eye_new_client",
+  "brow_lightening_new_client", "lip_lightening_new_client"
+]);
+
+function storedAssessmentCode(code) {
+  return ["brow_lightening_new_client", "lip_lightening_new_client"].includes(code) ? "none" : code;
+}
+
+function validateServiceAssessmentCode(value) {
+  var code = String(value == null || value === "" ? "none" : value);
+  if (!SERVICE_ASSESSMENT_CODES.has(code)) {
+    throw makeError("不支援的服務評估類型", 400);
+  }
+  return code;
 }
 
 export async function listServices(env, activeOnly) {
   ensureD1Env(env);
 
   var sql =
-    "SELECT id, name, duration_minutes, price_amount, description, status, sort_order " +
+    "SELECT id, name, duration_minutes, price_amount, description, status, sort_order, settings_json, COALESCE(NULLIF(json_extract(settings_json,'$.assessmentTemplateCode'),''),assessment_template_code) AS assessment_template_code " +
     "FROM services WHERE tenant_id = ?1 AND status " +
     (activeOnly ? "= 'active' " : "IN ('active', 'inactive') ") +
     "ORDER BY sort_order ASC, created_at ASC";
@@ -147,7 +197,7 @@ export async function getServiceById(env, serviceId) {
   }
 
   var row = await env.DB.prepare(
-    "SELECT id, name, duration_minutes, price_amount, description, status, sort_order " +
+    "SELECT id, name, duration_minutes, price_amount, description, status, sort_order, settings_json, COALESCE(NULLIF(json_extract(settings_json,'$.assessmentTemplateCode'),''),assessment_template_code) AS assessment_template_code " +
     "FROM services WHERE tenant_id = ?1 AND id = ?2"
   ).bind(env.TENANT_ID, String(serviceId)).first();
 
@@ -205,6 +255,8 @@ export async function createService(env, data) {
   var durationMinutes = Number(data.durationMinutes) || 60;
   var price = data.price != null && data.price !== "" ? Number(data.price) : 0;
   var sortOrder = Number(data.sortOrder) || 0;
+  var assessmentTemplateCode = validateServiceAssessmentCode(data.assessmentTemplateCode);
+  var followUpDays = Number(data.followUpDays == null ? 21 : data.followUpDays);
 
   if (!(durationMinutes > 0)) {
     throw makeError("時長須大於 0 分鐘", 400);
@@ -212,11 +264,14 @@ export async function createService(env, data) {
   if (!(price >= 0)) {
     throw makeError("價格不可為負數", 400);
   }
+  if (!Number.isInteger(followUpDays) || followUpDays < 0 || followUpDays > 365) {
+    throw makeError("回訪提醒天數須為 0～365 的整數", 400);
+  }
 
   await env.DB.prepare(
     "INSERT INTO services (id, tenant_id, code, name, description, duration_minutes, " +
-    "price_amount, status, sort_order, created_at, updated_at) " +
-    "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)"
+    "price_amount, status, sort_order, assessment_template_code, settings_json, created_at, updated_at) " +
+    "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)"
   ).bind(
     id,
     env.TENANT_ID,
@@ -227,6 +282,8 @@ export async function createService(env, data) {
     price,
     status,
     sortOrder,
+    storedAssessmentCode(assessmentTemplateCode),
+    JSON.stringify({ assessmentTemplateCode: assessmentTemplateCode, followUpDays: followUpDays }),
     now
   ).run();
 
@@ -273,6 +330,20 @@ export async function updateService(env, serviceId, data) {
   if (data.sortOrder !== undefined) {
     addSet("sort_order", Number(data.sortOrder) || 0);
   }
+  if (data.assessmentTemplateCode !== undefined) {
+    var selectedAssessmentCode = validateServiceAssessmentCode(data.assessmentTemplateCode);
+    addSet("assessment_template_code", storedAssessmentCode(selectedAssessmentCode));
+    binds.push(selectedAssessmentCode);
+    sets.push("settings_json = json_set(COALESCE(settings_json,'{}'),'$.assessmentTemplateCode',?" + binds.length + ")");
+  }
+  if (data.followUpDays !== undefined) {
+    var followUpDays = Number(data.followUpDays);
+    if (!Number.isInteger(followUpDays) || followUpDays < 0 || followUpDays > 365) {
+      throw makeError("回訪提醒天數須為 0～365 的整數", 400);
+    }
+    binds.push(followUpDays);
+    sets.push("settings_json = json_set(COALESCE(settings_json,'{}'),'$.followUpDays',?" + binds.length + ")");
+  }
 
   if (sets.length) {
     addSet("updated_at", nowIso());
@@ -308,13 +379,25 @@ var SETTINGS_FIELDS = [
   { dto: "cancelPolicy", key: "cancellation_policy_text", type: "string" },
   { dto: "bookingMinNoticeDays", key: "booking_min_notice_days", type: "number" },
   { dto: "cancellationMinNoticeDays", key: "cancellation_min_notice_days", type: "number" },
+  { dto: "nextMonthBookingOpenDay", key: "next_month_booking_open_day", type: "number" },
+  { dto: "arrivalReminderMinutes", key: "arrival_reminder_minutes", type: "number" },
+  { dto: "tomorrowReminderTime", key: "tomorrow_booking_reminder_time", type: "string" },
+  { dto: "tomorrowReminderMessage", key: "tomorrow_booking_reminder_message", type: "string" },
   { dto: "depositEnabled", key: "deposit_enabled", type: "boolean" },
   { dto: "depositAmount", key: "deposit_amount", type: "number" },
   { dto: "bankName", key: "bank_name", type: "string" },
   { dto: "bankCode", key: "bank_code", type: "string" },
   { dto: "bankAccount", key: "bank_account", type: "string" },
   { dto: "bankAccountName", key: "bank_account_name", type: "string" },
-  { dto: "depositNote", key: "deposit_notice", type: "string" }
+  { dto: "depositNote", key: "deposit_notice", type: "string" },
+  { dto: "customerBookingUrl", key: "customer_booking_url", type: "string" },
+  { dto: "customerAiEnabled", key: "customer_ai_enabled", type: "boolean" },
+  { dto: "customerAiTone", key: "customer_ai_tone", type: "string" },
+  { dto: "customerAiBusinessType", key: "customer_ai_business_type", type: "string" },
+  { dto: "customerAiStudioIntro", key: "customer_ai_studio_intro", type: "string" },
+  { dto: "customerAiKnowledge", key: "customer_ai_knowledge", type: "string" },
+  { dto: "customerAiAnswerScope", key: "customer_ai_answer_scope", type: "string" },
+  { dto: "customerAiHandoffRule", key: "customer_ai_handoff_rule", type: "string" }
 ];
 
 /** 預設值與 notion.js 的 defaultSettings() 一致 */
@@ -327,13 +410,25 @@ function defaultSettings() {
     cancelPolicy: "預約日前 24 小時可免費取消。",
     bookingMinNoticeDays: DEFAULT_NOTICE_DAYS,
     cancellationMinNoticeDays: DEFAULT_NOTICE_DAYS,
+    nextMonthBookingOpenDay: 15,
+    arrivalReminderMinutes: 5,
+    tomorrowReminderTime: "12:20",
+    tomorrowReminderMessage: "明天見！請在約定時間前 5 分鐘到場，讓我們可以從容為您準備。",
     depositEnabled: false,
     depositAmount: null,
     bankName: "",
     bankCode: "",
     bankAccount: "",
     bankAccountName: "",
-    depositNote: ""
+    depositNote: "",
+    customerBookingUrl: "",
+    customerAiEnabled: true,
+    customerAiTone: "friendly",
+    customerAiBusinessType: "",
+    customerAiStudioIntro: "",
+    customerAiKnowledge: "",
+    customerAiAnswerScope: "",
+    customerAiHandoffRule: ""
   };
 }
 
@@ -390,6 +485,17 @@ export async function getSettings(env) {
       settings[field.dto] = parseSettingValue(field, byKey[field.key]);
     }
   });
+  if (!String(settings.tomorrowReminderTime || "").trim()) {
+    settings.tomorrowReminderTime = "12:20";
+  }
+  if (!String(settings.tomorrowReminderMessage || "").trim()) {
+    settings.tomorrowReminderMessage =
+      "明天見！請在約定時間前 5 分鐘到場，讓我們可以從容為您準備。";
+  }
+  settings.tomorrowReminderTimeUsesPlatformDefault =
+    !String(byKey.tomorrow_booking_reminder_time || "").trim();
+  settings.tomorrowReminderMessageUsesPlatformDefault =
+    !String(byKey.tomorrow_booking_reminder_message || "").trim();
   return settings;
 }
 
@@ -397,15 +503,18 @@ export async function updateSettings(env, patch) {
   ensureD1Env(env);
   var input = patch || {};
 
-  // 與 notion.js 相同的訂金驗證：開啟訂金時帳號、戶名必填且金額 > 0
+  if (Object.prototype.hasOwnProperty.call(input, "brandName")) {
+    throw makeError("工作室名稱已鎖定，請聯絡平台負責人更正", 403);
+  }
+
+  // 開啟訂金時帳號必填且金額 > 0；戶名可留空以保護使用個人帳戶的業主。
   if (input.depositEnabled === true) {
     var account = input.bankAccount != null ? String(input.bankAccount).trim() : "";
-    var accountName = input.bankAccountName != null ? String(input.bankAccountName).trim() : "";
     var depositAmount = input.depositAmount != null && input.depositAmount !== ""
       ? Number(input.depositAmount)
       : NaN;
-    if (!account || !accountName) {
-      throw makeError("開啟訂金時請填寫帳號與戶名", 400);
+    if (!account) {
+      throw makeError("開啟訂金時請填寫轉帳帳號", 400);
     }
     if (!(depositAmount > 0)) {
       throw makeError("開啟訂金時訂金金額須大於 0", 400);
@@ -414,6 +523,60 @@ export async function updateSettings(env, patch) {
 
   validateNoticeDaysInput(input.bookingMinNoticeDays, "客戶最晚預約時間");
   validateNoticeDaysInput(input.cancellationMinNoticeDays, "客戶最晚取消時間");
+  if (input.nextMonthBookingOpenDay !== undefined) {
+    var openDay = input.nextMonthBookingOpenDay;
+    if (typeof openDay !== "number" || !Number.isInteger(openDay) || openDay < 1 || openDay > 28) {
+      throw makeError("下個月預約開放日須為 1～28 的整數", 400);
+    }
+  }
+  if (input.arrivalReminderMinutes !== undefined) {
+    var arrivalMinutes = Number(input.arrivalReminderMinutes);
+    if (!Number.isInteger(arrivalMinutes) || arrivalMinutes < 0 || arrivalMinutes > 60) {
+      throw makeError("服務前抵達時間須為 0～60 的整數分鐘", 400);
+    }
+  }
+  if (input.tomorrowReminderTime !== undefined) {
+    var reminderTime = String(input.tomorrowReminderTime || "").trim();
+    var reminderTimeMatch = /^(\d{2}):(\d{2})$/.exec(reminderTime);
+    if (reminderTime && (!reminderTimeMatch || Number(reminderTimeMatch[1]) > 23 ||
+        Number(reminderTimeMatch[2]) > 59 || Number(reminderTimeMatch[2]) % 5 !== 0)) {
+      throw makeError("明日預約提醒時間須為 5 分鐘刻度", 400);
+    }
+  }
+  if (input.tomorrowReminderMessage !== undefined &&
+      Array.from(String(input.tomorrowReminderMessage || "")).length > 500) {
+    throw makeError("明日預約提醒內容不可超過 500 字", 400);
+  }
+  if (input.customerBookingUrl !== undefined) {
+    var customerBookingUrl = String(input.customerBookingUrl || "").trim();
+    if (customerBookingUrl && !/^https:\/\//i.test(customerBookingUrl)) {
+      throw makeError("客戶預約入口必須是 https 網址", 400);
+    }
+    if (customerBookingUrl.length > 500) {
+      throw makeError("客戶預約入口網址過長", 400);
+    }
+  }
+
+  if (input.customerAiEnabled !== undefined &&
+      typeof input.customerAiEnabled !== "boolean") {
+    throw makeError("AI 客服啟用狀態格式錯誤", 400);
+  }
+  if (input.customerAiTone !== undefined &&
+      ["friendly", "professional", "concise"].indexOf(input.customerAiTone) === -1) {
+    throw makeError("AI 客服回覆語氣無效", 400);
+  }
+  [
+    ["customerAiBusinessType", 80, "專業類型"],
+    ["customerAiStudioIntro", 500, "工作室介紹"],
+    ["customerAiKnowledge", 3000, "AI 專業知識與回答規則"],
+    ["customerAiAnswerScope", 800, "可回答範圍"],
+    ["customerAiHandoffRule", 500, "轉人工規則"]
+  ].forEach(function (rule) {
+    if (input[rule[0]] !== undefined &&
+        Array.from(String(input[rule[0]])).length > rule[1]) {
+      throw makeError(rule[2] + "字數過長", 400);
+    }
+  });
 
   var now = nowIso();
   var statements = [];
@@ -591,6 +754,73 @@ export async function replaceWeeklySlots(env, slots) {
   });
 }
 
+/** 取得指定月份的整日休假；每筆都限制 tenant＋location＋staff。 */
+export async function listClosedDates(env, month) {
+  ensureD1SlotsEnv(env);
+  var monthText = String(month || "").trim();
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(monthText)) {
+    throw makeError("month 格式錯誤，請使用 YYYY-MM", 400);
+  }
+  var result = await env.DB.prepare(
+    "SELECT specific_date FROM staff_schedules " +
+    "WHERE tenant_id = ?1 AND location_id = ?2 AND staff_id = ?3 " +
+    "AND schedule_type = 'date_override' AND is_active = 1 AND is_available = 0 " +
+    "AND start_time IS NULL AND end_time IS NULL AND specific_date LIKE ?4 " +
+    "ORDER BY specific_date ASC"
+  ).bind(env.TENANT_ID, env.LOCATION_ID, env.STAFF_ID, monthText + "-%").all();
+  return (result.results || []).map(function (row) { return row.specific_date; });
+}
+
+export async function isDateClosed(env, date) {
+  ensureD1SlotsEnv(env);
+  var dateText = String(date || "").trim();
+  if (!isRealDateString(dateText)) {
+    throw makeError("date 格式錯誤，請使用 YYYY-MM-DD", 400);
+  }
+  var row = await env.DB.prepare(
+    "SELECT id FROM staff_schedules " +
+    "WHERE tenant_id = ?1 AND location_id = ?2 AND staff_id = ?3 " +
+    "AND schedule_type = 'date_override' AND specific_date = ?4 " +
+    "AND is_active = 1 AND is_available = 0 " +
+    "AND start_time IS NULL AND end_time IS NULL LIMIT 1"
+  ).bind(env.TENANT_ID, env.LOCATION_ID, env.STAFF_ID, dateText).first();
+  return Boolean(row);
+}
+
+/** 設定或取消指定日期整日休假；不取消既有預約。 */
+export async function setDateClosed(env, date, closed) {
+  ensureD1SlotsEnv(env);
+  var dateText = String(date || "").trim();
+  if (!isRealDateString(dateText)) {
+    throw makeError("date 格式錯誤，請使用 YYYY-MM-DD", 400);
+  }
+  if (typeof closed !== "boolean") {
+    throw makeError("closed 必須為 boolean", 400);
+  }
+  var deletion = env.DB.prepare(
+    "DELETE FROM staff_schedules " +
+    "WHERE tenant_id = ?1 AND location_id = ?2 AND staff_id = ?3 " +
+    "AND schedule_type = 'date_override' AND specific_date = ?4 " +
+    "AND is_available = 0 AND start_time IS NULL AND end_time IS NULL"
+  ).bind(env.TENANT_ID, env.LOCATION_ID, env.STAFF_ID, dateText);
+  if (!closed) {
+    await deletion.run();
+    return { date: dateText, closed: false };
+  }
+  var now = nowIso();
+  await env.DB.batch([
+    deletion,
+    env.DB.prepare(
+      "INSERT INTO staff_schedules " +
+      "(id, tenant_id, location_id, staff_id, schedule_type, specific_date, " +
+      "start_time, end_time, is_available, is_active, note, created_at, updated_at) " +
+      "VALUES (?1, ?2, ?3, ?4, 'date_override', ?5, NULL, NULL, 0, 1, ?6, ?7, ?7)"
+    ).bind(crypto.randomUUID(), env.TENANT_ID, env.LOCATION_ID, env.STAFF_ID,
+      dateText, "業主設定整日不開放", now)
+  ]);
+  return { date: dateText, closed: true };
+}
+
 // ─────────────────────── bookings（唯讀查詢） ────────────────────────────
 //
 // 對應資料表：bookings、booking_items（0002_bookings.sql）、
@@ -692,9 +922,27 @@ var BOOKING_SELECT_SQL =
   "SELECT b.id, b.booking_no, b.start_at, b.end_at, b.status, " +
   "b.cancellation_reason_code, b.cancellation_note, b.cancelled_at, b.created_at, " +
   "b.cancellation_notice_days_snapshot, b.cancellation_deadline_at, " +
+  "b.review_accepted_at, b.deposit_due_at, b.deposit_confirmed_at, " +
+  "b.deposit_transfer_last5, b.deposit_reported_at, " +
+  "(SELECT n.scheduled_at FROM notifications n WHERE n.tenant_id=b.tenant_id " +
+  "AND n.booking_id=b.id AND n.template_code IN " +
+  "('brow_complimentary_touchup_28d','lip_touchup_28d') " +
+  "ORDER BY n.created_at DESC LIMIT 1) AS pigment_touchup_reminder_at, " +
+  "(SELECT n.scheduled_at FROM notifications n WHERE n.tenant_id=b.tenant_id " +
+  "AND n.booking_id=b.id AND n.template_code IN " +
+  "('brow_paid_maintenance_11m','lip_paid_maintenance_11m') " +
+  "ORDER BY n.created_at DESC LIMIT 1) AS pigment_maintenance_reminder_at, " +
+  "(WITH RECURSIVE booking_history(id,parent_booking_id,start_at,updated_at,depth) AS (" +
+  "SELECT p.id,p.parent_booking_id,p.start_at,p.updated_at,1 FROM bookings p " +
+  "WHERE p.tenant_id=b.tenant_id AND p.id=b.parent_booking_id UNION ALL " +
+  "SELECT p.id,p.parent_booking_id,p.start_at,p.updated_at,h.depth+1 FROM bookings p " +
+  "JOIN booking_history h ON p.id=h.parent_booking_id " +
+  "WHERE p.tenant_id=b.tenant_id) SELECT COALESCE(json_group_array(json_object(" +
+  "'bookingId',id,'startAt',start_at,'changedAt',updated_at,'depth',depth)), '[]') " +
+  "FROM booking_history) AS reschedule_history_json, " +
   "c.display_name, c.mobile, c.birthday, c.notes, " +
   "la.line_user_id, " +
-  "bi.service_id, bi.service_name_snapshot " +
+  "bi.service_id, bi.service_name_snapshot, bi.unit_price_amount, bi.final_amount " +
   "FROM bookings b " +
   "JOIN customers c ON c.tenant_id = b.tenant_id AND c.id = b.customer_id " +
   "LEFT JOIN line_accounts la ON la.tenant_id = b.tenant_id AND la.customer_id = b.customer_id " +
@@ -715,6 +963,18 @@ function bookingRowToCustomerCancelDto(row, nowUtc) {
     now,
     status
   );
+  if (row.deposit_confirmed_at && status === BOOKING_STATUSES.CONFIRMED) {
+    return {
+      canCancel: false,
+      cancellationDeadlineAt: row.cancellation_deadline_at || null,
+      cancellationDeadlineDisplay: formatDeadlineTaipei(row.cancellation_deadline_at),
+      cancellationNoticeDays: parseNoticeDays(
+        row.cancellation_notice_days_snapshot, DEFAULT_NOTICE_DAYS
+      ),
+      cancelBlockedReason: "如需變更預約時間，請點選「變更時間」通知工作室協助處理",
+      cancelBlockedReasonCode: "deposit_confirmed_reschedule_required"
+    };
+  }
   return {
     canCancel: isCustomerCancellableStatus(status) && cancelEval.canCancel,
     cancellationDeadlineAt: cancelEval.cancellationDeadlineAt ||
@@ -734,6 +994,27 @@ function bookingRowToDto(row, nowUtc) {
   var cancelDto = bookingRowToCustomerCancelDto(row, nowUtc);
   var statusExt = bookingStatusToDtoExtensions(row.status);
   var legacyStatus = bookingStatusToLegacyApiLabel(row.status);
+  var rescheduleHistory = [];
+  try {
+    var storedHistory = JSON.parse(row.reschedule_history_json || "[]");
+    if (Array.isArray(storedHistory)) {
+      rescheduleHistory = storedHistory.map(function (entry) {
+        return {
+          bookingId: String(entry && entry.bookingId || ""),
+          originalDate: utcIsoToTaipeiDate(entry && entry.startAt),
+          originalTime: utcIsoToTaipeiTime(entry && entry.startAt),
+          changedAt: String(entry && entry.changedAt || ""),
+          depth: Number(entry && entry.depth) || 0
+        };
+      }).filter(function (entry) {
+        return entry.bookingId && entry.originalDate && entry.originalTime;
+      }).sort(function (a, b) {
+        return b.depth - a.depth;
+      });
+    }
+  } catch (ignore) {
+    rescheduleHistory = [];
+  }
   return {
     id: row.id,
     title: row.booking_no || "",
@@ -743,6 +1024,7 @@ function bookingRowToDto(row, nowUtc) {
     birthday: row.birthday || "",
     serviceId: row.service_id || "",
     serviceName: row.service_name_snapshot || "",
+    servicePrice: Number(row.final_amount != null ? row.final_amount : row.unit_price_amount) || 0,
     date: utcIsoToTaipeiDate(row.start_at),
     time: utcIsoToTaipeiTime(row.start_at),
     status: legacyStatus,
@@ -757,6 +1039,14 @@ function bookingRowToDto(row, nowUtc) {
       : "",
     canceledAt: utcIsoToTaipeiDate(row.cancelled_at),
     createdAt: row.created_at || "",
+    reviewAcceptedAt: row.review_accepted_at || null,
+    depositDueAt: row.deposit_due_at || null,
+    depositConfirmedAt: row.deposit_confirmed_at || null,
+    depositTransferLast5: row.deposit_transfer_last5 || "",
+    depositReportedAt: row.deposit_reported_at || null,
+    pigmentTouchupReminderDate: utcIsoToTaipeiDate(row.pigment_touchup_reminder_at),
+    pigmentMaintenanceReminderDate: utcIsoToTaipeiDate(row.pigment_maintenance_reminder_at),
+    rescheduleHistory: rescheduleHistory,
     canCancel: cancelDto.canCancel,
     cancellationDeadlineAt: cancelDto.cancellationDeadlineAt,
     cancellationDeadlineDisplay: cancelDto.cancellationDeadlineDisplay,
@@ -827,13 +1117,26 @@ export async function getUserBookings(env, userId) {
     throw makeError("缺少 userId", 400);
   }
 
+  var cancelledCutoff = customerHistoryCutoffIso(env, 2);
+  var completedCutoff = customerHistoryCutoffIso(env, 365);
   var result = await env.DB.prepare(
     BOOKING_SELECT_SQL +
     "WHERE b.tenant_id = ?1 AND la.line_user_id = ?2 " +
     "AND b.status IN " + CUSTOMER_VISIBLE_STATUS_SQL + " " +
+    "AND (" +
+    "b.status NOT IN ('cancelled_by_customer', 'cancelled_by_store', 'completed') " +
+    "OR (b.status IN ('cancelled_by_customer', 'cancelled_by_store') " +
+    "AND COALESCE(b.cancelled_at, b.start_at) >= ?3) " +
+    "OR (b.status = 'completed' AND COALESCE(b.completed_at, b.start_at) >= ?4)" +
+    ") " +
     "ORDER BY CASE WHEN b.status IN " + CUSTOMER_CONFIRMED_GROUP_SQL + " " +
     "THEN 0 ELSE 1 END ASC, b.start_at DESC"
-  ).bind(env.TENANT_ID, String(userId)).all();
+  ).bind(
+    env.TENANT_ID,
+    String(userId),
+    cancelledCutoff,
+    completedCutoff
+  ).all();
 
   return (result.results || []).map(function (row) { return bookingRowToDto(row); });
 }
@@ -1256,6 +1559,27 @@ export async function createBooking(env, payload) {
     throw makeError("時間格式錯誤，請使用 HH:MM（24 小時制）", 400);
   }
 
+  // 必須在任何 customer／booking 寫入前封鎖尚未開放的月份。
+  var settings = await getSettings(env);
+  var taipeiParts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Taipei", year: "numeric", month: "2-digit", day: "2-digit"
+  }).formatToParts(new Date()).reduce(function (out, part) {
+    if (part.type !== "literal") out[part.type] = part.value;
+    return out;
+  }, {});
+  var bookingCurrentMonth = taipeiParts.year + "-" + taipeiParts.month;
+  var bookingNextMonthDate = new Date(Date.UTC(Number(taipeiParts.year), Number(taipeiParts.month), 1));
+  var bookingNextMonth = bookingNextMonthDate.getUTCFullYear() + "-" +
+    String(bookingNextMonthDate.getUTCMonth() + 1).padStart(2, "0");
+  var bookingMaxMonth = Number(taipeiParts.day) >= Number(settings.nextMonthBookingOpenDay || 15)
+    ? bookingNextMonth : bookingCurrentMonth;
+  if (String(date).slice(0, 7) > bookingMaxMonth) {
+    throw makeError("此月份尚未開放預約，請於工作室設定的開放日後再查看", 400);
+  }
+  if (await isDateClosed(env, date)) {
+    throw makeError("本工作室此日休假，不開放預約", 400);
+  }
+
   // 服務必須屬於同一 tenant 且為 active（getServiceById 已限制 tenant）
   var service = await getServiceById(env, serviceId);
   if (service.status !== "上架") {
@@ -1281,7 +1605,6 @@ export async function createBooking(env, payload) {
   var dayStartUtc = taipeiDateToUtcIso(date);
   var dayEndUtc = new Date(new Date(dayStartUtc).getTime() + 24 * 60 * 60 * 1000).toISOString();
 
-  var settings = await getSettings(env);
   var bookingMinNoticeDays = parseNoticeDays(settings.bookingMinNoticeDays, DEFAULT_NOTICE_DAYS);
   var cancellationMinNoticeDays = parseNoticeDays(
     settings.cancellationMinNoticeDays,
@@ -1307,6 +1630,26 @@ export async function createBooking(env, payload) {
   var bookingNo = "BK-" + crypto.randomUUID();
   var itemId = crypto.randomUUID();
   var logId = crypto.randomUUID();
+  var requiresOwnerConfirmation =
+    String(env.BOOKING_REQUIRES_OWNER_CONFIRMATION || "").toLowerCase() === "true";
+  var isComplimentaryTouchup = Number(service.price) === 0 && /補色/.test(String(service.name || ""));
+  var autoStartDeposit = requiresOwnerConfirmation &&
+    serviceCategorySkipsAssessment(service.name) && !isComplimentaryTouchup;
+  if (autoStartDeposit && (
+    !settings.depositEnabled || !(Number(settings.depositAmount) > 0) ||
+    !String(settings.bankAccount || "").trim() ||
+    !String(settings.bankAccountName || "").trim()
+  )) {
+    throw makeError("工作室尚未完成訂金轉帳設定，請聯絡工作室處理", 409);
+  }
+  var depositDueAt = autoStartDeposit
+    ? new Date(Date.parse(now) + 24 * 60 * 60 * 1000).toISOString() : null;
+  var initialStatus = isComplimentaryTouchup
+    ? BOOKING_STATUSES.CONFIRMED
+    : autoStartDeposit
+      ? BOOKING_STATUSES.PENDING_CUSTOMER_CONFIRMATION
+      : requiresOwnerConfirmation ? BOOKING_STATUSES.PENDING_REVIEW
+      : BOOKING_STATUSES.CONFIRMED;
 
   var statements = [
     // 條件式建立 booking：同客戶同台北日無 active、同 staff 無時段重疊才插入
@@ -1316,7 +1659,7 @@ export async function createBooking(env, payload) {
       "start_at, end_at, status, source, created_by_type, created_by_id, " +
       "cancellation_notice_days_snapshot, cancellation_deadline_at, " +
       "created_at, updated_at) " +
-      "SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'confirmed', 'line', 'customer', ?4, " +
+      "SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?14, 'line', 'customer', ?4, " +
       "?12, ?13, ?9, ?9 " +
       "WHERE NOT EXISTS (" +
       "SELECT 1 FROM bookings b WHERE b.tenant_id = ?2 " +
@@ -1342,7 +1685,8 @@ export async function createBooking(env, payload) {
       dayStartUtc,
       dayEndUtc,
       cancellationMinNoticeDays,
-      cancellationDeadlineAt
+      cancellationDeadlineAt,
+      initialStatus
     ),
     // booking_items 依附 booking 實際存在才插入
     env.DB.prepare(
@@ -1367,10 +1711,17 @@ export async function createBooking(env, payload) {
       "INSERT INTO booking_status_logs " +
       "(id, tenant_id, booking_id, from_status, to_status, changed_by_type, " +
       "changed_by_id, created_at) " +
-      "SELECT ?1, ?2, ?3, NULL, 'confirmed', 'customer', ?4, ?5 " +
+      "SELECT ?1, ?2, ?3, NULL, ?6, 'customer', ?4, ?5 " +
       "WHERE EXISTS (SELECT 1 FROM bookings WHERE tenant_id = ?2 AND id = ?3)"
-    ).bind(logId, env.TENANT_ID, bookingId, customerId, now)
+    ).bind(logId, env.TENANT_ID, bookingId, customerId, now, initialStatus)
   ];
+
+  if (autoStartDeposit) {
+    statements.push(env.DB.prepare(
+      "UPDATE bookings SET review_accepted_at=?1, deposit_due_at=?2, updated_at=?1 " +
+      "WHERE tenant_id=?3 AND id=?4 AND status='pending_customer_confirmation'"
+    ).bind(now, depositDueAt, env.TENANT_ID, bookingId));
+  }
 
   var results = await env.DB.batch(statements);
   var bookingResult = results && results[0];
@@ -1378,10 +1729,12 @@ export async function createBooking(env, payload) {
     throw makeError("此時段與現有預約重疊，或同一天已有預約，請選擇其他時間", 400);
   }
 
-  var confirmedExt = bookingStatusToDtoExtensions(BOOKING_STATUSES.CONFIRMED);
+  var statusExt = bookingStatusToDtoExtensions(initialStatus);
   return {
     ok: true,
-    message: "預約成功",
+    message: isComplimentaryTouchup ? "免費補色預約已成立，本次免收訂金，敬請準時赴約" :
+      autoStartDeposit ? "預約已保留，請於 24 小時內完成訂金並通知工作室" :
+      (requiresOwnerConfirmation ? "預約申請已送出" : "預約成功"),
     booking: {
       id: bookingId,
       title: bookingNo,
@@ -1391,18 +1744,24 @@ export async function createBooking(env, payload) {
       birthday: customer.birthday || "",
       serviceId: String(serviceId),
       serviceName: service.name,
+      servicePrice: Number(service.price) || 0,
       date: date,
       time: time,
-      status: "已確認",
-      internalStatus: confirmedExt.internalStatus,
-      publicStatus: confirmedExt.publicStatus,
-      statusLabel: confirmedExt.statusLabel,
-      isConfirmed: confirmedExt.isConfirmed,
-      isTerminal: confirmedExt.isTerminal,
+      status: bookingStatusToLegacyApiLabel(initialStatus),
+      internalStatus: statusExt.internalStatus,
+      publicStatus: statusExt.publicStatus,
+      statusLabel: statusExt.statusLabel,
+      isConfirmed: statusExt.isConfirmed,
+      isTerminal: statusExt.isTerminal,
       cancelReason: "",
       canceledBy: "",
       canceledAt: "",
       createdAt: now,
+      reviewAcceptedAt: autoStartDeposit ? now : null,
+      depositDueAt: depositDueAt,
+      depositConfirmedAt: null,
+      depositTransferLast5: "",
+      depositReportedAt: null,
       canCancel: true,
       cancellationDeadlineAt: cancellationDeadlineAt,
       cancellationDeadlineDisplay: formatDeadlineTaipei(cancellationDeadlineAt),
@@ -1469,7 +1828,8 @@ export async function rescheduleBookingByOwner(env, bookingId, payload) {
 
   var existing = await env.DB.prepare(
     "SELECT id, tenant_id, location_id, customer_id, staff_id, start_at, end_at, status, " +
-    "cancellation_notice_days_snapshot " +
+    "cancellation_notice_days_snapshot, review_accepted_at, deposit_due_at, " +
+    "deposit_confirmed_at, deposit_transfer_last5, deposit_reported_at " +
     "FROM bookings WHERE tenant_id = ?1 AND id = ?2"
   ).bind(env.TENANT_ID, oldBookingId).first();
 
@@ -1557,13 +1917,14 @@ export async function rescheduleBookingByOwner(env, bookingId, payload) {
     "(id, tenant_id, location_id, customer_id, staff_id, booking_no, " +
     "start_at, end_at, status, source, created_by_type, created_by_id, " +
     "parent_booking_id, cancellation_notice_days_snapshot, cancellation_deadline_at, " +
+    "review_accepted_at, deposit_due_at, deposit_confirmed_at, deposit_transfer_last5, " +
+    "deposit_reported_at, " +
     "created_at, updated_at) " +
     "SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'confirmed', 'admin', 'staff', ?9, " +
-    "?10, ?11, ?12, ?13, ?13 " +
-    "WHERE EXISTS (" +
-    "SELECT 1 FROM bookings ob WHERE ob.tenant_id = ?2 AND ob.id = ?10 " +
-    "AND ob.status = 'confirmed'" +
-    ") AND NOT EXISTS (" +
+    "?10, ?11, ?12, ob.review_accepted_at, ob.deposit_due_at, ob.deposit_confirmed_at, " +
+    "ob.deposit_transfer_last5, ob.deposit_reported_at, ?13, ?13 " +
+    "FROM bookings ob WHERE ob.tenant_id = ?2 AND ob.id = ?10 " +
+    "AND ob.status = 'confirmed' AND NOT EXISTS (" +
     "SELECT 1 FROM bookings b WHERE b.tenant_id = ?2 " +
     "AND b.customer_id = ?4 " +
     "AND b.id <> ?10 " +
@@ -1914,6 +2275,20 @@ function buildTransitionUpdateBindings(toStatus, now, options) {
     values.push(now);
   }
 
+  if (toStatus === BOOKING_STATUSES.PENDING_CUSTOMER_CONFIRMATION) {
+    var acceptedIdx = values.length + 1;
+    var dueIdx = values.length + 2;
+    setParts.push("review_accepted_at = ?" + acceptedIdx);
+    setParts.push("deposit_due_at = ?" + dueIdx);
+    values.push(now, new Date(Date.parse(now) + 24 * 60 * 60 * 1000).toISOString());
+  }
+
+  if (toStatus === BOOKING_STATUSES.CONFIRMED) {
+    var depositConfirmedIdx = values.length + 1;
+    setParts.push("deposit_confirmed_at = ?" + depositConfirmedIdx);
+    values.push(now);
+  }
+
   return { setClause: setParts.join(", "), values: values };
 }
 
@@ -1957,6 +2332,30 @@ export async function applyOwnerGeneralBookingStatusTransition(env, params) {
     startAt: existing.start_at,
     nowIso: now
   });
+
+  if (
+    toStatus === BOOKING_STATUSES.PENDING_CUSTOMER_CONFIRMATION &&
+    String(env.BOOKING_REQUIRES_OWNER_CONFIRMATION || "").toLowerCase() === "true"
+  ) {
+    var depositSettings = await getSettings(env);
+    if (
+      !depositSettings.depositEnabled ||
+      !(Number(depositSettings.depositAmount) > 0) ||
+      !String(depositSettings.bankAccount || "").trim() ||
+      !String(depositSettings.bankAccountName || "").trim()
+    ) {
+      throw makeError(
+        "請先到店面設定開啟訂金，並填妥金額、轉帳帳號與戶名，再受理預約",
+        400
+      );
+    }
+    if (!hasLineNotificationRoute(env, env.TENANT_ID)) {
+      throw makeError(
+        "此工作室尚未完成 LINE 通知頻道設定，不能開始 24 小時訂金期限",
+        409
+      );
+    }
+  }
 
   var reasonCode = input.reasonCode != null ? String(input.reasonCode) : "";
   var note = input.note != null ? String(input.note) : "";
@@ -2087,6 +2486,23 @@ export async function applyBookingStatusTransition(env, params) {
     throw makeError("此預約狀態已變更，無法更新", 400);
   }
 
+  var templateByStatus = {};
+  templateByStatus[BOOKING_STATUSES.PENDING_CUSTOMER_CONFIRMATION] =
+    "deposit_payment_requested";
+  templateByStatus[BOOKING_STATUSES.CONFIRMED] = "booking_confirmed";
+  templateByStatus[BOOKING_STATUSES.EXPIRED] = "deposit_expired";
+  if (templateByStatus[toStatus]) {
+    var notification = await enqueueBookingNotification(
+      env,
+      bookingId,
+      templateByStatus[toStatus]
+    );
+    await dispatchLineNotificationById(env, notification.notificationId);
+  }
+  if (toStatus === BOOKING_STATUSES.COMPLETED) {
+    await schedulePigmentFollowUpReminders(env, bookingId, now);
+  }
+
   return {
     ok: true,
     bookingId: bookingId,
@@ -2129,7 +2545,7 @@ export async function cancelBooking(env, userId, bookingId) {
 
   var existing = await env.DB.prepare(
     "SELECT b.id, b.status, b.customer_id, b.start_at, " +
-    "b.cancellation_deadline_at, b.cancellation_notice_days_snapshot, " +
+    "b.cancellation_deadline_at, b.cancellation_notice_days_snapshot, b.deposit_confirmed_at, " +
     "la.line_user_id " +
     "FROM bookings b " +
     "LEFT JOIN line_accounts la ON la.tenant_id = b.tenant_id AND la.customer_id = b.customer_id " +
@@ -2141,6 +2557,9 @@ export async function cancelBooking(env, userId, bookingId) {
   }
   if (existing.line_user_id !== String(userId)) {
     throw makeError("無法取消他人的預約", 403);
+  }
+  if (existing.deposit_confirmed_at) {
+    throw makeError("此預約已確認訂金，不能直接取消，請選擇變更時間並通知工作室", 409);
   }
 
   var cancelEval = evaluateCustomerCancelPermission(
@@ -2201,6 +2620,74 @@ export async function cancelBooking(env, userId, bookingId) {
     message: "已取消預約",
     bookingId: String(bookingId)
   };
+}
+
+export async function requestPaidBookingReschedule(env, userId, bookingId, payload) {
+  ensureD1Env(env);
+  var id = String(bookingId || "").trim();
+  var lineUserId = String(userId || "").trim();
+  var date = String(payload && payload.date || "").trim();
+  var time = String(payload && payload.time || "").trim();
+  if (!id) throw makeError("缺少預約編號", 400);
+  if (!lineUserId) throw makeError("缺少 LINE userId", 400);
+  if (!isRealDateString(date)) throw makeError("請選擇有效的變更日期", 400);
+  if (!TIME_HHMM_PATTERN.test(time)) throw makeError("請選擇有效的變更時間", 400);
+  var requestedStart = taipeiDateTimeToUtcIso(date, time);
+  if (Date.parse(requestedStart) <= Date.now()) throw makeError("變更時間必須晚於現在", 400);
+  var booking = await env.DB.prepare(
+    "SELECT b.id,b.start_at,b.deposit_confirmed_at,c.display_name," +
+    "COALESCE((SELECT bi.service_id FROM booking_items bi " +
+    "WHERE bi.tenant_id=b.tenant_id AND bi.booking_id=b.id ORDER BY bi.sort_order LIMIT 1),'') AS service_id," +
+    "COALESCE((SELECT bi.service_name_snapshot FROM booking_items bi " +
+    "WHERE bi.tenant_id=b.tenant_id AND bi.booking_id=b.id ORDER BY bi.sort_order LIMIT 1),'') AS service_name " +
+    "FROM bookings b JOIN customers c ON c.tenant_id=b.tenant_id AND c.id=b.customer_id " +
+    "JOIN line_accounts la ON la.tenant_id=b.tenant_id AND la.customer_id=b.customer_id " +
+    "WHERE b.tenant_id=?1 AND b.id=?2 AND la.line_user_id=?3 " +
+    "AND b.status='confirmed' AND b.start_at>?4"
+  ).bind(env.TENANT_ID, id, lineUserId, nowIso()).first();
+  if (!booking) throw makeError("找不到可變更時間的預約", 404);
+  if (!booking.deposit_confirmed_at) throw makeError("此預約尚未確認訂金，請使用一般取消流程", 409);
+  if (!booking.service_id) throw makeError("找不到此預約的服務項目", 409);
+
+  // 前端只顯示即時可預約時段，後端送出時再以同一套規則複驗，
+  // 防止繞過前端或載入後被其他預約搶走時段。
+  var service = await getServiceById(env, booking.service_id);
+  if (service.status !== "上架") throw makeError("此服務目前未開放預約", 409);
+  var weeklySlots = await listWeeklySlots(env);
+  var weekdayLabel = SLOT_WEEKDAY_LABELS[getTaipeiWeekdayIndex(date)];
+  var daySlots = weeklySlots.filter(function (slot) { return slot.weekday === weekdayLabel; });
+  var activeBookings = await getActiveBookingsByDate(env, date);
+  var durationMap = await getServiceDurationMap(
+    env, activeBookings.map(function (item) { return item.serviceId; })
+  );
+  var busyIntervals = buildBusyIntervalsFromBookings(
+    activeBookings,
+    durationMap,
+    Math.max(Number(service.durationMinutes) || 60, CONSERVATIVE_BUSY_DURATION_MINUTES)
+  );
+  var settings = await getSettings(env);
+  var minNoticeDays = parseNoticeDays(settings.bookingMinNoticeDays, DEFAULT_NOTICE_DAYS);
+  var allTimes = buildAllSlotTimesForDay(daySlots, service.durationMinutes);
+  var afterNotice = filterSlotsByBookingNotice(allTimes, date, minNoticeDays, new Date());
+  var available = filterAvailableSlots(
+    afterNotice,
+    service.durationMinutes,
+    busyIntervals,
+    date === getTaipeiDateString() ? date : null,
+    date === getTaipeiDateString() ? getNowMinutesInTaipei() : null
+  );
+  if (available.indexOf(time) === -1) {
+    throw makeError("此時段目前不可預約，請重新選擇業主開放的日期與時間", 409);
+  }
+  var now = nowIso();
+  await env.DB.prepare(
+    "INSERT INTO audit_logs (id,tenant_id,actor_type,actor_id,action,entity_type,entity_id,metadata_json,created_at) " +
+    "VALUES (?1,?2,'customer',?3,'paid_booking_reschedule_requested','booking',?4,?5,?6)"
+  ).bind(crypto.randomUUID(), env.TENANT_ID, lineUserId, id,
+    JSON.stringify({ requestedDate: date, requestedTime: time }), now).run();
+  return { ok: true, bookingId: id, customerName: booking.display_name || "客戶",
+    serviceName: booking.service_name || "服務", originalStartAt: booking.start_at,
+    requestedDate: date, requestedTime: time };
 }
 
 /**
@@ -2274,10 +2761,19 @@ function bookingDtoToOwnerDto(dto) {
     phone: dto.phone || "",
     birthday: dto.birthday || "",
     serviceName: dto.serviceName,
+    servicePrice: Number(dto.servicePrice) || 0,
     date: dto.date,
     time: dto.time,
     status: dto.status,
     internalStatus: dto.internalStatus,
+    statusLabel: dto.statusLabel,
+    depositDueAt: dto.depositDueAt || null,
+    depositConfirmedAt: dto.depositConfirmedAt || null,
+    depositTransferLast5: dto.depositTransferLast5 || "",
+    depositReportedAt: dto.depositReportedAt || null,
+    pigmentTouchupReminderDate: dto.pigmentTouchupReminderDate || "",
+    pigmentMaintenanceReminderDate: dto.pigmentMaintenanceReminderDate || "",
+    rescheduleHistory: Array.isArray(dto.rescheduleHistory) ? dto.rescheduleHistory : [],
     cancelReason: dto.cancelReason || "",
     canceledBy: dto.canceledBy || "",
     canceledAt: dto.canceledAt || ""
@@ -2369,7 +2865,10 @@ export async function getOwnerCustomersFromBookings(env, queryText) {
 
   var sql =
     "SELECT c.id AS customer_id, c.display_name, c.mobile, c.birthday, " +
-    "c.notes, c.source, la.line_user_id, " +
+    "c.notes, c.source, " +
+    "json_extract(c.preferences_json,'$.importedPreviousService') AS previous_service, " +
+    "json_extract(c.preferences_json,'$.importedPreviousServiceDate') AS previous_service_date, " +
+    "la.line_user_id, " +
     "MAX(b.start_at) AS last_start_at, COUNT(b.id) AS booking_count " +
     "FROM customers c " +
     "LEFT JOIN line_accounts la ON la.tenant_id = c.tenant_id AND la.customer_id = c.id " +
@@ -2387,7 +2886,7 @@ export async function getOwnerCustomersFromBookings(env, queryText) {
   }
 
   sql += "GROUP BY c.id, c.display_name, c.mobile, c.birthday, c.notes, " +
-    "c.source, la.line_user_id";
+    "c.preferences_json, c.source, la.line_user_id";
 
   var result = await env.DB.prepare(sql).bind(...binds).all();
 
@@ -2400,6 +2899,8 @@ export async function getOwnerCustomersFromBookings(env, queryText) {
       phone: row.mobile || "",
       birthday: row.birthday || "",
       note: row.notes || "",
+      previousService: row.previous_service || "",
+      previousServiceDate: row.previous_service_date || "",
       source: row.source || "",
       lastBookingDate: utcIsoToTaipeiDate(row.last_start_at),
       bookingCount: Number(row.booking_count) || 0
@@ -2435,7 +2936,10 @@ export async function getOwnerCustomerById(env, customerId) {
 
   var customer = await env.DB.prepare(
     "SELECT c.id AS customer_id, c.display_name, c.mobile, c.birthday, " +
-    "c.notes, c.source, la.line_user_id " +
+    "c.notes, c.source, " +
+    "json_extract(c.preferences_json,'$.importedPreviousService') AS previous_service, " +
+    "json_extract(c.preferences_json,'$.importedPreviousServiceDate') AS previous_service_date, " +
+    "la.line_user_id " +
     "FROM customers c " +
     "LEFT JOIN line_accounts la ON la.tenant_id = c.tenant_id AND la.customer_id = c.id " +
     "WHERE c.tenant_id = ?1 AND c.id = ?2 AND c.deleted_at IS NULL"
@@ -2462,6 +2966,8 @@ export async function getOwnerCustomerById(env, customerId) {
     phone: customer.mobile || "",
     birthday: customer.birthday || "",
     note: customer.notes || "",
+    previousService: customer.previous_service || "",
+    previousServiceDate: customer.previous_service_date || "",
     source: customer.source || "",
     bookings: (result.results || []).map(function (row) { return bookingRowToDto(row); }).map(bookingDtoToOwnerDto)
   };
@@ -2526,7 +3032,10 @@ export async function listOwnerAiDailySummaryItems(env, date) {
   var endUtc = new Date(new Date(startUtc).getTime() + 24 * 60 * 60 * 1000).toISOString();
 
   var result = await env.DB.prepare(
-    "SELECT b.start_at, b.end_at, b.status, bi.service_name_snapshot " +
+    "SELECT b.start_at, b.end_at, b.status, bi.service_name_snapshot, " +
+    "COALESCE((SELECT ts.setting_value FROM tenant_settings ts " +
+    "WHERE ts.tenant_id = b.tenant_id AND ts.setting_key = 'brand_name' LIMIT 1), " +
+    "(SELECT t.name FROM tenants t WHERE t.id = b.tenant_id LIMIT 1), '本工作室') AS studio_name " +
     "FROM bookings b " +
     "LEFT JOIN booking_items bi ON bi.id = (" +
     "SELECT bi2.id FROM booking_items bi2 " +
@@ -2568,7 +3077,14 @@ export async function getOwnerAiMessageDraftContext(env, bookingId) {
   }
 
   var row = await env.DB.prepare(
-    "SELECT b.start_at, b.end_at, b.status, bi.service_name_snapshot " +
+    "SELECT b.start_at, b.end_at, b.status, bi.service_name_snapshot, " +
+    "COALESCE((SELECT ts.setting_value FROM tenant_settings ts " +
+    "WHERE ts.tenant_id = b.tenant_id AND ts.setting_key = 'brand_name' LIMIT 1), " +
+    "(SELECT t.name FROM tenants t WHERE t.id = b.tenant_id LIMIT 1), " +
+    "'本工作室') AS studio_name, " +
+    "COALESCE((SELECT CAST(ts2.setting_value AS INTEGER) FROM tenant_settings ts2 " +
+    "WHERE ts2.tenant_id = b.tenant_id AND ts2.setting_key = 'arrival_reminder_minutes' LIMIT 1), 5) " +
+    "AS arrival_reminder_minutes " +
     "FROM bookings b " +
     "LEFT JOIN booking_items bi ON bi.id = (" +
     "SELECT bi2.id FROM booking_items bi2 " +
@@ -2588,6 +3104,10 @@ export async function getOwnerAiMessageDraftContext(env, bookingId) {
     date: utcIsoToTaipeiDate(row.start_at),
     time: utcIsoToTaipeiTime(row.start_at),
     serviceName: String(row.service_name_snapshot || "服務"),
+    studioName: String(row.studio_name || "本工作室"),
+    arrivalReminderMinutes: Number.isInteger(Number(row.arrival_reminder_minutes))
+      ? Number(row.arrival_reminder_minutes)
+      : 5,
     status: bookingStatusToLegacyApiLabel(row.status)
   };
 }
@@ -2610,6 +3130,8 @@ export {
 // ── 客戶前後對比照片（實作在 d1-customer-photos.js） ──
 export {
   listCustomerPhotoSets,
+  listCustomerAlbum,
+  getCustomerAlbumPhotoContent,
   createCustomerPhotoSet,
   updateCustomerPhotoSet,
   deleteCustomerPhotoSet,
@@ -2617,3 +3139,85 @@ export {
   getCustomerPhotoContent,
   deleteCustomerComparisonPhoto
 } from "./d1-customer-photos.js";
+
+export async function expireOverdueDepositBookings(env, nowInput) {
+  ensureD1Env(env);
+  var now = nowInput ? new Date(nowInput).toISOString() : nowIso();
+  var result = await env.DB.prepare(
+    "SELECT id FROM bookings WHERE tenant_id = ?1 " +
+    "AND status = 'pending_customer_confirmation' " +
+    "AND deposit_due_at IS NOT NULL AND deposit_due_at <= ?2"
+  ).bind(env.TENANT_ID, now).all();
+  var rows = result.results || [];
+  var expiredCount = 0;
+  for (var i = 0; i < rows.length; i++) {
+    try {
+      await applyBookingStatusTransition(env, {
+        bookingId: rows[i].id,
+        toStatus: BOOKING_STATUSES.EXPIRED,
+        actor: BOOKING_ACTORS.SYSTEM,
+        actorId: "scheduled-expiry",
+        reasonCode: "deposit_deadline_expired",
+        note: "超過 24 小時未確認訂金"
+      });
+      expiredCount += 1;
+    } catch (error) {
+      if (!error || error.status !== 400) throw error;
+    }
+  }
+  return { ok: true, expiredCount: expiredCount, checkedCount: rows.length, now: now };
+}
+
+export async function expireOverdueDepositBookingsForAllTenants(env, nowInput) {
+  ensureD1Env(env);
+  var now = nowInput ? new Date(nowInput).toISOString() : nowIso();
+  var result = await env.DB.prepare(
+    "SELECT id, tenant_id FROM bookings " +
+    "WHERE status = 'pending_customer_confirmation' " +
+    "AND deposit_due_at IS NOT NULL AND deposit_due_at <= ?1 " +
+    "ORDER BY deposit_due_at ASC"
+  ).bind(now).all();
+  var rows = result.results || [];
+  var expiredCount = 0;
+  for (var i = 0; i < rows.length; i++) {
+    try {
+      await applyBookingStatusTransition(
+        Object.assign({}, env, { TENANT_ID: rows[i].tenant_id }),
+        {
+          bookingId: rows[i].id,
+          toStatus: BOOKING_STATUSES.EXPIRED,
+          actor: BOOKING_ACTORS.SYSTEM,
+          actorId: "scheduled-expiry",
+          reasonCode: "deposit_deadline_expired",
+          note: "超過 24 小時未確認訂金"
+        }
+      );
+      expiredCount += 1;
+    } catch (error) {
+      if (!error || error.status !== 400) throw error;
+    }
+  }
+  return { ok: true, expiredCount: expiredCount, checkedCount: rows.length, now: now };
+}
+
+// ── 客戶 AI 洽詢回報（實作在 d1-ai-inquiries.js） ──
+export {
+  createCustomerAiInquiry,
+  countDailyCustomerAiInquiries,
+  listCustomerAiInquiries,
+  listOwnerAiInquiries,
+  updateOwnerAiInquiryStatus,
+  sendOwnerAiInquiryReply
+} from "./d1-ai-inquiries.js";
+
+export {
+  getCustomerBookingReview,
+  updateCustomerBookingReview,
+  getOwnerBookingReview,
+  getOwnerAiWorkQueue,
+  requestOwnerBookingReviewPhoto,
+  uploadCustomerBookingReviewPhoto,
+  getOwnerBookingReviewPhotoContent
+} from "./d1-booking-review.js";
+
+export { exportPaidCustomerData, exportPlatformCustomerData } from "./d1-customer-export.js";

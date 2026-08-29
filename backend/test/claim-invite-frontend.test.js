@@ -278,7 +278,9 @@ async function bootOwnerApp(options) {
 
   var api = {
     isConfigured: function () { return true; },
-    getSettings: async function () { return {}; },
+    getSettings: async function () {
+      return { customerEntryKey: "a".repeat(64) };
+    },
     getBookingsForMonth: async function () { return { month: "2026-07", days: {} }; },
     getServices: async function () { return []; },
     getSlots: async function () { return []; },
@@ -327,13 +329,15 @@ async function bootOwnerApp(options) {
   var fakeWindow = {
     beautyUser: { userId: "U-owner" },
     beautyLiffReady: Promise.resolve(),
+    location: { origin: "https://v2-test.juliet-studio.pages.dev" },
     scrollTo: function () {},
     localStorage: storage,
     sessionStorage: sessionStorage,
     navigator: {},
     BEAUTY_CONFIG: opts.config !== undefined ? opts.config : {
       CLAIM_ENABLED: true,
-      CUSTOMER_APP_URL: "https://juliet-studio.pages.dev/"
+      STUDIO_ENTRY_KEY: "a".repeat(64),
+      CUSTOMER_LIFF_URL: "https://liff.line.me/2010530394-QcklvIHd"
     },
     ownerApi: api
   };
@@ -396,8 +400,9 @@ test("owner：建立邀請後 token 只在記憶體與連結欄位，不進 stor
   var link = app.els["claim-invite-link"].value;
   assert.equal(
     link,
-    "https://juliet-studio.pages.dev/#claim=" + encodeURIComponent(CLAIM_TOKEN),
-    "連結必須以 customer app origin ＋ fragment 組合"
+    "https://liff.line.me/2010530394-QcklvIHd/studio/" + "a".repeat(64) +
+      "/?studio_entry=" + "a".repeat(64) + "#claim=" + encodeURIComponent(CLAIM_TOKEN),
+    "連結必須以目前 tenant 專屬入口＋fragment 組合"
   );
   assert.ok(link.indexOf("?claim=") === -1, "token 不得放在 query string");
   assert.equal(app.els["claim-invite-result"].hidden, false);
@@ -410,7 +415,7 @@ test("owner：建立邀請後 token 只在記憶體與連結欄位，不進 stor
   assertTokenNotInDom(app.els, CLAIM_TOKEN, ["claim-invite-link"]);
 });
 
-test("owner：有 active 邀請時重新產生需 confirm，取消則不建立", async function () {
+test("owner：有 active 邀請時重新產生需品牌確認視窗，取消則不建立", async function () {
   var app = await bootOwnerApp({
     invite: {
       status: "active",
@@ -427,9 +432,11 @@ test("owner：有 active 邀請時重新產生需 confirm，取消則不建立",
 
   app.els["claim-invite-create"].fire("click");
   await tick(2);
-  assert.equal(app.spy.confirms.length, 1, "重新產生前必須 confirm");
-  assert.ok(app.spy.confirms[0].indexOf("失效") !== -1, "confirm 必須說明舊連結會失效");
-  assert.equal(app.spy.createClaimInvite.length, 0, "取消 confirm 不得建立");
+  assert.equal(app.els["owner-confirm-modal"].classList.contains("hidden"), false);
+  assert.match(app.els["owner-confirm-message"].textContent, /失效/);
+  app.els["owner-confirm-cancel"].fire("click");
+  await tick(1);
+  assert.equal(app.spy.createClaimInvite.length, 0, "取消確認不得建立");
 });
 
 test("owner：撤銷邀請經 confirm 後呼叫 DELETE 並清除連結", async function () {
@@ -443,10 +450,14 @@ test("owner：撤銷邀請經 confirm 後呼叫 DELETE 並清除連結", async f
   await openDetail(app);
 
   app.els["claim-invite-create"].fire("click");
+  await tick(1);
+  app.els["owner-confirm-submit"].fire("click");
   await tick(3);
   assert.ok(app.els["claim-invite-link"].value.length > 0);
 
   app.els["claim-invite-revoke"].fire("click");
+  await tick(1);
+  app.els["owner-confirm-submit"].fire("click");
   await tick(3);
   assert.deepEqual(app.spy.revokeClaimInvite, ["cus-1"]);
   assert.equal(app.els["claim-invite-link"].value, "", "撤銷後必須清除連結");

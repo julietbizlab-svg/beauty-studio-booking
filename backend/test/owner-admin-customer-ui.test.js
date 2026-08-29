@@ -110,7 +110,8 @@ function makeFakeDom() {
       return elements[elementId];
     },
     querySelectorAll: function () { return []; },
-    documentElement: makeElement("__root__")
+    documentElement: makeElement("__root__"),
+    body: makeElement("__body__")
   };
   return { elements: elements, document: fakeDocument };
 }
@@ -219,7 +220,7 @@ test("api client：保留舊 userId API（updateCustomer／getCustomerBookings�
  * 執行 owner-admin app.js 並等 boot 完成。
  * overrides 可覆蓋 ownerApi 個別方法（皆為 spy）。
  */
-async function bootOwnerApp(overrides) {
+async function bootOwnerApp(overrides, options) {
   var dom = makeFakeDom();
   var spy = {
     getCustomers: [],
@@ -229,7 +230,8 @@ async function bootOwnerApp(overrides) {
     getCustomerBookings: [],
     previewCustomerImport: [],
     commitCustomerImport: [],
-    confirmCount: 0
+    confirmCount: 0,
+    closeWindowCount: 0
   };
 
   var api = {
@@ -303,10 +305,19 @@ async function bootOwnerApp(overrides) {
   }
 
   var fakeWindow = {
+    BEAUTY_CONFIG: (options && options.beautyConfig) || {
+      PRODUCT_TIER: "ai", CUSTOMER_IMPORT_ENABLED: true
+    },
     beautyUser: { userId: "U-owner" },
     beautyLiffReady: Promise.resolve(),
     scrollTo: function () {},
-    ownerApi: api
+    ownerApi: api,
+    liff: {
+      isInClient: function () {
+        return !(options && options.isInClient === false);
+      },
+      closeWindow: function () { spy.closeWindowCount += 1; }
+    }
   };
   var fakeConfirm = function () {
     spy.confirmCount += 1;
@@ -333,6 +344,12 @@ async function loadCsvFile(app, csvText) {
   reader.result = csvText;
   reader.onload();
   await tick(1);
+}
+
+async function confirmImport(app) {
+  app.els["import-commit-btn"].fire("click");
+  await tick(1);
+  app.els["import-confirm-submit"].fire("click");
 }
 
 test("客戶卡片使用 data-customer-id，userId 空白仍可開啟未綁 LINE／無預約客戶", async function () {
@@ -483,6 +500,8 @@ test("儲存客戶以 customerId 為準：不要求 userId、電話空白不被�
     "客戶資料已更新",
     "電話空白時仍應成功儲存"
   );
+  assert.equal(appWithCustomer.els["customer-edit-save"].disabled, true,
+    "儲存成功且欄位與後端一致後，按鈕必須熄滅");
 
   assert.equal(app.spy.updateCustomer.length, 0);
 });
@@ -555,7 +574,9 @@ test("CSV 匯入：preview 送出正確 csvText 與 mapping，只渲染 maskedPr
     phone: "電話",
     birthday: "",
     note: "",
-    customer_no: ""
+    customer_no: "",
+    previous_service: "",
+    previous_service_date: ""
   });
 
   var summaryHtml = app.els["import-summary"].innerHTML;
@@ -644,9 +665,24 @@ test("CSV 匯入：commit 用相同 csvText／mapping／canonicalHash，成功�
 
   var customersLoadsBefore = app.spy.getCustomers.length;
   app.els["import-commit-btn"].fire("click");
+  await tick(1);
+  assert.equal(
+    app.els["import-confirm-modal"].classList.contains("hidden"),
+    false,
+    "應開啟品牌化的自訂確認視窗"
+  );
+  assert.equal(app.els["import-confirm-create-count"].textContent, "1");
+  assert.equal(app.els["import-confirm-excluded-count"].textContent, "0");
+  assert.equal(app.spy.commitCustomerImport.length, 0, "確認前不得送出");
+  assert.equal(app.spy.confirmCount, 0, "匯入流程不得使用瀏覽器原生 confirm");
+  app.els["import-confirm-submit"].fire("click");
   await tick(4);
 
-  assert.equal(app.spy.confirmCount, 1, "commit 前必須 confirm");
+  assert.equal(
+    app.els["import-confirm-modal"].classList.contains("hidden"),
+    true,
+    "送出後應關閉自訂確認視窗"
+  );
   assert.equal(app.spy.commitCustomerImport.length, 1);
   assert.equal(app.spy.commitCustomerImport[0].csvText, csvText);
   assert.deepEqual(app.spy.commitCustomerImport[0].mapping, {
@@ -654,7 +690,9 @@ test("CSV 匯入：commit 用相同 csvText／mapping／canonicalHash，成功�
     phone: "電話",
     birthday: "",
     note: "",
-    customer_no: ""
+    customer_no: "",
+    previous_service: "",
+    previous_service_date: ""
   });
   assert.equal(app.spy.commitCustomerImport[0].canonicalHash, "hash-1");
   assert.ok(
@@ -671,6 +709,76 @@ test("CSV 匯入：commit 用相同 csvText／mapping／canonicalHash，成功�
   await tick(2);
   assert.equal(app.spy.commitCustomerImport.length, 1, "不得重複 commit 同一批次");
   assert.equal(app.els["import-commit-btn"].disabled, true);
+});
+
+test("CSV 匯入：成功後才顯示關閉出口，點擊後關閉 LIFF 視窗", async function () {
+  var app = await bootOwnerApp();
+  assert.equal(app.els["import-close-btn"].classList.contains("hidden"), true);
+
+  await loadCsvFile(app, "姓名\n王小明\n");
+  app.els["import-map-name"].value = "姓名";
+  app.els["import-preview-btn"].fire("click");
+  await tick(3);
+  assert.equal(app.els["import-close-btn"].classList.contains("hidden"), true);
+
+  await confirmImport(app);
+  await tick(4);
+  assert.equal(app.els["import-close-btn"].classList.contains("hidden"), false);
+
+  app.els["import-close-btn"].fire("click");
+  assert.equal(app.spy.closeWindowCount, 1);
+  assert.equal(
+    app.els["customer-import-card"].classList.contains("hidden"),
+    true,
+    "關閉時匯入區應立即收合"
+  );
+});
+
+test("CSV 匯入：一般瀏覽器無法關閉頁籤時，收合匯入區並返回客戶名單", async function () {
+  var app = await bootOwnerApp(undefined, { isInClient: false });
+  await loadCsvFile(app, "姓名\n王小明\n");
+  app.els["import-map-name"].value = "姓名";
+  app.els["import-preview-btn"].fire("click");
+  await tick(3);
+  await confirmImport(app);
+  await tick(4);
+
+  app.els["import-close-btn"].fire("click");
+  assert.equal(app.spy.closeWindowCount, 0);
+  assert.equal(app.els["customer-import-card"].classList.contains("hidden"), true);
+  assert.equal(app.els["customer-list-view"].classList.contains("hidden"), false);
+  assert.equal(app.els.status.textContent, "匯入已完成，已返回客戶名單。");
+});
+
+test("CSV 匯入：標準版關閉匯入入口，旗艦版維持開啟", async function () {
+  var standard = await bootOwnerApp(undefined, {
+    beautyConfig: { PRODUCT_TIER: "standard", CUSTOMER_IMPORT_ENABLED: false }
+  });
+  assert.equal(
+    standard.els["customer-import-card"].classList.contains("hidden"),
+    true,
+    "標準版不得顯示客戶匯入入口"
+  );
+
+  var flagship = await bootOwnerApp(undefined, {
+    beautyConfig: { PRODUCT_TIER: "ai", CUSTOMER_IMPORT_ENABLED: true }
+  });
+  assert.equal(
+    flagship.els["customer-import-card"].classList.contains("hidden"),
+    false,
+    "旗艦版應保留客戶匯入入口"
+  );
+});
+
+test("CSV 匯入：標準版顯示平台加購提示，已開通方案不顯示", function () {
+  var html = readFileSync(join(repoRoot, "owner-admin/index.html"), "utf8");
+  var app = readFileSync(join(repoRoot, "owner-admin/js/app.js"), "utf8");
+  assert.match(html, /id="customer-import-upgrade"/);
+  assert.match(html, /既有客戶名單批次匯入/);
+  assert.doesNotMatch(html, /需要匯入既有客戶名單？/);
+  assert.match(html, /可洽平台加購「客戶資料匯入」功能/);
+  assert.match(app, /customerImportUpgrade\.hidden = customerImportEnabled/);
+  assert.match(app, /classList\.toggle\("hidden", customerImportEnabled\)/);
 });
 
 test("CSV 匯入：請求進行中再點 commit 不會重複送出", async function () {
@@ -695,7 +803,7 @@ test("CSV 匯入：請求進行中再點 commit 不會重複送出", async funct
   app.els["import-preview-btn"].fire("click");
   await tick(3);
 
-  app.els["import-commit-btn"].fire("click");
+  await confirmImport(app);
   await tick(1);
   assert.equal(app.els["import-commit-btn"].disabled, true, "處理中按鈕必須停用");
   assert.equal(app.els["import-commit-btn"].textContent, "匯入處理中…");
@@ -703,7 +811,11 @@ test("CSV 匯入：請求進行中再點 commit 不會重複送出", async funct
   app.els["import-commit-btn"].fire("click");
   await tick(1);
   assert.equal(app.spy.commitCustomerImport.length, 1, "進行中不得重複送出");
-  assert.equal(app.spy.confirmCount, 1, "進行中不得再次 confirm");
+  assert.equal(
+    app.els["import-confirm-modal"].classList.contains("hidden"),
+    true,
+    "處理中不得再次開啟確認視窗"
+  );
 
   resolveCommit();
   await tick(3);
@@ -724,7 +836,7 @@ test("CSV 匯入：後端回傳 alreadyImported 時清楚顯示先前已匯入",
   app.els["import-map-name"].value = "姓名";
   app.els["import-preview-btn"].fire("click");
   await tick(3);
-  app.els["import-commit-btn"].fire("click");
+  await confirmImport(app);
   await tick(4);
 
   assert.ok(
@@ -759,24 +871,67 @@ test("CSV 匯入：更換檔案後清除舊 preview、canonicalHash 與 commit �
   assert.equal(app.spy.commitCustomerImport.length, 0, "舊 canonicalHash 不得沿用");
 });
 
-test("CSV 匯入：非 .csv 檔案被拒絕", async function () {
+test("CSV 匯入：Google Drive 無副檔名文字檔仍可讀取內容", async function () {
   var app = await bootOwnerApp();
-  app.els["import-file"].files = [{ name: "客戶.xlsx" }];
+  app.els["import-file"].files = [{ name: "朱麗葉客戶資料" }];
   app.els["import-file"].fire("change");
+  var reader = app.fileReaders[app.fileReaders.length - 1];
+  reader.result = "姓名,電話\n王小美,0912-345-678\n";
+  reader.onload();
   await tick(1);
 
-  assert.equal(app.els.status.textContent, "請選擇 .csv 檔案");
-  assert.equal(app.els["import-preview-btn"].disabled, true);
+  assert.equal(app.els.status.textContent, "");
+  assert.equal(app.els["import-preview-btn"].disabled, false);
 });
 
 // ──────────────────────── 靜態檔案測試 ────────────────────────
 
 test("owner-admin 與 docs/owner 四個檔案完全一致", function () {
-  ["index.html", "js/api.js", "js/app.js", "css/style.css"].forEach(function (file) {
+  ["index.html", "js/api.js", "js/app.js", "css/style.css", "customer-import-template.csv",
+    "customer-import-template-v2.csv"].forEach(function (file) {
     var ownerAdmin = readFileSync(join(repoRoot, "owner-admin", file), "utf8");
     var docsOwner = readFileSync(join(repoRoot, "docs/owner", file), "utf8");
     assert.equal(docsOwner, ownerAdmin, "docs/owner/" + file + " 必須與 owner-admin 一致");
   });
+});
+
+test("CSV 匯入區提供格式說明與可下載範本", function () {
+  var html = readFileSync(join(repoRoot, "owner-admin/index.html"), "utf8");
+  var template = readFileSync(
+    join(repoRoot, "owner-admin/customer-import-template-v2.csv"),
+    "utf8"
+  );
+
+  assert.ok(html.includes("CSV 格式與操作說明"));
+  assert.ok(html.includes("href=\"customer-import-template-v2.csv?v=20260822002\""));
+  assert.ok(html.includes("download=\"客戶匯入範本.csv\""));
+  assert.ok(html.includes('id="customer-import-template-download"'));
+  assert.ok(html.includes("生日請填西元格式"));
+  assert.equal(template.split(/\r?\n/)[0],
+    "姓名,電話,生日,備註,客戶編號,曾做過的服務項目,服務日期");
+  assert.ok(html.includes('id="import-map-previous_service"'));
+  assert.ok(html.includes('id="import-map-previous_service_date"'));
+  var app = readFileSync(join(repoRoot, "owner-admin/js/app.js"), "utf8");
+  assert.match(app, /liff\.isInClient\(\)/);
+  assert.match(app, /\/owner\/customer-import-template-v2\.csv/);
+  assert.match(app, /new Blob\(\[csvText\]/);
+  assert.match(app, /liff\.openWindow\(\{ url: templateUrl, external: true \}\)/);
+  assert.match(app, /previous_service/);
+  assert.match(app, /previousServiceDate/);
+});
+
+test("營業時段週幾、開始、結束與刪除欄在手機版保持對齊", function () {
+  var css = readFileSync(join(repoRoot, "owner-admin/css/style.css"), "utf8");
+  assert.match(css, /grid-template-columns:\s*76px repeat\(2, minmax\(0, 1fr\)\) 44px/);
+  assert.match(css, /\.slot-row select,\s*\n\.slot-time-cell[\s\S]*?width:\s*100%[\s\S]*?min-width:\s*0[\s\S]*?height:\s*44px[\s\S]*?overflow:\s*hidden/);
+  assert.match(css, /\.slot-time-cell input\[type="time"\][\s\S]*?max-width:\s*100%[\s\S]*?height:\s*42px[\s\S]*?overflow:\s*hidden[\s\S]*?-webkit-appearance:\s*none[\s\S]*?text-align:\s*center/);
+  assert.match(css, /\.slot-row \.slot-weekday[\s\S]*?font-size:\s*1rem[\s\S]*?text-align:\s*center[\s\S]*?text-align-last:\s*center/);
+  assert.match(css, /::-webkit-date-and-time-value[\s\S]*?align-items:\s*center[\s\S]*?justify-content:\s*center[\s\S]*?height:\s*100%/);
+  assert.match(css, /-webkit-text-fill-color:\s*var\(--text\)[\s\S]*?font-size:\s*1rem/);
+  assert.match(css, /\.slot-row \.slot-remove[\s\S]*?width:\s*44px[\s\S]*?height:\s*44px/);
+  assert.match(appJsCode, /class="slot-time-cell"/);
+  assert.match(appJsCode, /visually-hidden">開始時間/);
+  assert.match(appJsCode, /visually-hidden">結束時間/);
 });
 
 test("index.html：cache-busting 已更新、電話標示選填、空名單文案不再要求預約", function () {
@@ -795,13 +950,68 @@ test("index.html：cache-busting 已更新、電話標示選填、空名單文�
   assert.ok(!html.includes("v=20260721002"), "舊版本號必須全部更新");
   assert.ok(!html.includes("v=20260721003"), "舊版本號必須全部更新");
   assert.ok(!html.includes("v=20260722002"), "舊版本號必須全部更新");
-  assert.ok(html.includes("css/style.css?v=20260722003"));
-  assert.ok(html.includes("js/app.js?v=20260722003"));
-  assert.ok(html.includes("js/api.js?v=20260722003"));
+  assert.ok(html.includes("/owner/css/style.css?v=20260825002"));
+  assert.ok(html.includes("/owner-admin/css/style.css?v=20260825002"));
+  assert.ok(html.includes("/docs/owner/css/style.css?v=20260825002"));
+  assert.ok(html.includes('window.location.protocol === "file:"'));
+  assert.ok(html.includes("css/style.css?v=20260825002"));
+  assert.ok(html.includes("js/api.js?v=20260822001"));
+  assert.ok(html.includes("js/app.js?v=20260825005"));
+  assert.match(appJsCode, /state\.settings && state\.settings\.customerEntryKey/);
+  assert.match(appJsCode, /config\.CUSTOMER_LIFF_URL/);
+  assert.match(appJsCode, /studio_entry=/);
+  assert.match(appJsCode, /customerLiffUrl \+ "\/studio\/"/);
+  assert.doesNotMatch(appJsCode, /function getClaimBaseUrl\(\)[\s\S]{0,500}CUSTOMER_APP_URL/);
+  assert.match(html, /AI 秘書設定/);
+  assert.match(html, /套用霧眉新客評估規範/);
+  assert.match(appJsCode, /applyBrowAiPreset/);
+  assert.match(html, /套用霧唇新客評估規範/);
+  assert.match(appJsCode, /applyLipAiPreset/);
+  assert.match(html, /套用全方位紋繡新客評估規範/);
+  assert.match(appJsCode, /applyAllRoundAiPreset/);
+  assert.match(appJsCode, /所有新客最終由全方位紋繡師審核/);
+  assert.match(appJsCode, /必須先確認客人詢問的施作部位/);
+  assert.match(appJsCode, /所有新客最終由霧唇師審核/);
+  assert.match(appJsCode, /不得診斷、判定適合施作、建議停藥、承諾改色結果或保證效果/);
+  assert.match(appJsCode, /未經本人審核通過，不得開放時段/);
+  assert.match(html, /id="customer-ai-business-type"/);
+  assert.doesNotMatch(html, /<input[^>]+id="customer-ai-business-type"/);
+  assert.match(html, /<select id="customer-ai-business-type">/);
+  assert.match(html, /全方位紋繡師/);
+  assert.doesNotMatch(html, /眼線／美瞳線紋繡師/);
+  assert.doesNotMatch(html, /光影臥蠶紋繡師/);
+  assert.doesNotMatch(html, />綜合紋繡師</);
+  assert.match(html, /id="customer-ai-knowledge"/);
+  assert.match(appJsCode, /customerAiBusinessType/);
+  assert.match(appJsCode, /customerAiKnowledge/);
+  assert.match(html, /<body class="auth-pending">/);
+  assert.match(html,
+    /<style>body\.auth-pending \.app>:not\(\.header\):not\(#status\):not\(#owner-onboarding\):not\(#owner-tenant-selector\)\{visibility:hidden\}<\/style>/);
+  assert.match(appJsCode, /document\.body\.classList\.remove\("auth-pending"\)/);
+  var bootCode = appJsCode.slice(appJsCode.indexOf("async function boot()"));
+  assert.ok(
+    bootCode.indexOf('document.body.classList.remove("auth-pending")') <
+      bootCode.indexOf("loadMonthBookings(getCurrentMonthIso(), today)"),
+    "業主身分確認後應立即顯示管理中心，不等待所有次要資料"
+  );
+  assert.match(appJsCode, /Promise\.all\(\[\s*loadSettings\(\),\s*refreshAiCapability\(\),\s*loadMonthBookings/);
+  assert.match(appJsCode, /function focusPendingAiInquiry\(\)/);
+  assert.match(appJsCode, /data-ai-inquiry-follow-up/);
+  assert.match(appJsCode, /details\.open = true/);
+  assert.match(appJsCode, /scrollIntoView\(\{ behavior: "smooth", block: "center" \}\)/);
+  assert.ok(html.includes('id="customer-ai-settings"'));
+  assert.ok(html.includes('id="customer-ai-enabled"'));
+  assert.ok(html.includes('id="customer-ai-tone"'));
+  assert.match(appJsCode, /customerAiEnabled/);
+  assert.match(appJsCode, /PRODUCT_TIER === "ai"/);
+  assert.match(html, /<title>Juliet Studio OS \| Owner Portal<\/title>/);
+  assert.match(html, /<h1 class="brand visually-hidden" id="brand">Juliet Studio OS<\/h1>/);
+  assert.match(appJsCode, /document\.title = state\.settings\.brandName \+ "｜業主管理"/);
   assert.ok(html.includes("客戶最晚預約時間"), "須有最晚預約設定欄位");
   assert.ok(html.includes("客戶最晚取消時間"), "須有最晚取消設定欄位");
   assert.ok(html.includes("電話（選填）"), "電話欄位必須標示選填");
-  assert.ok(html.includes("accept=\".csv\""), "檔案選擇必須限制 .csv");
+  assert.ok(html.includes("application/octet-stream"),
+    "Android／Google Drive 檔案選擇必須接受通用文字檔 MIME");
 
   var appJs = readFileSync(join(repoRoot, "owner-admin/js/app.js"), "utf8");
   assert.ok(!appJs.includes("需有預約紀錄"), "空名單文案不得再要求預約紀錄");
@@ -821,7 +1031,8 @@ test("設定頁：載入 notice days、前端驗證、防重複儲存", async fu
       return {
         brandName: "工作室",
         bookingMinNoticeDays: 2,
-        cancellationMinNoticeDays: 3
+        cancellationMinNoticeDays: 3,
+        arrivalReminderMinutes: 5
       };
     },
     updateSettings: updateSettings
@@ -829,6 +1040,7 @@ test("設定頁：載入 notice days、前端驗證、防重複儲存", async fu
 
   assert.equal(app.els["booking-min-notice-days"].value, "2");
   assert.equal(app.els["cancellation-min-notice-days"].value, "3");
+  assert.equal(app.els["arrival-reminder-minutes"].value, "5");
 
   app.els["booking-min-notice-days"].value = "abc";
   app.els["save-settings"].fire("click");
@@ -838,6 +1050,7 @@ test("設定頁：載入 notice days、前端驗證、防重複儲存", async fu
 
   app.els["booking-min-notice-days"].value = "5";
   app.els["cancellation-min-notice-days"].value = "7";
+  app.els["arrival-reminder-minutes"].value = "5";
   app.els["save-settings"].fire("click");
   await tick(1);
   app.els["save-settings"].fire("click");
@@ -847,4 +1060,22 @@ test("設定頁：載入 notice days、前端驗證、防重複儲存", async fu
   await tick(5);
   assert.equal(saveCalls[0].payload.bookingMinNoticeDays, 5);
   assert.equal(saveCalls[0].payload.cancellationMinNoticeDays, 7);
+  assert.equal(saveCalls[0].payload.arrivalReminderMinutes, 5);
+});
+
+test("回訪週期、預約網址與主要儲存按鈕在手機版維持整齊對齊", function () {
+  var css = readFileSync(join(repoRoot, "owner-admin/css/style.css"), "utf8");
+  var html = readFileSync(join(repoRoot, "owner-admin/index.html"), "utf8");
+  assert.match(css, /#svc-follow-up-days,[\s\S]*#customer-booking-url[\s\S]*min-width:\s*0;[\s\S]*max-width:\s*100%;[\s\S]*min-height:\s*48px;/);
+  assert.match(css, /#svc-submit,[\s\S]*#save-settings[\s\S]*align-items:\s*center;[\s\S]*justify-content:\s*center;[\s\S]*min-height:\s*52px;/);
+  assert.match(html, /css\/style\.css\?v=20260825002/);
+});
+
+test("營業時段儲存成功後按鈕停用，異動後才重新啟用", function () {
+  assert.match(appJsCode, /function setSlotsDirty\(dirty\)/);
+  assert.match(appJsCode, /els\.saveSlots\.disabled = slotSaveBusy \|\| !state\.slotsDirty/);
+  assert.match(appJsCode, /loadSlots\(\)[\s\S]*renderSlotEditor\(\);[\s\S]*setSlotsDirty\(false\)/);
+  assert.match(appJsCode, /field\.addEventListener\("change", function \(\) \{ setSlotsDirty\(true\); \}\)/);
+  assert.match(appJsCode, /await window\.ownerApi\.saveSlots[\s\S]*setSlotsDirty\(JSON\.stringify\(collectSlotsFromEditor\(\)\) !== savedSnapshot\)/);
+  assert.match(appJsCode, /catch \(error\) \{[\s\S]*setSlotsDirty\(true\);[\s\S]*營業時段/);
 });
