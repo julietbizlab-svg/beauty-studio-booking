@@ -120,6 +120,7 @@ function makeFakeDom() {
       return elements[id];
     },
     querySelectorAll: function () { return []; },
+    body: makeElement("__body__"),
     documentElement: makeElement("__root__")
   };
   return { elements: elements, document: document };
@@ -217,6 +218,7 @@ async function bootBookingApp(overrides, confirmImpl) {
     },
     getServices: async function () { return []; },
     getSlots: async function () { return []; },
+    getClosedDates: async function () { return { dates: [] }; },
     cancelBooking: async function () { return { ok: true }; },
     transitionBookingStatus: async function () { return { ok: true }; },
     getRescheduleSlots: async function (bookingId, date) {
@@ -293,7 +295,24 @@ test("CSS：modal／input／select 有防溢出規則", function () {
   assert.ok(/\.modal-card input[\s\S]*?min-width:\s*0/.test(cssCode));
   assert.ok(/\.modal-card select[\s\S]*?max-width:\s*100%/.test(cssCode));
   assert.ok(/\.modal-card (input|select|textarea)[\s\S]*?box-sizing:\s*border-box/.test(cssCode));
+  assert.match(cssCode, /\.modal-card \.platform-approval-confirm input\[type="checkbox"\][\s\S]*?width:\s*22px/);
+  assert.match(cssCode, /\.platform-approval-confirm > span[\s\S]*?flex:\s*1 1 auto/);
   assert.ok(/\.form-group\s*\{[^}]*min-width:\s*0/s.test(cssCode));
+});
+
+test("CSS：業主評估 modal 在 LINE 手機瀏覽器可完整捲動且操作按鈕單欄固定", function () {
+  assert.match(cssCode, /\.modal-card\s*\{[\s\S]*max-height:[\s\S]*100dvh/);
+  assert.match(cssCode, /\.modal-card\s*\{[\s\S]*overflow-y:\s*auto/);
+  assert.match(cssCode, /\.modal-card\s*\{[\s\S]*-webkit-overflow-scrolling:\s*touch/);
+  assert.match(cssCode, /env\(safe-area-inset-bottom\)/);
+  assert.match(
+    cssCode,
+    /#owner-review-modal \.modal-actions\s*\{[\s\S]*position:\s*sticky[\s\S]*flex-direction:\s*column/
+  );
+  assert.match(
+    cssCode,
+    /#owner-review-modal \.modal-actions \.btn-small\s*\{[\s\S]*width:\s*100%/
+  );
 });
 
 test("CSS：iOS Safari date input 防溢出（限定 #owner-reschedule-date）", function () {
@@ -313,12 +332,31 @@ test("CSS：iOS Safari date input 防溢出（限定 #owner-reschedule-date）",
   assert.ok(!/^\s*input\[type="?date"?\]\s*\{/m.test(cssCode));
 });
 
+test("CSS：業主頁所有其他日期欄位在 iOS Safari 皆不溢出", function () {
+  var rule = cssCode.match(
+    /#ai-summary-date,\s*#customer-edit-birthday,\s*#photo-set-date\s*\{[^}]*\}/s
+  );
+  assert.ok(rule, "AI 摘要、客戶生日與照片日期須共用手機防溢出規則");
+  assert.ok(/-webkit-appearance:\s*none/.test(rule[0]));
+  assert.ok(/width:\s*100%/.test(rule[0]));
+  assert.ok(/min-width:\s*0/.test(rule[0]));
+  assert.ok(/min-inline-size:\s*0/.test(rule[0]));
+  assert.ok(/max-width:\s*100%/.test(rule[0]));
+  assert.ok(/max-inline-size:\s*100%/.test(rule[0]));
+  assert.ok(/box-sizing:\s*border-box/.test(rule[0]));
+  assert.ok(
+    /#ai-summary-date::-webkit-date-and-time-value,[\s\S]*?#photo-set-date::-webkit-date-and-time-value\s*\{[^}]*margin:\s*0/s.test(
+      cssCode
+    )
+  );
+});
+
 test("HTML：時間欄為 select，無 time input step", function () {
   assert.ok(htmlCode.includes('<select id="owner-reschedule-time"'));
   assert.ok(!htmlCode.includes('id="owner-reschedule-time" step='));
   assert.ok(!htmlCode.includes('type="time" id="owner-reschedule-time"'));
   assert.ok(htmlCode.includes("請先選擇日期"));
-  assert.ok(htmlCode.includes("v=20260722003"));
+  assert.ok(htmlCode.includes("v=20260723010"));
   assert.ok(!htmlCode.includes("v=20260722002"));
   assert.ok(!htmlCode.includes("v=20260721002"));
 });
@@ -437,8 +475,11 @@ test("偽造非 slots 時間不可提交；提交前重新查詢", async functio
 
   var slotsBeforeSubmit = app.spy.getRescheduleSlots.length;
   app.els["owner-reschedule-confirm"].fire("click");
-  await tick(6);
+  await tick(3);
   assert.ok(app.spy.getRescheduleSlots.length > slotsBeforeSubmit, "提交前應再查一次");
+  assert.equal(app.els["owner-confirm-modal"].classList.contains("hidden"), false);
+  app.els["owner-confirm-submit"].fire("click");
+  await tick(4);
   assert.equal(app.spy.rescheduleBooking.length, 1);
   assert.deepEqual(app.spy.rescheduleBooking[0], {
     bookingId: "bk-confirmed",
@@ -491,6 +532,8 @@ test("loading 防重複；成功後清除；關閉後完整清除", async functi
   app.els["owner-reschedule-time"].fire("change");
   app.els["owner-reschedule-confirm"].fire("click");
   await tick(3);
+  app.els["owner-confirm-submit"].fire("click");
+  await tick(2);
   assert.equal(app.els["owner-reschedule-confirm"].disabled, true);
   app.els["owner-reschedule-confirm"].fire("click");
   await tick(1);

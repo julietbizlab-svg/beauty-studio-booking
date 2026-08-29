@@ -15,6 +15,7 @@ import { dirname, join } from "node:path";
 var repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 var configJsCode = readFileSync(join(repoRoot, "customer-ui/js/config.js"), "utf8");
 var cssCode = readFileSync(join(repoRoot, "customer-ui/css/style.css"), "utf8");
+var appCode = readFileSync(join(repoRoot, "customer-ui/js/app.js"), "utf8");
 
 function runConfig(hostname) {
   var rootClasses = new Set();
@@ -81,12 +82,85 @@ test("CSS：步驟標題加強樣式限定 html.is-v2，基礎 .step-hint 不變
   assert.ok(/color:\s*var\(--muted\)/.test(baseRule[0]));
 });
 
-test("HTML：四個步驟標題存在且 cache-busting 已更新", function () {
+test("CSS：評估日期欄在 iOS／LINE 內建瀏覽器不會凸出 modal", function () {
+  var rule = cssCode.match(/#review-last-treatment\s*\{[^}]*\}/s);
+  assert.ok(rule, "必須有 #review-last-treatment 專屬防溢出規則");
+  assert.match(rule[0], /-webkit-appearance:\s*none/);
+  assert.match(rule[0], /\bappearance:\s*none/);
+  assert.match(rule[0], /width:\s*100%/);
+  assert.match(rule[0], /min-width:\s*0/);
+  assert.match(rule[0], /max-width:\s*100%/);
+  assert.match(rule[0], /box-sizing:\s*border-box/);
+  assert.match(
+    cssCode,
+    /#review-last-treatment::-webkit-date-and-time-value\s*\{[^}]*min-width:\s*0[^}]*margin:\s*0/s
+  );
+});
+
+test("CSS：通用問卷日期欄在 iOS／LINE 內建瀏覽器不會凸出卡片", function () {
+  var rule = cssCode.match(/#assessment-date\s*\{[^}]*\}/s);
+  assert.ok(rule);
+  assert.match(rule[0], /min-width:\s*0/);
+  assert.match(rule[0], /max-width:\s*100%/);
+  assert.match(rule[0], /box-sizing:\s*border-box/);
+});
+
+test("CSS：已繳訂金改期月曆與時段限制於 modal", function () {
+  assert.match(cssCode, /\.customer-reschedule-calendar\s*\{[^}]*min-width:\s*0/);
+  assert.match(cssCode, /#customer-reschedule-modal \.modal-card\s*\{[^}]*max-width:\s*480px/);
+  assert.match(cssCode, /#customer-reschedule-slot-grid\s*\{[^}]*min-height:\s*52px/);
+});
+
+test("CSS：主預約月曆年份與月份同列且不拆字，四欄工具列在手機保持對齊", function () {
+  var css = cssCode;
+  assert.match(css, /\.calendar-toolbar\s*\{[\s\S]*grid-template-columns:\s*58px minmax\(92px, 1fr\) 58px 76px/);
+  assert.match(css, /\.calendar-month-label\s*\{[\s\S]*white-space:\s*nowrap/);
+  assert.match(css, /word-break:\s*keep-all/);
+  assert.match(css, /\.calendar-month-label\s*\{[\s\S]*flex-direction:\s*row/);
+  assert.match(css, /\.calendar-month-label\s*\{[\s\S]*gap:\s*6px/);
+  assert.match(css, /\.calendar-title-year,[\s\S]*\.calendar-title-month[\s\S]*white-space:\s*nowrap/);
+  assert.match(appCode, /formatMainCalendarMonthTitle/);
+  assert.match(appCode, /calendar-title-year/);
+  assert.match(appCode, /calendar-title-month/);
+  assert.match(appCode, /calendarMonthLabel\.innerHTML = formatMainCalendarMonthTitle\(month\)/);
+});
+
+test("CSS：客人評估填答字體與緊湊欄位適合手機閱讀", function () {
+  assert.match(
+    cssCode,
+    /#review-intake-modal label,[\s\S]*?#review-intake-modal legend\s*\{[^}]*font-size:\s*0\.95rem/s
+  );
+  assert.match(
+    cssCode,
+    /#review-intake-modal textarea,[\s\S]*?#review-intake-modal input\s*\{[^}]*font-size:\s*1rem/s
+  );
+  assert.match(
+    cssCode,
+    /\.review-choice-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/s
+  );
+  assert.match(cssCode, /\.review-choice\s*\{[^}]*min-height:\s*44px/s);
+});
+
+test("HTML：五個步驟標題存在且 cache-busting 已更新", function () {
   var html = readFileSync(join(repoRoot, "customer-ui/index.html"), "utf8");
-  ["步驟 1", "步驟 2", "步驟 3", "步驟 4"].forEach(function (label) {
-    assert.ok(html.includes('class="step-hint">' + label), "缺少 " + label);
+  ["步驟 1", "步驟 2", "步驟 3", "步驟 4", "步驟 5"].forEach(function (label) {
+    assert.match(html, new RegExp('class="step-hint"(?: id="[^"]+")?>' + label), "缺少 " + label);
   });
-  assert.ok(html.includes("v=20260722001"));
+  assert.ok(html.includes("js/config.js?v=20260823002"));
+  assert.match(html, /<title>Juliet Studio OS \| Booking<\/title>/);
+  assert.match(html, /<style>\.brand\.is-loading\{visibility:hidden\}<\/style>/);
+  assert.match(html, /<h1 class="brand is-loading" id="brand" aria-busy="true">工作室名稱<\/h1>/);
+  assert.match(appCode, /classList\.remove\("is-loading"\)/);
+  assert.match(cssCode, /\.brand\.is-loading\s*\{[^}]*visibility:\s*hidden/s);
+  assert.match(appCode, /document\.title = brandName;/);
+  assert.doesNotMatch(appCode, /document\.title = brandName \+ "｜線上預約"/);
+  assert.match(html, /get\("liff\.state"\)/);
+  assert.match(html, /\^\\\/owner/);
+  assert.match(html, /window\.BEAUTY_CONFIG\.OWNER_LIFF_URL/);
+  assert.ok(
+    html.indexOf('get("liff.state")') < html.indexOf("<body>"),
+    "舊業主 LIFF 必須在客戶畫面繪製前切到獨立業主入口"
+  );
   assert.ok(!html.includes("v=20260720004"), "舊版本號必須全部更新");
 });
 

@@ -191,6 +191,7 @@ function makeFakeDom() {
         return elements[id];
       },
       querySelectorAll: function () { return []; },
+      body: makeElement("__body__"),
       documentElement: makeElement("__root__")
     }
   };
@@ -237,6 +238,7 @@ async function bootOwnerListFromRepositoryMonth(monthResult) {
     getBookingsForMonth: async function () { return monthResult; },
     getServices: async function () { return []; },
     getSlots: async function () { return []; },
+    getClosedDates: async function () { return { dates: [] }; },
     cancelBooking: async function () { return { ok: true }; },
     transitionBookingStatus: async function () { return { ok: true }; }
   };
@@ -262,6 +264,7 @@ test("getOwnerBookingsForMonth：confirmed DTO 含 internalStatus=confirmed", as
   assert.ok(day, "應依台北日期分組：" + dayKey);
   assert.equal(day.bookings[0].internalStatus, "confirmed");
   assert.equal(day.bookings[0].status, "已確認");
+  assert.equal(day.bookings[0].statusLabel, "已確認");
   assert.ok(!Object.prototype.hasOwnProperty.call(day.bookings[0], "userId"));
   assert.ok(!Object.prototype.hasOwnProperty.call(day.bookings[0], "publicStatus"));
 });
@@ -289,6 +292,53 @@ test("repository confirmed DTO 餵入 Owner UI 產生 checked_in 按鈕", async 
   var html = els["today-list"].innerHTML;
   assert.ok(html.includes('data-transition-to="checked_in"'), "confirmed 應顯示報到");
   assert.ok(!html.includes("U-customer-secret"), "owner 月曆 DTO 不得洩漏 LINE userId");
+});
+
+test("已確認訂金 DTO 在業主預約卡明確顯示已收訂金", async function () {
+  var monthResult = await buildRepositoryMonthResult([
+    bookingRowForToday({
+      id: "bk-deposit-received",
+      status: "confirmed",
+      deposit_confirmed_at: "2026-08-20T12:10:39.000Z"
+    })
+  ]);
+  var day = monthResult.days[taipeiDateKey()];
+  assert.ok(day.bookings[0].depositConfirmedAt);
+  var els = await bootOwnerListFromRepositoryMonth(monthResult);
+  var html = els["today-list"].innerHTML;
+  assert.ok(html.includes("已收訂金"));
+  assert.ok(html.includes("owner-deposit-status--received"));
+  assert.ok(html.includes("款項已確認，預約時段已保留"));
+});
+
+test("實際改期從 parent booking DTO 保留並顯示歷史", async function () {
+  var monthResult = await buildRepositoryMonthResult([
+    bookingRowForToday({
+      id: "bk-reschedule-request",
+      status: "confirmed",
+      reschedule_history_json: JSON.stringify([{
+        bookingId: "booking-original",
+        startAt: "2026-08-26T02:00:00.000Z",
+        changedAt: "2026-08-23T17:06:59.381Z",
+        depth: 1
+      }])
+    })
+  ]);
+  var booking = monthResult.days[taipeiDateKey()].bookings[0];
+  assert.deepEqual(booking.rescheduleHistory, [{
+    bookingId: "booking-original",
+    originalDate: "2026-08-26",
+    originalTime: "10:00",
+    changedAt: "2026-08-23T17:06:59.381Z",
+    depth: 1
+  }]);
+  var els = await bootOwnerListFromRepositoryMonth(monthResult);
+  var html = els["today-list"].innerHTML;
+  assert.ok(html.includes("變更紀錄"));
+  assert.ok(html.includes("原預約日期"));
+  assert.ok(html.includes("2026/08/26"));
+  assert.ok(html.includes("10:00"));
+  assert.ok(html.includes("變更時間"));
 });
 
 test("repository checked_in DTO 餵入 Owner UI 產生 completed 按鈕", async function () {

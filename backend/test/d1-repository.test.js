@@ -26,6 +26,9 @@ import {
   updateSettings,
   listWeeklySlots,
   replaceWeeklySlots,
+  listClosedDates,
+  isDateClosed,
+  setDateClosed,
   getActiveBookingsForMonth,
   getActiveBookingsByDate,
   getActiveBookingsByUser,
@@ -167,9 +170,12 @@ test("listServices 綁定 TENANT_ID、activeOnly 只查 active、DTO 為 camelCa
     name: "基礎護理",
     durationMinutes: 60,
     price: 1200,
-    description: "說明文字",
-    status: "上架",
-    sortOrder: 1
+      description: "說明文字",
+      status: "上架",
+      sortOrder: 1,
+      followUpDays: 21,
+      assessmentTemplateCode: "none",
+      assessmentTemplateReady: true
   }]);
 });
 
@@ -216,6 +222,17 @@ test("createService 拒絕負價格", async function () {
     /價格/
   );
   assert.equal(db.calls.length, 0);
+});
+
+test("createService 回訪週期只接受 0～365 整數", async function () {
+  for (var value of [-1, 366, 1.5, "abc"]) {
+    var db = makeFakeDb();
+    await assert.rejects(
+      createService(makeEnv(db), { name: "新服務", followUpDays: value }),
+      /回訪提醒天數/
+    );
+    assert.equal(db.calls.length, 0);
+  }
 });
 
 test("createService 成功時 INSERT 綁定 tenant_id 並回傳 DTO", async function () {
@@ -308,14 +325,28 @@ test("getSettings 無資料時回傳預設值", async function () {
     announcement: "",
     cancelPolicy: "預約日前 24 小時可免費取消。",
     bookingMinNoticeDays: 1,
+    nextMonthBookingOpenDay: 15,
     cancellationMinNoticeDays: 1,
+    arrivalReminderMinutes: 5,
+    tomorrowReminderTime: "12:20",
+    tomorrowReminderMessage: "明天見！請在約定時間前 5 分鐘到場，讓我們可以從容為您準備。",
+    tomorrowReminderTimeUsesPlatformDefault: true,
+    tomorrowReminderMessageUsesPlatformDefault: true,
     depositEnabled: false,
     depositAmount: null,
     bankName: "",
     bankCode: "",
     bankAccount: "",
     bankAccountName: "",
-    depositNote: ""
+    depositNote: "",
+    customerBookingUrl: "",
+    customerAiEnabled: true,
+    customerAiTone: "friendly",
+    customerAiBusinessType: "",
+    customerAiStudioIntro: "",
+    customerAiKnowledge: "",
+    customerAiAnswerScope: "",
+    customerAiHandoffRule: ""
   });
 });
 
@@ -343,28 +374,45 @@ test("getSettings 正確解析 boolean／number／string", async function () {
 
 // ── updateSettings ───────────────────────────────────────────
 
-test("updateSettings 只寫白名單 key，未知欄位忽略", async function () {
+test("updateSettings 鎖定工作室名稱，其他未知欄位忽略", async function () {
   var db = makeFakeDb(function () { return []; });
 
+  await assert.rejects(updateSettings(makeEnv(db), {
+    brandName: "新店名"
+  }), function (error) { return error.status === 403; });
+  assert.equal(db.batchedStatements, null);
+
   await updateSettings(makeEnv(db), {
-    brandName: "新店名",
     announcement: "公告",
     evilKey: "DROP TABLE tenant_settings",
     settingKey: "任意鍵"
   });
 
   assert.ok(db.batchedStatements, "應以 batch 寫入");
-  assert.equal(db.batchedStatements.length, 2);
+  assert.equal(db.batchedStatements.length, 1);
 
   var writtenKeys = db.batchedStatements.map(function (s) { return s.binds[2]; });
-  assert.deepEqual(writtenKeys.sort(), ["announcement", "brand_name"]);
+  assert.deepEqual(writtenKeys, ["announcement"]);
   db.batchedStatements.forEach(function (s) {
     assert.ok(!s.binds.includes("evilKey"));
     assert.ok(!s.binds.includes("DROP TABLE tenant_settings"));
   });
 });
 
-test("開啟訂金但缺帳號或戶名時拒絕", async function () {
+test("客戶預約入口只接受 https 網址", async function () {
+  var db = makeFakeDb(function () { return []; });
+  await assert.rejects(
+    updateSettings(makeEnv(db), { customerBookingUrl: "javascript:alert(1)" }),
+    /https 網址/
+  );
+  await updateSettings(makeEnv(db), {
+    customerBookingUrl: "https://liff.line.me/example"
+  });
+  assert.equal(db.batchedStatements[0].binds[2], "customer_booking_url");
+  assert.equal(db.batchedStatements[0].binds[3], "https://liff.line.me/example");
+});
+
+test("開啟訂金但缺帳號時拒絕", async function () {
   var db = makeFakeDb();
   await assert.rejects(
     updateSettings(makeEnv(db), {
@@ -373,9 +421,20 @@ test("開啟訂金但缺帳號或戶名時拒絕", async function () {
       bankAccountName: "測試戶名",
       depositAmount: 500
     }),
-    /帳號與戶名/
+    /轉帳帳號/
   );
   assert.equal(db.calls.length, 0);
+});
+
+test("開啟訂金時戶名可留空以保護業主個資", async function () {
+  var db = makeFakeDb();
+  await updateSettings(makeEnv(db), {
+    depositEnabled: true,
+    bankAccount: "000123456789",
+    bankAccountName: "",
+    depositAmount: 500
+  });
+  assert.ok(db.calls.length > 0);
 });
 
 test("開啟訂金但金額無效時拒絕", async function () {
@@ -416,6 +475,24 @@ test("updateSettings notice days：可寫入 0～30 整數", async function () {
     db.batchedStatements.map(function (s) { return s.binds[3]; }).sort(),
     ["0", "30"]
   );
+});
+
+test("updateSettings 下月開放日：只接受 1～28 整數", async function () {
+  var invalidCases = [null, "15", 0, 29, 1.5, true];
+  for (var i = 0; i < invalidCases.length; i++) {
+    var invalidDb = makeFakeDb();
+    await assert.rejects(
+      updateSettings(makeEnv(invalidDb), { nextMonthBookingOpenDay: invalidCases[i] }),
+      /1～28/
+    );
+    assert.equal(invalidDb.calls.length, 0, "案例 " + i + " 不得寫入");
+  }
+
+  var db = makeFakeDb(function () { return []; });
+  await updateSettings(makeEnv(db), { nextMonthBookingOpenDay: 28 });
+  assert.equal(db.batchedStatements.length, 1);
+  assert.equal(db.batchedStatements[0].binds[2], "next_month_booking_open_day");
+  assert.equal(db.batchedStatements[0].binds[3], "28");
 });
 
 // ── weekly slots：環境設定 ───────────────────────────────────
@@ -630,6 +707,47 @@ test("status 開放／關閉／未提供 正確轉成 1／0／1", async function
   );
 });
 
+test("指定日期整日休假：查詢與判斷均限制 tenant／location／staff", async function () {
+  var db = makeFakeDb(function (sql, binds, method) {
+    if (method === "all" && /schedule_type = 'date_override'/.test(sql)) {
+      return [{ specific_date: "2026-09-17" }];
+    }
+    if (method === "first" && /schedule_type = 'date_override'/.test(sql)) {
+      return { id: "closed-1" };
+    }
+    return null;
+  });
+  assert.deepEqual(await listClosedDates(makeSlotsEnv(db), "2026-09"), ["2026-09-17"]);
+  assert.equal(await isDateClosed(makeSlotsEnv(db), "2026-09-17"), true);
+  db.calls.forEach(function (call) {
+    assert.deepEqual(call.binds.slice(0, 3), [TENANT, LOCATION, STAFF]);
+    assert.match(call.sql, /tenant_id = \?1 AND location_id = \?2 AND staff_id = \?3/);
+  });
+});
+
+test("指定日期整日休假：設定使用同一 batch，恢復只刪精確日期", async function () {
+  var db = makeFakeDb(function () { return null; });
+  var closed = await setDateClosed(makeSlotsEnv(db), "2026-09-17", true);
+  assert.deepEqual(closed, { date: "2026-09-17", closed: true });
+  assert.equal(db.batchedStatements.length, 2);
+  assert.match(db.batchedStatements[0].sql, /^DELETE FROM staff_schedules/);
+  assert.match(db.batchedStatements[1].sql, /'date_override'/);
+  assert.ok(db.batchedStatements[1].binds.includes("2026-09-17"));
+
+  var reopenDb = makeFakeDb(function () { return null; });
+  var reopened = await setDateClosed(makeSlotsEnv(reopenDb), "2026-09-17", false);
+  assert.deepEqual(reopened, { date: "2026-09-17", closed: false });
+  assert.equal(reopenDb.calls.length, 1);
+  assert.deepEqual(reopenDb.calls[0].binds, [TENANT, LOCATION, STAFF, "2026-09-17"]);
+});
+
+test("指定日期整日休假拒絕假日期與非 boolean closed", async function () {
+  var db = makeFakeDb();
+  await assert.rejects(setDateClosed(makeSlotsEnv(db), "2026-02-30", true), /date 格式錯誤/);
+  await assert.rejects(setDateClosed(makeSlotsEnv(db), "2026-09-17", "true"), /boolean/);
+  assert.equal(db.calls.length, 0);
+});
+
 // ── bookings 唯讀查詢 ────────────────────────────────────────
 
 function bookingRow(overrides) {
@@ -659,14 +777,20 @@ var BOOKING_DTO_KEYS = [
   "cancelReason", "canceledAt", "canceledBy",
   "cancellationDeadlineAt", "cancellationDeadlineDisplay", "cancellationNoticeDays",
   "createdAt", "customerName", "date", "id", "internalStatus", "isConfirmed", "isTerminal", "phone",
-  "publicStatus", "serviceId", "serviceName", "status", "statusLabel", "time",
+  "publicStatus", "reviewAcceptedAt", "depositDueAt", "depositConfirmedAt",
+  "depositTransferLast5", "depositReportedAt",
+  "serviceId", "serviceName", "servicePrice", "status", "statusLabel", "time",
   "title", "userId"
 ].sort();
 
-test("slot blocking SQL 含 legacy pending／checked_in 與 confirmed", function () {
+var TODAY_BOOKING_DTO_KEYS = BOOKING_DTO_KEYS.concat([
+  "pigmentMaintenanceReminderDate", "pigmentTouchupReminderDate", "rescheduleHistory"
+]).sort();
+
+test("slot blocking SQL 含待本工作室確認、legacy pending／checked_in 與 confirmed", function () {
   assert.equal(
     SLOT_BLOCKING_STATUS_SQL,
-    "('pending', 'confirmed', 'checked_in')"
+    "('pending', 'pending_review', 'pending_customer_confirmation', 'confirmed', 'checked_in')"
   );
   assert.deepEqual(FORMALLY_CONFIRMED_STATUSES, ["confirmed"]);
   assert.deepEqual(LEGACY_SLOT_BLOCKING_STATUSES, ["pending", "checked_in"]);
@@ -701,7 +825,10 @@ test("getActiveBookingsForMonth 限制 tenant_id 與 active statuses，range 相
 
   var call = db.calls[0];
   assert.match(call.sql, /b\.tenant_id = \?1/);
-  assert.match(call.sql, /b\.status IN \('pending', 'confirmed', 'checked_in'\)/);
+  assert.match(
+    call.sql,
+    /b\.status IN \('pending', 'pending_review', 'pending_customer_confirmation', 'confirmed', 'checked_in'\)/
+  );
 
   assert.deepEqual(result.range, {
     month: "2026-07",
@@ -829,6 +956,33 @@ test("getUserBookings 排除 rescheduled、含 no_show，已確認在前、已�
     sql,
     /ORDER BY CASE WHEN b\.status IN \('pending', 'confirmed', 'checked_in', 'completed'\) THEN 0 ELSE 1 END ASC, b\.start_at DESC/
   );
+});
+
+test("getUserBookings：客戶端取消只顯示 2 天、完成只顯示一年，其他可見狀態不受期限影響", async function () {
+  var db = makeFakeDb(function () { return []; });
+  var env = makeEnv(db);
+  env.BOOKING_HISTORY_NOW_ISO = "2026-07-26T00:00:00.000Z";
+  await getUserBookings(env, "U-test-user");
+
+  var call = db.calls[0];
+  assert.match(
+    call.sql,
+    /b\.status NOT IN \('cancelled_by_customer', 'cancelled_by_store', 'completed'\)/
+  );
+  assert.match(
+    call.sql,
+    /COALESCE\(b\.cancelled_at, b\.start_at\) >= \?3/
+  );
+  assert.match(
+    call.sql,
+    /b\.status = 'completed' AND COALESCE\(b\.completed_at, b\.start_at\) >= \?4/
+  );
+  assert.deepEqual(call.binds, [
+    TENANT,
+    "U-test-user",
+    "2026-07-24T00:00:00.000Z",
+    "2025-07-26T00:00:00.000Z"
+  ]);
 });
 
 // ── upsertCustomer ───────────────────────────────────────────
@@ -1058,7 +1212,7 @@ function bookingPayload(overrides) {
     name: "測試客",
     phone: "0912345678",
     serviceId: "svc-1",
-    date: "2027-06-15",
+    date: taipeiDateOffset(2),
     time: "10:00"
   }, overrides || {});
 }
@@ -1138,7 +1292,7 @@ test("createBooking 的 service SELECT 限制 tenant；inactive 不建 customer 
     /未開放預約/
   );
 
-  var serviceSelect = db.calls[0];
+  var serviceSelect = db.calls.find(function (call) { return /FROM services/.test(call.sql); });
   assert.match(serviceSelect.sql, /FROM services WHERE tenant_id = \?1 AND id = \?2/);
   assert.deepEqual(serviceSelect.binds, [TENANT, "svc-1"]);
 
@@ -1163,15 +1317,18 @@ test("createBooking 先 upsertCustomer，booking 綁定回傳的 customer_id", a
 
 test("createBooking 台北時間轉 UTC：start_at／end_at／同日範圍", async function () {
   var db = makeBookingDb();
-  await createBooking(makeSlotsEnv(db), bookingPayload({ date: "2027-06-15", time: "00:30" }));
+  var bookingDate = taipeiDateOffset(2);
+  await createBooking(makeSlotsEnv(db), bookingPayload({ date: bookingDate, time: "00:30" }));
 
   var binds = findBookingBatch(db)[0].binds;
-  assert.equal(binds[6], "2027-06-14T16:30:00.000Z");
-  assert.equal(binds[7], "2027-06-14T17:30:00.000Z", "end_at 應為 start_at＋60 分鐘");
-  assert.equal(binds[9], "2027-06-14T16:00:00.000Z", "同日下界＝台北 6/15 00:00");
-  assert.equal(binds[10], "2027-06-15T16:00:00.000Z", "同日上界＝台北 6/16 00:00");
+  var start = new Date(bookingDate + "T00:30:00+08:00");
+  var dayStart = new Date(bookingDate + "T00:00:00+08:00");
+  assert.equal(binds[6], start.toISOString());
+  assert.equal(binds[7], new Date(start.getTime() + 60 * 60 * 1000).toISOString(), "end_at 應為 start_at＋60 分鐘");
+  assert.equal(binds[9], dayStart.toISOString(), "同日下界＝台北當日 00:00");
+  assert.equal(binds[10], new Date(dayStart.getTime() + 24 * 60 * 60 * 1000).toISOString(), "同日上界＝台北次日 00:00");
   assert.equal(binds[11], 1, "取消政策快照天數預設 1");
-  assert.equal(binds[12], "2027-06-13T16:30:00.000Z", "取消截止＝開始前 1 天");
+  assert.equal(binds[12], new Date(start.getTime() - 24 * 60 * 60 * 1000).toISOString(), "取消截止＝開始前 1 天");
 });
 
 test("createBooking 的 bookings INSERT 為條件式且同時檢查同日與重疊", async function () {
@@ -1188,7 +1345,10 @@ test("createBooking 的 bookings INSERT 為條件式且同時檢查同日與重�
   var statusLists = sql.match(/status IN \([^)]*\)/g) || [];
   assert.equal(statusLists.length, 2, "同日與重疊檢查各一組 active statuses");
   statusLists.forEach(function (list) {
-    assert.equal(list, "status IN ('pending', 'confirmed', 'checked_in')");
+    assert.equal(
+      list,
+      "status IN ('pending', 'pending_review', 'pending_customer_confirmation', 'confirmed', 'checked_in')"
+    );
   });
 });
 
@@ -1228,8 +1388,49 @@ test("status log 為 NULL→confirmed、changed_by_type='customer'", async funct
   await createBooking(makeSlotsEnv(db), bookingPayload());
 
   var logInsert = findBookingBatch(db)[2];
-  assert.match(logInsert.sql, /SELECT \?1, \?2, \?3, NULL, 'confirmed', 'customer', \?4, \?5/);
+  assert.match(logInsert.sql, /SELECT \?1, \?2, \?3, NULL, \?6, 'customer', \?4, \?5/);
   assert.equal(logInsert.binds[3], "cust-existing-1");
+  assert.equal(logInsert.binds[5], "confirmed");
+});
+
+test("v2-test 開關啟用時建立待業主確認預約並占用時段", async function () {
+  var db = makeBookingDb();
+  var env = makeSlotsEnv(db);
+  env.BOOKING_REQUIRES_OWNER_CONFIRMATION = "true";
+
+  var result = await createBooking(env, bookingPayload());
+  var bookingBatch = findBookingBatch(db);
+
+  assert.equal(bookingBatch[0].binds[13], "pending_review");
+  assert.equal(bookingBatch[2].binds[5], "pending_review");
+  assert.equal(result.message, "預約申請已送出");
+  assert.equal(result.booking.internalStatus, "pending_review");
+  assert.equal(result.booking.statusLabel, "待本工作室確認");
+  assert.equal(result.booking.isConfirmed, false);
+  assert.equal(result.booking.canCancel, true);
+});
+
+test("美甲／美睫送出後直接開始 24 小時訂金期限", async function () {
+  var db = makeBookingDb({
+    service: serviceRow({ name: "足部美甲" }),
+    settingsRows: [
+      { setting_key: "deposit_enabled", setting_value: "true" },
+      { setting_key: "deposit_amount", setting_value: "200" },
+      { setting_key: "bank_account", setting_value: "test-account" },
+      { setting_key: "bank_account_name", setting_value: "測試戶名" }
+    ]
+  });
+  var env = Object.assign(makeSlotsEnv(db), {
+    BOOKING_REQUIRES_OWNER_CONFIRMATION: "true"
+  });
+  var result = await createBooking(env, bookingPayload());
+  assert.equal(result.booking.internalStatus, "pending_customer_confirmation");
+  assert.ok(result.booking.depositDueAt);
+  assert.equal(
+    Date.parse(result.booking.depositDueAt) - Date.parse(result.booking.reviewAcceptedAt),
+    24 * 60 * 60 * 1000
+  );
+  assert.match(result.message, /24 小時內完成訂金並通知工作室/);
 });
 
 test("bookings changes=0 時回 400 並提示重疊或同日已有預約", async function () {
@@ -1269,7 +1470,7 @@ test("changes=1 時回傳 ok、預約成功與完整相容 DTO（新客戶採用
   assert.equal(booking.birthday, "1995-05-05");
   assert.equal(booking.serviceId, "svc-1");
   assert.equal(booking.serviceName, "基礎護理");
-  assert.equal(booking.date, "2027-06-15");
+  assert.equal(booking.date, taipeiDateOffset(2));
   assert.equal(booking.time, "10:00");
   assert.equal(booking.status, "已確認");
   assert.equal(booking.internalStatus, "confirmed");
@@ -1356,6 +1557,26 @@ function taipeiDateOffset(daysAhead) {
   }).format(target);
 }
 
+function taipeiMonthOffset(monthsAhead) {
+  var today = taipeiDateOffset(0).split("-");
+  var target = new Date(Date.UTC(Number(today[0]), Number(today[1]) - 1 + monthsAhead, 15));
+  return target.getUTCFullYear() + "-" + String(target.getUTCMonth() + 1).padStart(2, "0") + "-15";
+}
+
+test("createBooking：未開放的後續月份在任何客戶或預約寫入前拒絕", async function () {
+  var db = makeBookingDb();
+  await assert.rejects(
+    createBooking(makeSlotsEnv(db), bookingPayload({ date: taipeiMonthOffset(2) })),
+    /此月份尚未開放預約/
+  );
+  assert.equal(db.batches.length, 0);
+  assert.equal(
+    db.calls.some(function (call) { return /FROM line_accounts|INSERT INTO customers|INSERT INTO bookings/.test(call.sql); }),
+    false,
+    "拒絕未開放月份時不得先讀寫客戶或建立預約"
+  );
+});
+
 test("createBooking：不符合 booking_min_notice_days 被拒絕且不寫入", async function () {
   var db = makeBookingDb({
     settingsRows: [
@@ -1378,10 +1599,12 @@ test("createBooking：建立時保存 cancellation 快照（依當時 tenant 設
       { setting_key: "cancellation_min_notice_days", setting_value: "3" }
     ]
   });
-  await createBooking(makeSlotsEnv(db), bookingPayload({ date: "2027-06-15", time: "10:00" }));
+  var bookingDate = taipeiDateOffset(2);
+  await createBooking(makeSlotsEnv(db), bookingPayload({ date: bookingDate, time: "10:00" }));
   var binds = findBookingBatch(db)[0].binds;
   assert.equal(binds[11], 3, "快照天數");
-  assert.equal(binds[12], "2027-06-12T02:00:00.000Z", "取消截止＝台北 6/15 10:00 減 3 天");
+  var start = new Date(bookingDate + "T10:00:00+08:00");
+  assert.equal(binds[12], new Date(start.getTime() - 3 * 24 * 60 * 60 * 1000).toISOString(), "取消截止＝開始前 3 天");
 });
 
 // ── cancelBooking（客戶取消） ────────────────────────────────
@@ -1833,7 +2056,7 @@ test("getTodayBookingsForOwner 回傳完整 DTO，台北時間與取消者轉換
   var bookings = await getTodayBookingsForOwner(makeEnv(db), "2026-07-18");
   var dto = bookings[0];
 
-  assert.deepEqual(Object.keys(dto).sort(), BOOKING_DTO_KEYS);
+  assert.deepEqual(Object.keys(dto).sort(), TODAY_BOOKING_DTO_KEYS);
   assert.equal(dto.date, "2026-07-18");
   assert.equal(dto.time, "00:30");
   assert.equal(dto.status, "已取消");
@@ -1908,7 +2131,7 @@ test("getOwnerBookingsForMonth 計數、跨 UTC 分組、owner DTO 欄位與排�
   assert.equal(day20.confirmedCount, 1);
   assert.equal(day20.canceledCount, 0);
 
-  // owner DTO 只含規定的 12 個欄位（含 internalStatus）
+  // owner DTO 只含規定的安全欄位（含 internalStatus／訂金確認時間）
   day18.bookings.forEach(function (b) {
     assert.deepEqual(Object.keys(b).sort(), OWNER_DTO_KEYS);
   });
@@ -2197,9 +2420,11 @@ test("getOwnerCustomersFromBookings 排序：日期新到舊，同日依 custome
 
 var OWNER_DTO_KEYS = [
   "birthday", "cancelReason", "canceledAt", "canceledBy",
-  "customerName", "date", "id", "internalStatus", "phone", "serviceName",
-  "status", "time"
-];
+  "customerName", "date", "depositConfirmedAt", "depositDueAt", "depositReportedAt",
+  "depositTransferLast5", "id", "internalStatus", "phone", "serviceName", "servicePrice",
+  "pigmentMaintenanceReminderDate", "pigmentTouchupReminderDate", "rescheduleHistory",
+  "status", "statusLabel", "time"
+].sort();
 
 test("getOwnerCustomerBookings 缺或空白 userId 回 400 且不查 DB", async function () {
   var db = makeFakeDb(function () { return []; });
@@ -2310,7 +2535,7 @@ test("getOwnerCustomerBookings 有資料時回傳 customers 的 customerName／p
   assert.equal(result.birthday, "1995-05-05");
 });
 
-test("getOwnerCustomerBookings 的 bookings 每筆只含 owner DTO 的 12 個欄位", async function () {
+test("getOwnerCustomerBookings 的 bookings 每筆只含 owner DTO 安全欄位", async function () {
   var db = makeFakeDb(function (sql, binds, method) {
     if (method === "all") {
       return [
