@@ -74,6 +74,7 @@ import {
 import {
   dispatchQueuedLineNotifications,
   dispatchLineNotificationById,
+  enqueueBookingCancelledNotifications,
   enqueueBookingCreatedNotifications,
   enqueueBookingNotification,
   enqueueTomorrowBookingRemindersForAllTenants,
@@ -165,6 +166,15 @@ function assertBookingWindow(value, settings) {
     error.status = 400;
     throw error;
   }
+}
+
+async function dispatchBookingCancellationNotifications(env, bookingId) {
+  try {
+    var notifications = await enqueueBookingCancelledNotifications(env, bookingId);
+    for (var index = 0; index < notifications.notificationIds.length; index += 1) {
+      await dispatchLineNotificationById(env, notifications.notificationIds[index]);
+    }
+  } catch (ignore) {}
 }
 
 export default {
@@ -836,6 +846,11 @@ export default {
         var cancelCustomer = await requireCustomerFromRequest(request, env);
         var cancelBody = await readJson(request);
         var cancelResult = await cancelBooking(env, cancelCustomer.userId, cancelBody.bookingId);
+        var notifyCustomerCancellation = dispatchBookingCancellationNotifications(
+          env, cancelBody.bookingId
+        );
+        if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(notifyCustomerCancellation);
+        else await notifyCustomerCancellation;
         return jsonResponse(cancelResult, corsHeaders);
       }
 
@@ -922,6 +937,11 @@ export default {
           ownerCancelBody.bookingId,
           ownerCancelBody.reason || ownerCancelBody.cancelReason
         );
+        var notifyOwnerCancellation = dispatchBookingCancellationNotifications(
+          env, ownerCancelBody.bookingId
+        );
+        if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(notifyOwnerCancellation);
+        else await notifyOwnerCancellation;
         return jsonResponse(ownerCancelResult, corsHeaders);
       }
 

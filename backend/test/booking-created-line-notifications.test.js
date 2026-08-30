@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
+  enqueueBookingCancelledNotifications,
   enqueueBookingCreatedNotifications,
   dispatchLineNotificationById
 } from "../src/d1-notifications.js";
@@ -122,9 +123,46 @@ test("預約指派給其他服務人員時仍通知同工作室業主", async fu
     "WHERE template_code='owner_booking_created' AND recipient='U-owner'").get().count, 1);
 });
 
+test("客戶取消時同時通知客戶與業主，且不重複", async function () {
+  var x = setup();
+  x.db.prepare("UPDATE bookings SET status='cancelled_by_customer'," +
+    "cancellation_note='客人自行取消',cancelled_at=? WHERE id='b'").run(NOW);
+  var first = await enqueueBookingCancelledNotifications(x.env, "b");
+  var second = await enqueueBookingCancelledNotifications(x.env, "b");
+  assert.equal(first.queuedCount, 2);
+  assert.equal(second.queuedCount, 0);
+  var rows = x.db.prepare("SELECT template_code,recipient,content_snapshot FROM notifications " +
+    "ORDER BY template_code").all();
+  assert.deepEqual(rows.map(function (row) { return row.template_code; }),
+    ["booking_cancelled_customer_ack", "owner_booking_cancelled_by_customer"]);
+  assert.ok(rows.some(function (row) {
+    return row.recipient === "U-customer" && /您的預約已取消/.test(row.content_snapshot);
+  }));
+  assert.ok(rows.some(function (row) {
+    return row.recipient === "U-owner" && /客戶已取消預約/.test(row.content_snapshot);
+  }));
+});
+
+test("業主取消時通知客戶取消原因並通知業主", async function () {
+  var x = setup();
+  x.db.prepare("UPDATE bookings SET status='cancelled_by_store'," +
+    "cancellation_note='老師臨時有事',cancelled_at=? WHERE id='b'").run(NOW);
+  var queued = await enqueueBookingCancelledNotifications(x.env, "b");
+  assert.equal(queued.queuedCount, 2);
+  var customer = x.db.prepare("SELECT content_snapshot FROM notifications " +
+    "WHERE template_code='booking_cancelled_by_store'").get();
+  var owner = x.db.prepare("SELECT content_snapshot FROM notifications " +
+    "WHERE template_code='owner_booking_cancelled_ack'").get();
+  assert.match(customer.content_snapshot, /工作室已取消您的預約/);
+  assert.match(customer.content_snapshot, /取消原因：老師臨時有事/);
+  assert.match(owner.content_snapshot, /工作室已取消預約/);
+});
+
 test("API 在預約成功後排程新預約 LINE 通知，通知失敗不回滾預約", function () {
   var source = readFileSync(join(import.meta.dirname, "../src/index.js"), "utf8");
   assert.match(source, /enqueueBookingCreatedNotifications\([\s\S]*bookResult\.booking\.id/);
   assert.match(source, /dispatchLineNotificationById\([\s\S]*createdNotifications\.notificationIds/);
   assert.match(source, /try \{[\s\S]*enqueueBookingCreatedNotifications[\s\S]*catch \(ignore\) \{\}/);
+  assert.match(source, /cancelBooking\([\s\S]*dispatchBookingCancellationNotifications/);
+  assert.match(source, /cancelBookingByOwner\([\s\S]*dispatchBookingCancellationNotifications/);
 });
