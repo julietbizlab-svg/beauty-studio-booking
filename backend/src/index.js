@@ -74,6 +74,7 @@ import {
 import {
   dispatchQueuedLineNotifications,
   dispatchLineNotificationById,
+  enqueueBookingCreatedNotifications,
   enqueueBookingNotification,
   enqueueTomorrowBookingRemindersForAllTenants,
   notifyOwnerDepositTransferReported,
@@ -793,6 +794,22 @@ export default {
             pictureUrl: bookCustomer.picture
           })
         );
+        var notifyBookingCreated = (async function () {
+          try {
+            var createdNotifications = await enqueueBookingCreatedNotifications(
+              env, bookResult.booking.id
+            );
+            for (var notificationIndex = 0;
+              notificationIndex < createdNotifications.notificationIds.length;
+              notificationIndex += 1) {
+              await dispatchLineNotificationById(
+                env, createdNotifications.notificationIds[notificationIndex]
+              );
+            }
+          } catch (ignore) {}
+        })();
+        if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(notifyBookingCreated);
+        else await notifyBookingCreated;
         if (bookResult && bookResult.booking &&
             bookResult.booking.internalStatus === "pending_customer_confirmation") {
           var notifyDeposit = (async function () {

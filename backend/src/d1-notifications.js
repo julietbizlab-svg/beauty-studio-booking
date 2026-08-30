@@ -277,6 +277,77 @@ export async function enqueueBookingNotification(env, bookingId, templateCode) {
   };
 }
 
+export async function enqueueBookingCreatedNotifications(env, bookingId) {
+  var booking = await env.DB.prepare(
+    "SELECT b.id,b.status,b.start_at,c.display_name AS customer_name," +
+    "la.line_user_id AS customer_line_user_id," +
+    "COALESCE((SELECT group_concat(bi.service_name_snapshot, '、') " +
+    "FROM booking_items bi WHERE bi.tenant_id=b.tenant_id AND bi.booking_id=b.id " +
+    "ORDER BY bi.sort_order),'預約服務') AS service_name " +
+    "FROM bookings b JOIN customers c ON c.tenant_id=b.tenant_id AND c.id=b.customer_id " +
+    "LEFT JOIN line_accounts la ON la.tenant_id=b.tenant_id AND la.customer_id=b.customer_id " +
+    "WHERE b.tenant_id=?1 AND b.id=?2 LIMIT 1"
+  ).bind(env.TENANT_ID, String(bookingId || "")).first();
+  if (!booking) throw makeError("找不到新預約通知資料", 404);
+
+  var owner = await env.DB.prepare(
+    "SELECT sla.line_user_id FROM bookings b " +
+    "JOIN staff s ON s.tenant_id=b.tenant_id " +
+    "JOIN staff_line_accounts sla ON sla.tenant_id=s.tenant_id AND sla.staff_id=s.id " +
+    "WHERE b.tenant_id=?1 AND b.id=?2 AND s.status='active' " +
+    "AND s.role IN ('owner','manager') AND sla.status='active' " +
+    "ORDER BY CASE s.role WHEN 'owner' THEN 0 ELSE 1 END LIMIT 1"
+  ).bind(env.TENANT_ID, String(bookingId || "")).first();
+  var appointment = formatTaipeiAppointment(booking.start_at);
+  if (!appointment) throw makeError("找不到新預約通知時間", 404);
+  var now = new Date().toISOString();
+  var notificationIds = [];
+
+  async function insertNotification(templateCode, recipient, content) {
+    if (!recipient) return;
+    var notificationId = crypto.randomUUID();
+    var inserted = await env.DB.prepare(
+      "INSERT INTO notifications (id,tenant_id,booking_id,channel,template_code,recipient," +
+      "content_snapshot,status,scheduled_at,created_at) " +
+      "SELECT ?1,?2,?3,'line',?4,?5,?6,'queued',?7,?7 " +
+      "WHERE NOT EXISTS (SELECT 1 FROM notifications WHERE tenant_id=?2 " +
+      "AND booking_id=?3 AND channel='line' AND template_code=?4)"
+    ).bind(notificationId, env.TENANT_ID, String(bookingId), templateCode,
+      recipient, content, now).run();
+    if (inserted && inserted.meta && Number(inserted.meta.changes) === 1) {
+      notificationIds.push(notificationId);
+    }
+  }
+
+  if (booking.status === "pending_review") {
+    await insertNotification("booking_request_received", booking.customer_line_user_id, [
+      "您的預約申請已送出。",
+      "服務項目：" + booking.service_name,
+      "預約日期：" + appointment.date +
+        (appointment.weekday ? "（" + appointment.weekday + "）" : ""),
+      "預約時間：" + appointment.time,
+      "工作室確認後會再通知您；送出申請不代表預約已正式成立。"
+    ].join("\n"));
+  }
+
+  await insertNotification("owner_booking_created", owner && owner.line_user_id, [
+    "有新的預約申請，請盡快查看。",
+    "客戶：" + String(booking.customer_name || "客戶"),
+    "服務項目：" + booking.service_name,
+    "預約日期：" + appointment.date +
+      (appointment.weekday ? "（" + appointment.weekday + "）" : ""),
+    "預約時間：" + appointment.time,
+    "請從業主端確認並處理。"
+  ].join("\n"));
+
+  return {
+    ok: true,
+    queuedCount: notificationIds.length,
+    notificationIds: notificationIds,
+    ownerLineBound: Boolean(owner && owner.line_user_id)
+  };
+}
+
 export async function enqueueAssessmentReviewNotification(env, sessionId, reviewStatus, customerMessage) {
   var status = String(reviewStatus || "");
   var templateCode = ({
