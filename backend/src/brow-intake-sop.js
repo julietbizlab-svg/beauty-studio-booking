@@ -151,17 +151,18 @@ export async function handleBrowIntakeSop(env, lineUserId, message) {
     "FROM brow_intake_sessions WHERE tenant_id=?1 AND line_user_id=?2"
   ).bind(env.TENANT_ID, userId).first();
   if (!row && (!START_INTENT.test(text) || GENERAL_QUESTION.test(text))) return null;
-  // 新版通用評估已核准者，不得再由舊霧眉問卷建立或續跑第二份新客評估。
-  var approvedAssessment = await env.DB.prepare(
-    "SELECT 1 AS approved WHERE EXISTS (" +
+  // 只要客戶已進入新版通用評估，就不得再由舊霧眉問卷建立或續跑第二份評估。
+  // 包含填寫中、已送出待審與已核准；後續一律由新版評估頁與人工審核狀態接手。
+  var currentAssessment = await env.DB.prepare(
+    "SELECT 1 AS current_assessment WHERE EXISTS (" +
     "SELECT 1 FROM assessment_sessions s WHERE s.tenant_id=?1 " +
-    "AND s.line_user_id=?2 AND s.status='approved') OR EXISTS (" +
+    "AND s.line_user_id=?2) OR EXISTS (" +
     "SELECT 1 FROM line_accounts la JOIN bookings b " +
     "ON b.tenant_id=la.tenant_id AND b.customer_id=la.customer_id " +
     "WHERE la.tenant_id=?1 AND la.line_user_id=?2 " +
     "AND b.review_accepted_at IS NOT NULL) LIMIT 1"
   ).bind(env.TENANT_ID, userId).first();
-  if (approvedAssessment) return null;
+  if (currentAssessment) return null;
   var now = nowIso(env);
   if (!row) {
     var firstStep = /改色|調色|舊眉/.test(text) ? "old_brow_status" : "service_type";

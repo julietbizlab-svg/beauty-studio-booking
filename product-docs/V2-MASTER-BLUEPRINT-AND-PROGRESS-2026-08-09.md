@@ -475,3 +475,15 @@ AI 原則：
 1. 由使用者在 iPhone／LINE 確認最新 Pages `e8ab06b6` 的客戶月曆完整顯示 `2026年　8月` 同一橫列置中，不能拆字或上下排列。
 2. 確認合格後，重建並驗證 current 商品安裝包，同步更新商品營運中心文件。
 3. 再依本藍圖未完成項目逐項處理；每次遠端部署或 D1 遠端寫入仍須取得當次新授權，部署前先備份 v2-test D1。
+
+## 十五、2026-08-30 乾淨整合與目前接續點（本節優先於前述進度）
+
+- v2 已在 `/Users/imac/project/beauty-studio-v2-consolidate` 完成分批乾淨整合。
+- 分支 `codex/v2-consolidate-20260828` 已推送；Draft PR：<https://github.com/julietbizlab-svg/beauty-studio-booking/pull/3>。
+- 已推送三個 commit，整合基線完整測試為 `979 passed / 0 failed`。
+- 15 個仍被現行文件引用的 legacy v1 追蹤檔保留，未刪除。
+- Draft PR 尚未 merge，整合成果尚未部署。
+- 旗艦版 AI 重複啟動新客評估的修正已在 C 本地完成：只要已有新版評估紀錄，舊霧眉 SOP 即退出並交回一般預約 AI；預約人工審核門檻維持不變。
+- AI 修正後完整測試為 `980 passed / 0 failed`，但修正與 08-30 文件尚未 commit／push。
+- 下一步先審查並提交 AI 修正；未取得另一次明確授權，不得 merge、部署、修改 LINE／D1／`.dev.vars`。
+- 詳細交接請讀 `V2-WORKLOG-2026-08-30-CONSOLIDATION-AND-AI-FIX.md` 與 `V2-LESSONS-AND-PITFALLS-2026-08-30.md`。

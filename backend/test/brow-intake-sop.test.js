@@ -20,7 +20,7 @@ test("0021 建立可持續的霧眉 SOP session 與人工審核狀態", function
 
 function memoryEnv(options) {
   var session = null;
-  var approvedAssessment = Boolean(options && options.approvedAssessment);
+  var currentAssessment = Boolean(options && options.currentAssessment);
   var approvedBooking = Boolean(options && options.approvedBooking);
   return {
     TENANT_ID: "t1",
@@ -30,8 +30,8 @@ function memoryEnv(options) {
       var values = Array.from(arguments);
       return {
         first: async function () {
-          if (/SELECT 1 AS approved WHERE EXISTS/.test(sql)) {
-            return approvedAssessment || approvedBooking ? { approved: 1 } : null;
+          if (/SELECT 1 AS current_assessment WHERE EXISTS/.test(sql)) {
+            return currentAssessment || approvedBooking ? { current_assessment: 1 } : null;
           }
           return /SELECT status,current_step/.test(sql) ? session : null;
         },
@@ -104,11 +104,34 @@ test("評估進行中的一般問句交回洽詢流程且不改變進度", async
   assert.equal(env.session.current_step, originalStep);
 });
 
-test("新版評估已核准者不會再建立舊霧眉新客評估", async function () {
-  var env = memoryEnv({ approvedAssessment: true });
+test("新版評估已有紀錄時不會再建立舊霧眉新客評估", async function () {
+  var env = memoryEnv({ currentAssessment: true });
   var result = await handleBrowIntakeSop(env, "U-approved", "我想做霧眉");
   assert.equal(result, null);
   assert.equal(env.session, null);
+});
+
+test("新版評估已有紀錄時會退出既有舊霧眉評估並接回一般預約 AI", async function () {
+  var env = memoryEnv();
+  await handleBrowIntakeSop(env, "U-existing", "我想做霧眉");
+  assert.equal(env.session.status, "active");
+  env.DB.prepare = function (sql) {
+    return { bind: function () {
+      return {
+        first: async function () {
+          if (/SELECT 1 AS current_assessment WHERE EXISTS/.test(sql)) {
+            return { current_assessment: 1 };
+          }
+          return /SELECT status,current_step/.test(sql) ? env.session : null;
+        },
+        run: async function () { return { meta: { changes: 1 } }; }
+      };
+    } };
+  };
+
+  var result = await handleBrowIntakeSop(env, "U-existing", "我想預約霧眉");
+  assert.equal(result, null);
+  assert.equal(env.session.status, "active", "舊資料保留，但不得再攔截客戶對話");
 });
 
 test("LINE Provider 更換後仍依穩定客戶與核准預約避免重做評估", async function () {
