@@ -97,6 +97,7 @@ function makeFakeDom() {
         return elements[id];
       },
       querySelectorAll: function () { return []; },
+      body: makeElement("__body__"),
       documentElement: makeElement("__root__")
     }
   };
@@ -168,12 +169,19 @@ async function bootBookingApp(overrides) {
   var bookingsForToday = sampleBookings.map(function (booking, index) {
     return Object.assign({}, booking, {
       date: dateKey,
-      time: String(10 + index) + ":00"
+      time: index === 0 ? "00:00" : String(10 + index) + ":00"
     });
   });
   var api = {
     isConfigured: function () { return true; },
-    getSettings: async function () { return {}; },
+    getSettings: async function () {
+      return {
+        depositEnabled: true,
+        depositAmount: 500,
+        bankAccount: "test-account",
+        bankAccountName: "test-owner"
+      };
+    },
     getBookingsForMonth: async function (month) {
       spy.getBookingsForMonth.push(month);
       var days = {};
@@ -185,6 +193,7 @@ async function bootBookingApp(overrides) {
     },
     getServices: async function () { return []; },
     getSlots: async function () { return []; },
+    getClosedDates: async function () { return { dates: [] }; },
     cancelBooking: async function () { return { ok: true }; },
     transitionBookingStatus: async function (bookingId, toStatus) {
       spy.transitionBookingStatus.push({ bookingId: bookingId, toStatus: toStatus });
@@ -239,6 +248,44 @@ test("api client：cancelBooking 路徑維持不變", async function () {
   assert.equal(ctx.calls[0].options.method, "POST");
 });
 
+test("訂金資料不完整時停用開始期限按鈕並在預約卡顯示缺漏", async function () {
+  var today = new Date();
+  var monthKey = today.getFullYear() + "-" + String(today.getMonth() + 1).padStart(2, "0");
+  var dateKey = monthKey + "-" + String(today.getDate()).padStart(2, "0");
+  var app = await bootBookingApp({
+    getSettings: async function () {
+      return {
+        depositEnabled: true,
+        depositAmount: 500,
+        bankAccount: "test-account",
+        bankAccountName: ""
+      };
+    },
+    getBookingsForMonth: async function (month) {
+      var days = {};
+      days[dateKey] = {
+        confirmedCount: 0,
+        bookings: [{
+          id: "needs-deposit",
+          date: dateKey,
+          time: "10:00",
+          status: "待審核",
+          internalStatus: "pending_review",
+          statusLabel: "待審核",
+          serviceName: "霧眉",
+          customerName: "測試客戶"
+        }]
+      };
+      return { month: month, days: days };
+    }
+  });
+  var html = app.els["today-list"].innerHTML;
+  assert.match(html, /data-transition-to="pending_customer_confirmation"/);
+  assert.match(html, /data-transition-to="pending_customer_confirmation"[^>]*disabled|disabled[^>]*data-transition-to="pending_customer_confirmation"/);
+  assert.match(html, /booking-action-message/);
+  assert.match(html, /請先完成訂金設定：轉帳戶名/);
+});
+
 test("預約清單：依 internalStatus 顯示允許的下一步按鈕", async function () {
   var app = await bootBookingApp();
   var html = app.els["today-list"].innerHTML;
@@ -246,7 +293,90 @@ test("預約清單：依 internalStatus 顯示允許的下一步按鈕", async f
   assert.ok(html.includes('data-transition-to="no_show"'), "confirmed 應顯示未到");
   assert.ok(html.includes('data-transition-to="confirmed"'), "pending 應顯示升級");
   assert.ok(html.includes('data-transition-to="completed"'), "checked_in 應顯示完成");
-  assert.ok(html.includes("取消預約"), "取消按鈕仍保留");
+  var cancelButtons = app.els["today-list"].querySelectorAll("[data-cancel-id]");
+  assert.equal(cancelButtons.length, 2, "只有未報到預約可取消");
+  assert.ok(cancelButtons.every(function (button) {
+    return button.getAttribute("data-cancel-id") !== "bk-checked";
+  }), "已報到不得顯示取消按鈕");
+});
+
+test("預約清單：預約開始時間尚未到，不提供標記未到操作", async function () {
+  var today = new Date();
+  var monthKey = today.getFullYear() + "-" + String(today.getMonth() + 1).padStart(2, "0");
+  var futureDate = new Date(today.getTime() + 24 * 60 * 60 * 1000);
+  var futureDateKey = futureDate.getFullYear() + "-" +
+    String(futureDate.getMonth() + 1).padStart(2, "0") + "-" +
+    String(futureDate.getDate()).padStart(2, "0");
+  var app = await bootBookingApp({
+    getBookingsForMonth: async function (month) {
+      var days = {};
+      var todayKey = monthKey + "-" + String(today.getDate()).padStart(2, "0");
+      days[todayKey] = {
+        confirmedCount: 1,
+        bookings: [{
+          id: "bk-future-time",
+          date: todayKey,
+          time: "23:59",
+          status: "已確認",
+          internalStatus: "confirmed",
+          serviceName: "霧眉",
+          customerName: "客人甲"
+        }]
+      };
+      if (futureDateKey.startsWith(month + "-")) {
+        days[futureDateKey] = {
+          confirmedCount: 1,
+          bookings: [{
+            id: "bk-future-date",
+            date: futureDateKey,
+            time: "00:00",
+            status: "已確認",
+            internalStatus: "confirmed",
+            serviceName: "霧眉",
+            customerName: "客人乙"
+          }]
+        };
+      }
+      return { month: month, days: days };
+    }
+  });
+  var html = app.els["today-list"].innerHTML;
+  assert.ok(html.includes('data-transition-to="checked_in"'), "仍可顯示客人報到");
+  assert.ok(!html.includes('data-transition-to="no_show"'), "時間未到不得顯示未到");
+});
+
+test("業主月曆直接標示有預約日期的筆數與處理優先狀態", async function () {
+  var app = await bootBookingApp();
+  var confirmedCalendar = app.els["calendar-grid"].innerHTML;
+  assert.ok(confirmedCalendar.includes("calendar-day--has-booking"));
+  assert.ok(confirmedCalendar.includes("calendar-booking-count--confirmed"));
+  assert.ok(confirmedCalendar.includes(">3</span>"), "應顯示當日三筆有效預約");
+
+  var today = new Date();
+  var monthKey = today.getFullYear() + "-" + String(today.getMonth() + 1).padStart(2, "0");
+  var dateKey = monthKey + "-" + String(today.getDate()).padStart(2, "0");
+  var pendingApp = await bootBookingApp({
+    getBookingsForMonth: async function (month) {
+      var days = {};
+      days[dateKey] = {
+        confirmedCount: 0,
+        bookings: [
+          { id: "review", date: dateKey, time: "10:00", internalStatus: "pending_review" },
+          {
+            id: "deposit",
+            date: dateKey,
+            time: "11:00",
+            internalStatus: "pending_customer_confirmation"
+          }
+        ]
+      };
+      return { month: month, days: days };
+    }
+  });
+  var pendingCalendar = pendingApp.els["calendar-grid"].innerHTML;
+  assert.ok(pendingCalendar.includes("calendar-booking-count--review"));
+  assert.ok(pendingCalendar.includes("待審核，共 2 筆"));
+  assert.ok(pendingCalendar.includes(">2</span>"));
 });
 
 test("預約清單：no_show 終態只顯示未到，無取消／transition 按鈕", async function () {
@@ -283,7 +413,7 @@ test("預約清單：no_show 終態只顯示未到，無取消／transition 按�
   assert.ok(!html.includes("取消預約"));
 });
 
-test("預約清單：完成操作需 confirm、成功後重新載入、loading 防重複", async function () {
+test("預約清單：完成操作需品牌確認視窗、成功後重新載入、loading 防重複", async function () {
   var resolveTransition;
   var app = await bootBookingApp({
     transitionBookingStatus: function (bookingId, toStatus) {
@@ -303,7 +433,14 @@ test("預約清單：完成操作需 confirm、成功後重新載入、loading �
 
   completeBtn.fire("click");
   await tick(2);
-  assert.equal(app.spy.confirmCount, 1, "完成前需 confirm");
+  assert.equal(
+    app.els["owner-confirm-modal"].classList.contains("hidden"),
+    false,
+    "完成前需顯示品牌確認視窗"
+  );
+  assert.match(app.els["owner-confirm-message"].textContent, /標記為已完成/);
+  app.els["owner-confirm-submit"].fire("click");
+  await tick(2);
   assert.ok(
     app.els["today-list"].innerHTML.includes(" disabled"),
     "處理中按鈕應停用"

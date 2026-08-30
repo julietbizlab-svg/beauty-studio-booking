@@ -66,6 +66,26 @@ export function replaceWeeklySlots(env, slots) {
   return resolveRepository(env).replaceWeeklySlots(env, slots);
 }
 
+function requireD1ScheduleFunction(env, name) {
+  var repository = resolveRepository(env);
+  if (repository !== d1Repository || typeof repository[name] !== "function") {
+    throw makeError("指定日期休假功能僅支援 v2 D1", 501);
+  }
+  return repository[name];
+}
+
+export function listClosedDates(env, month) {
+  return requireD1ScheduleFunction(env, "listClosedDates")(env, month);
+}
+
+export function isDateClosed(env, date) {
+  return requireD1ScheduleFunction(env, "isDateClosed")(env, date);
+}
+
+export function setDateClosed(env, date, closed) {
+  return requireD1ScheduleFunction(env, "setDateClosed")(env, date, closed);
+}
+
 export function getActiveBookingsByDate(env, date) {
   return resolveRepository(env).getActiveBookingsByDate(env, date);
 }
@@ -78,12 +98,22 @@ export function getUserBookings(env, userId) {
   return resolveRepository(env).getUserBookings(env, userId);
 }
 
+export function upsertCustomer(env, payload) {
+  return resolveRepository(env).upsertCustomer(env, payload);
+}
+
 export function createBooking(env, payload) {
   return resolveRepository(env).createBooking(env, payload);
 }
 
 export function cancelBooking(env, userId, bookingId) {
   return resolveRepository(env).cancelBooking(env, userId, bookingId);
+}
+
+export function requestPaidBookingReschedule(env, userId, bookingId, payload) {
+  return requireRepositoryFunction(env, "requestPaidBookingReschedule")(
+    env, userId, bookingId, payload
+  );
 }
 
 export function cancelBookingByOwner(env, bookingId, cancelReason) {
@@ -104,6 +134,22 @@ export function getOwnerCustomersFromBookings(env, queryText) {
 
 export function getOwnerCustomerBookings(env, userId) {
   return resolveRepository(env).getOwnerCustomerBookings(env, userId);
+}
+
+export function listCustomerAlbum(env, customerId) {
+  var repository = resolveRepository(env);
+  if (repository !== d1Repository || typeof repository.listCustomerAlbum !== "function") {
+    throw makeError("目前資料後端不支援客戶相簿", 501);
+  }
+  return repository.listCustomerAlbum(env, customerId);
+}
+
+export function getCustomerAlbumPhotoContent(env, customerId, source, photoId) {
+  var repository = resolveRepository(env);
+  if (repository !== d1Repository || typeof repository.getCustomerAlbumPhotoContent !== "function") {
+    throw makeError("目前資料後端不支援客戶相簿", 501);
+  }
+  return repository.getCustomerAlbumPhotoContent(env, customerId, source, photoId);
 }
 
 export async function getSettings(env) {
@@ -230,6 +276,14 @@ export function applyOwnerGeneralBookingStatusTransition(env, params) {
   return requireRepositoryFunction(env, "applyOwnerGeneralBookingStatusTransition")(env, params);
 }
 
+export function expireOverdueDepositBookings(env, nowInput) {
+  return requireRepositoryFunction(env, "expireOverdueDepositBookings")(env, nowInput);
+}
+
+export function expireOverdueDepositBookingsForAllTenants(env, nowInput) {
+  return requireRepositoryFunction(env, "expireOverdueDepositBookingsForAllTenants")(env, nowInput);
+}
+
 export function rescheduleBookingByOwner(env, bookingId, payload) {
   return requireRepositoryFunction(env, "rescheduleBookingByOwner")(env, bookingId, payload);
 }
@@ -244,4 +298,80 @@ export function listOwnerAiDailySummaryItems(env, date) {
 
 export function getOwnerAiMessageDraftContext(env, bookingId) {
   return requireRepositoryFunction(env, "getOwnerAiMessageDraftContext")(env, bookingId);
+}
+
+export function createCustomerAiInquiry(env, input) {
+  return requireRepositoryFunction(env, "createCustomerAiInquiry")(env, input);
+}
+
+export function countDailyCustomerAiInquiries(env, lineUserId) {
+  return requireRepositoryFunction(env, "countDailyCustomerAiInquiries")(
+    env, lineUserId
+  );
+}
+
+export function listCustomerAiInquiries(env, lineUserId) {
+  return requireRepositoryFunction(env, "listCustomerAiInquiries")(
+    env, lineUserId
+  );
+}
+
+export function listOwnerAiInquiries(env) {
+  return requireRepositoryFunction(env, "listOwnerAiInquiries")(env);
+}
+
+export function updateOwnerAiInquiryStatus(env, inquiryId, status) {
+  return requireRepositoryFunction(env, "updateOwnerAiInquiryStatus")(
+    env, inquiryId, status
+  );
+}
+
+export function sendOwnerAiInquiryReply(env, inquiryId, ownerId, input) {
+  return requireRepositoryFunction(env, "sendOwnerAiInquiryReply")(
+    env, inquiryId, ownerId, input
+  );
+}
+
+export function getCustomerBookingReview(env, bookingId, userId) {
+  return requireRepositoryFunction(env, "getCustomerBookingReview")(env, bookingId, userId);
+}
+
+export function updateCustomerBookingReview(env, bookingId, userId, payload) {
+  return requireRepositoryFunction(env, "updateCustomerBookingReview")(
+    env, bookingId, userId, payload
+  );
+}
+
+export function getOwnerBookingReview(env, bookingId) {
+  return requireRepositoryFunction(env, "getOwnerBookingReview")(env, bookingId);
+}
+
+export function getOwnerAiWorkQueue(env) {
+  return requireRepositoryFunction(env, "getOwnerAiWorkQueue")(env);
+}
+
+export function exportPaidCustomerData(env) {
+  return requireRepositoryFunction(env, "exportPaidCustomerData")(env);
+}
+
+export function exportPlatformCustomerData(env, tenantId) {
+  return requireRepositoryFunction(env, "exportPlatformCustomerData")(env, tenantId);
+}
+
+export function requestOwnerBookingReviewPhoto(env, bookingId, payload) {
+  return requireRepositoryFunction(env, "requestOwnerBookingReviewPhoto")(
+    env, bookingId, payload
+  );
+}
+
+export function uploadCustomerBookingReviewPhoto(env, bookingId, userId, bytes, mimeType) {
+  return requireRepositoryFunction(env, "uploadCustomerBookingReviewPhoto")(
+    env, bookingId, userId, bytes, mimeType
+  );
+}
+
+export function getOwnerBookingReviewPhotoContent(env, bookingId, photoId) {
+  return requireRepositoryFunction(env, "getOwnerBookingReviewPhotoContent")(
+    env, bookingId, photoId
+  );
 }

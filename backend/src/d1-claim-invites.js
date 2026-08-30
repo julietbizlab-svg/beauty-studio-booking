@@ -80,6 +80,10 @@ export function isValidClaimTokenFormat(token) {
   return /^[A-Za-z0-9_-]{22,128}$/.test(String(token || ""));
 }
 
+export function isProviderMigrationToken(token) {
+  return /^provider_migrate_[A-Za-z0-9_-]{22,96}$/.test(String(token || ""));
+}
+
 /** 確認 env.STAFF_ID 屬於本 tenant（fail closed，不洩漏設定值） */
 async function ensureStaffBelongsToTenant(env) {
   if (!env.STAFF_ID) {
@@ -401,6 +405,75 @@ export async function claimCustomerInvite(env, params) {
     }
     // 已綁定其他 customer：不自動合併、不搬移，零寫入
     throw makeError("此 LINE 帳號已綁定其他客戶資料，請聯絡店家處理", 409);
+  }
+
+  if (customer.line_account_id && isProviderMigrationToken(token)) {
+    var migratedLineAccountId = customer.line_account_id;
+    var migrationAuditId = crypto.randomUUID();
+    try {
+      await env.DB.batch([
+        env.DB.prepare(
+          "UPDATE line_accounts SET line_user_id=?1,display_name=?2,picture_url=?3," +
+          "linked_at=?4,last_seen_at=?4 WHERE tenant_id=?5 AND id=?6 AND customer_id=?7 " +
+          "AND EXISTS (SELECT 1 FROM customer_claim_invites " +
+          "WHERE tenant_id=?5 AND id=?8 AND status='active' AND expires_at>?4)"
+        ).bind(
+          lineUserId,
+          String(input.displayName || ""),
+          String(input.pictureUrl || ""),
+          now,
+          env.TENANT_ID,
+          migratedLineAccountId,
+          invite.customer_id,
+          invite.id
+        ),
+        env.DB.prepare(
+          "UPDATE customer_claim_invites SET status='claimed',claimed_at=?1," +
+          "claimed_line_account_id=?2 WHERE tenant_id=?3 AND id=?4 AND status='active' " +
+          "AND EXISTS (SELECT 1 FROM line_accounts WHERE tenant_id=?3 AND id=?2 " +
+          "AND customer_id=?5 AND line_user_id=?6)"
+        ).bind(
+          now,
+          migratedLineAccountId,
+          env.TENANT_ID,
+          invite.id,
+          invite.customer_id,
+          lineUserId
+        ),
+        env.DB.prepare(
+          "INSERT INTO audit_logs " +
+          "(id,tenant_id,actor_type,actor_id,action,entity_type,entity_id," +
+          "source,metadata_json,created_at) " +
+          "SELECT ?1,?2,'customer',?3,'customer.line_provider_migrated'," +
+          "'customer_claim_invite',?4,'line',?5,?6 " +
+          "WHERE EXISTS (SELECT 1 FROM customer_claim_invites " +
+          "WHERE tenant_id=?2 AND id=?4 AND status='claimed')"
+        ).bind(
+          migrationAuditId,
+          env.TENANT_ID,
+          migratedLineAccountId,
+          invite.id,
+          JSON.stringify({
+            inviteId: invite.id,
+            customerId: invite.customer_id,
+            lineAccountId: migratedLineAccountId,
+            providerMigration: true
+          }),
+          now
+        )
+      ]);
+    } catch (error) {
+      if (/UNIQUE|constraint/i.test(String(error && error.message))) {
+        throw makeError("此 LINE 帳號已綁定其他客戶資料，請聯絡店家處理", 409);
+      }
+      throw error;
+    }
+
+    var migrated = await fetchLineAccountByUserId(env, lineUserId);
+    if (!migrated || migrated.customer_id !== invite.customer_id) {
+      throw makeError("LINE 身分遷移未完成，請重新產生邀請", 409);
+    }
+    return claimSuccessResponse(customer, false);
   }
 
   if (customer.line_account_id) {

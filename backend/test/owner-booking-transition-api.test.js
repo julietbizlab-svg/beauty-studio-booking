@@ -23,6 +23,8 @@ var MIGRATION_FILES = [
   "0008_booking_notice_policy.sql",
   "0009_booking_status_machine.sql",
   "0010_cleanup_duplicate_renamed_indexes.sql"
+  ,"0011_ai_customer_inquiries.sql"
+  ,"0012_booking_review_deposit_deadline.sql"
 ];
 
 var TENANT = "tenant-transition-001";

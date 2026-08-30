@@ -311,7 +311,7 @@ function alreadyImportedResponse(batchRow) {
 
 var CUSTOMER_INSERT_COLUMNS =
   "(id, tenant_id, customer_no, display_name, mobile, birthday, notes, " +
-  "source, status, created_at, updated_at)";
+  "preferences_json, source, status, created_at, updated_at)";
 
 var AUDIT_INSERT_COLUMNS =
   "(id, tenant_id, actor_type, actor_id, action, entity_type, entity_id, " +
@@ -399,19 +399,23 @@ export async function commitCustomerImport(env, payload) {
       name: row.normalized.name,
       phone: row.normalized.phone || null,
       birthday: row.normalized.birthday || null,
-      note: row.normalized.note || null
+      note: row.normalized.note || null,
+      preferencesJson: JSON.stringify({
+        importedPreviousService: row.normalized.previousService || "",
+        importedPreviousServiceDate: row.normalized.previousServiceDate || ""
+      })
     };
   });
 
   chunk(createdCustomers, INSERT_ROWS_PER_STATEMENT).forEach(function (group) {
     var valuesSql = group.map(function () {
-      return "(?, ?, ?, ?, ?, ?, ?, 'import', 'active', ?, ?)";
+      return "(?, ?, ?, ?, ?, ?, ?, ?, 'import', 'active', ?, ?)";
     }).join(", ");
     var binds = [];
     group.forEach(function (customer) {
       binds.push(
         customer.id, env.TENANT_ID, customer.customerNo, customer.name,
-        customer.phone, customer.birthday, customer.note, now, now
+        customer.phone, customer.birthday, customer.note, customer.preferencesJson, now, now
       );
     });
     statements.push(env.DB.prepare(

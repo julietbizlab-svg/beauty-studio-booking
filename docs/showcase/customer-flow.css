@@ -1,0 +1,49 @@
+.demo-tabs { grid-template-columns: repeat(4, 1fr); }
+.value-card button,
+.customer-live-link {
+  display: block;
+  width: 100%;
+  padding: 13px;
+  border: 0;
+  border-radius: 12px;
+  background: #fff;
+  color: var(--rose-deep);
+  text-align: center;
+  text-decoration: none;
+  font: inherit;
+  font-weight: 800;
+}
+.customer-flow-intro { color: var(--muted); line-height: 1.6; }
+.customer-journey { display: grid; gap: 10px; margin: 16px 0; padding: 0; list-style: none; }
+.customer-journey li {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  gap: 11px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+.customer-journey li > span {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--rose-deep);
+  color: #fff;
+  font-weight: 800;
+}
+.customer-journey strong { display: block; margin: 4px 0; }
+.customer-journey p { margin: 5px 0; color: var(--muted); line-height: 1.5; }
+.customer-journey small {
+  display: block;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: var(--wash);
+  color: var(--rose-deep);
+  line-height: 1.45;
+}
+.customer-live-link { margin-top: 14px; background: var(--rose-deep); color: #fff; }
+@media (max-width: 520px) {
+  .demo-tabs { grid-template-columns: repeat(2, 1fr); }
+}

@@ -125,7 +125,9 @@ test("resolveColumnMapping：中文別名自動判斷", function () {
     phone: 2,
     birthday: 3,
     note: 4,
-    customer_no: 0
+    customer_no: 0,
+    previous_service: null,
+    previous_service_date: null
   });
 });
 
@@ -231,12 +233,25 @@ test("正規化列輸出 rowNumber／normalized／maskedPreview／canonicalKey",
     phone: "0912345678",
     birthday: "1990-01-01",
     note: "VIP",
-    customerNo: "A001"
+    customerNo: "A001",
+    previousService: "",
+    previousServiceDate: ""
   });
   assert.equal(row.canonicalKey, "phone:0912345678");
   assert.equal(row.maskedPreview.phone, "09******78");
   assert.deepEqual(row.errors, []);
   assert.deepEqual(row.conflicts, []);
+});
+
+test("曾做過的服務與日期皆為選填，日期有值時驗證真實日期", async function () {
+  var preview = await previewOf(
+    "姓名,曾做過的服務項目,服務日期\n王小美,韓系霧眉,2025-08-08\n陳小姐,,\n林小姐,霧唇,2025-02-30\n"
+  );
+  assert.equal(preview.rows[0].normalized.previousService, "韓系霧眉");
+  assert.equal(preview.rows[0].normalized.previousServiceDate, "2025-08-08");
+  assert.equal(preview.rows[1].normalized.previousService, "");
+  assert.equal(preview.rows[1].normalized.previousServiceDate, "");
+  assert.match(preview.rows[2].errors.join(" "), /服務日期格式/);
 });
 
 test("姓名空白、非法生日、note 超長都是 error；note 恰 2000 字通過", async function () {
@@ -266,6 +281,15 @@ test("真實生日通過；customer_no 未提供保留 null；空電話 warning 
   assert.equal(row.canonicalKey, null, "無電話不產生 canonicalKey");
   assert.ok(row.warnings.length >= 1);
   assert.equal(preview.valid, 1, "空電話仍列為可匯入");
+});
+
+test("試算表文字公式格式保留電話開頭 0，其他公式仍拒絕", async function () {
+  var preview = await previewOf(
+    '姓名,電話\n王小美,="0912345678"\n陳小姐,=SUM(1)\n'
+  );
+  assert.equal(preview.rows[0].normalized.phone, "0912345678");
+  assert.deepEqual(preview.rows[0].errors, []);
+  assert.ok(preview.rows[1].errors.some(function (e) { return /非法字元/.test(e); }));
 });
 
 test("同一 CSV 內相同電話：全部標記 conflict，不擇一", async function () {

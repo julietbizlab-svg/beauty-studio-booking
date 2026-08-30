@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-Hant" data-app-role="owner">
+<head>
+  <meta charset="UTF-8">
+  <title>Juliet Studio OS｜平台管理中心</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <script>
+    if (/\.juliet-studio\.pages\.dev$/.test(window.location.hostname) &&
+        window.location.pathname !== "/owner/hub/platform/") {
+      window.history.replaceState(null, "", "/owner/hub/platform/" + window.location.search + window.location.hash);
+    }
+  </script>
+  <meta name="robots" content="noindex, nofollow, noarchive">
+  <script>window.BEAUTY_APP_ROLE = "owner";</script>
+  <script src="/owner/js/config.js?v=20260822001"></script>
+  <link rel="stylesheet" href="/owner/css/style.css?v=20260806001">
+  <link rel="stylesheet" href="/platform/platform.css?v=20260823004">
+</head>
+<body>
+  <main class="platform-shell">
+    <header class="platform-header">
+      <img src="/owner/assets/brand/juliet-studio-os-logo.png?v=20260727001"
+        alt="Juliet Studio OS">
+      <div>
+        <span class="platform-eyebrow">僅限平台負責人</span>
+        <h1>平台管理中心</h1>
+      </div>
+    </header>
+
+    <div id="status" class="status">正在驗證平台管理權限…</div>
+
+    <section id="platform-denied" class="platform-denied" hidden>
+      <h2>無法進入平台管理中心</h2>
+      <p>此 LINE 帳號沒有平台管理權限。一般業主請由業主端管理自己的工作室。</p>
+    </section>
+
+    <section id="platform-studio-management" class="platform-panel platform-studio-management" hidden>
+      <section id="platform-root-account" class="platform-root-account" hidden>
+        <h2 class="platform-section-title">平台管理主帳號</h2>
+        <p class="platform-root-warning" role="status">系統管理主帳號，請勿刪除、改綁 LINE 或提供給其他業主。</p>
+        <div id="platform-root-account-card" class="platform-root-account-card"></div>
+      </section>
+
+      <h2 class="platform-section-title">工作室清單</h2>
+      <p class="field-hint platform-section-hint">名稱只有你能更正，方案也只有你能管理；升級不重新邀請或改綁 LINE。降級於租期結束生效且不刪資料。標準版美甲／美睫工作室須另建獨立 tenant，不得沿用平台主帳號。</p>
+
+      <div id="platform-status-summary" class="platform-status-summary" aria-live="polite"></div>
+
+      <div class="platform-toolbar">
+        <label class="platform-search-label" for="platform-studio-search">搜尋工作室</label>
+        <input type="search" id="platform-studio-search" placeholder="搜尋工作室或業主名稱" enterkeyhint="search">
+        <label class="platform-filter-label" for="platform-plan-filter">方案</label>
+        <select id="platform-plan-filter" aria-label="方案篩選">
+          <option value="all">全部方案</option>
+          <option value="standard">標準版</option>
+          <option value="flagship">旗艦版</option>
+        </select>
+      </div>
+
+      <div class="platform-status-tabs" role="tablist" aria-label="工作室狀態篩選">
+        <button type="button" class="platform-tab is-active" role="tab" aria-selected="true" data-status-filter="all">全部</button>
+        <button type="button" class="platform-tab" role="tab" aria-selected="false" data-status-filter="pending">待業主開通</button>
+        <button type="button" class="platform-tab" role="tab" aria-selected="false" data-status-filter="bound">已開通</button>
+        <button type="button" class="platform-tab" role="tab" aria-selected="false" data-status-filter="subscription">試用／租約</button>
+      </div>
+
+      <div id="platform-studio-list" class="platform-studio-list"></div>
+    </section>
+
+    <section id="platform-provisioning" class="platform-panel" hidden>
+      <details class="platform-collapsible" id="platform-provision-details">
+        <summary>建立新工作室業主</summary>
+        <div class="platform-collapsible-body">
+          <div class="platform-hero">
+            <span class="platform-eyebrow">Juliet Studio OS</span>
+            <h2>開通新的工作室業主</h2>
+            <p>每位業主都會取得獨立工作室空間。邀請只能使用一次，對方登入後只會連到自己的業主端。</p>
+          </div>
+          <div class="platform-provision-card">
+            <div class="form-group">
+              <label for="platform-plan">開通方案</label>
+              <select id="platform-plan">
+                <option value="standard_trial">標準版免費試用 14 天（美甲／美睫）</option>
+                <option value="trial">旗艦版免費試用 14 天（霧眉／霧唇全部功能）</option>
+                <option value="standard">標準版（美甲／美睫／睫毛嫁接／睫毛提升／翹睫管理）</option>
+                <option value="flagship">旗艦版（霧眉／霧唇）</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="platform-assessment-template">新客評估類型</label>
+              <select id="platform-assessment-template">
+                <option value="all_supported">全方位紋繡評估（依服務項目自動套用）</option>
+                <option value="brow_new_client">霧眉新客評估</option>
+                <option value="lip_blush_new_client">霧唇新客評估</option>
+              </select>
+              <p class="field-hint" id="platform-assessment-hint">全方位模式會依客戶選擇的服務，自動使用霧眉、霧唇或其他相符評估，不會混用題目。</p>
+            </div>
+            <label class="platform-approval-confirm" for="platform-approval-confirm">
+              <input type="checkbox" id="platform-approval-confirm">
+              <span id="platform-approval-text">我確認核准此工作室免費試用 14 天。</span>
+            </label>
+            <button type="button" class="btn btn-primary" id="platform-provision">核准試用並產生一次性邀請</button>
+            <div class="platform-invite-result" id="platform-invite-result" hidden>
+              <strong>一次性邀請已建立</strong>
+              <p class="field-hint">24 小時內有效，只顯示這一次。請私下傳給該工作室業主。</p>
+              <label for="platform-invite-link">業主邀請連結</label>
+              <div class="platform-invite-link-row">
+                <input type="text" id="platform-invite-link" readonly>
+                <button type="button" class="btn btn-secondary" id="platform-invite-copy">複製連結</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </details>
+    </section>
+  </main>
+  <script src="/owner/js/liff-init.js?v=20260806003"></script>
+  <script src="/owner/js/api.js?v=20260822002"></script>
+  <script src="/platform/platform.js?v=20260824001"></script>
+</body>
+</html>

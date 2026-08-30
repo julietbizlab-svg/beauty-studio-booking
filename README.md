@@ -1,206 +1,56 @@
-# beauty-studio-booking
+# Juliet Studio OS｜Beauty Studio Booking v2
 
-美業一人工作室 LINE 預約管理系統（MVP）
+美業工作室 LINE 預約、客戶管理、訂金流程與 AI 預約協助系統。
 
-## 專案結構
+> 對外出租與業主開通，請直接進入 [`商品營運中心/`](商品營運中心/00-先打開這裡.md)。一般新增業主不需要進入程式碼、部署或資料庫。
 
-```
-beauty-studio-booking/
-├── customer-ui/      # 客人端 LIFF 頁面
-├── owner-admin/      # 業主端 LIFF 管理頁面
-├── backend/          # Cloudflare Workers API
-├── docs/             # GitHub Pages 部署產物（由 sync 腳本產生）
-└── scripts/
-    └── sync-github-pages.sh
-```
+## 目前技術基準
 
-## 技術架構
-
-| 層級 | 技術 |
-|------|------|
-| 客人端 | HTML / CSS / JavaScript + LINE LIFF |
-| 業主端 | HTML / CSS / JavaScript + LINE LIFF |
+| 項目 | 現況 |
+|---|---|
+| 客戶端／業主端 | LINE LIFF + Cloudflare Pages |
 | 後端 | Cloudflare Workers |
-| 資料庫 | Notion |
-| 前端部署 | GitHub Pages（`/docs` 資料夾） |
+| 資料庫 | Cloudflare D1（v2） |
+| 私有照片 | Cloudflare R2 |
+| 方案 | 標準版、旗艦 AI 版 |
+| 測試基準 | 868／868 通過（2026-08-20） |
 
-## 第一階段 MVP 範圍
+Notion／GitHub Pages 的說明屬 Demo v1 歷史架構，不可用於目前 v2 安裝或部署。
 
-**包含：**
-- LINE LIFF 登入
-- 服務項目瀏覽與預約
-- 時段選擇與**時間區間重疊防呆**（長時服務須整段連續空檔；首尾相接可預約）
-- 我的預約查詢與取消
-- 業主今日預約、服務管理、營業時段、店面設定
-- 客人端月曆選日期、業主端月曆預約查詢（基礎款）
-- 業主端客戶資料查詢（由 bookings 彙總，第一版不依賴 customers 表）
+## 權威目錄
 
-**不包含：**
-- 金流
-- 多員工
-- 報表
-- 包卡／儲值（加購）
+- `backend/`：Worker、D1 repository、migrations 與測試。
+- `customer-ui/`：客戶 LIFF 原始檔。
+- `owner-admin/`：業主 LIFF 原始檔。
+- `platform-admin/`：平台管理中心。
+- `docs/`：v2-test Pages 發布副本，須與各原始前端保持一致。
+- `product-docs/`：安裝、業主開通、交付與工程紀錄。
+- `dist/`：安裝包；只有標記為 CURRENT 的版本可交付。
 
-## API 一覽
+## 開始工作前
 
-### 客人端
+依序閱讀：
 
-| 方法 | 路徑 | 說明 |
-|------|------|------|
-| GET | `/api/settings` | 店面公開設定 |
-| GET | `/api/services` | 上架中的服務項目 |
-| GET | `/api/slots?date=&serviceId=` | 可預約開始時段（單日；依服務時長排除重疊區間） |
-| GET | `/api/slots/month?month=&serviceId=` | 月份可預約摘要（客人月曆；同一套重疊邏輯） |
-| POST | `/api/bookings` | 建立預約 |
-| GET | `/api/bookings/me?userId=` | 我的預約 |
-| POST | `/api/bookings/cancel` | 客人取消自己的預約 |
-| POST | `/api/owner/bookings/cancel` | 業主取消預約（須填原因；Bearer） |
+1. `product-docs/V2-HANDOFF-2026-08-20-CURRENT.md`
+2. `product-docs/V2-MASTER-BLUEPRINT-AND-PROGRESS-2026-08-09.md`
+3. `product-docs/V2-WORKLOG-2026-08-09-LINE-OA-OWNER-FLOW.md`
+4. `product-docs/OWNER-SUBSCRIPTION-ONBOARDING-SOP.md`
+5. `product-docs/CURRENT-AND-INVALID-FILES-2026-08-20.md`
 
-### 業主端（需 OWNER_LINE_USER_IDS 驗證）
-
-| 方法 | 路徑 | 說明 |
-|------|------|------|
-| GET | `/api/owner/today?userId=&date=` | 今日預約 |
-| GET | `/api/owner/bookings/month?month=` | 月份預約彙總（月曆） |
-| GET | `/api/owner/customers?q=` | 客戶名單（由 bookings 彙總；可搜尋姓名／電話） |
-| GET | `/api/owner/customer-bookings?userId=` | 單一客戶歷史預約 |
-| GET/POST | `/api/owner/services` | 服務列表 / 新增 |
-| PATCH | `/api/owner/services/:id` | 修改服務 |
-| GET/POST | `/api/owner/slots` | 營業時段 |
-| GET/PATCH | `/api/owner/settings` | 店面設定 |
-
-## 快速開始
-
-### 1. Notion 設定
-
-在 [Notion Integrations](https://www.notion.so/my-integrations) 建立 Integration，並建立四個資料庫：
-
-#### 服務項目
-
-| 欄位 | 類型 |
-|------|------|
-| 服務名稱 | Title |
-| 時長 | 數字 |
-| 價格 | 數字 |
-| 說明 | 文字 |
-| 狀態 | 選項（上架、下架） |
-| 排序 | 數字 |
-
-#### 營業時段
-
-| 欄位 | 類型 |
-|------|------|
-| 名稱 | Title |
-| 星期 | 選項（日、一、二、三、四、五、六） |
-| 開始時間 | 文字（例：10:00） |
-| 結束時間 | 文字（例：18:00） |
-| 狀態 | 選項（開放、關閉） |
-
-#### 預約紀錄
-
-| 欄位 | 類型 |
-|------|------|
-| 預約編號 | Title |
-| LINE userId | 文字 |
-| 客人姓名 | 文字 |
-| 客人電話 | 文字（預約當下聯絡電話；首次預約可自動補欄） |
-| 客人生日 | 日期（選填） |
-| 服務ID | 文字 |
-| 服務名稱 | 文字 |
-| 預約日期 | 日期 |
-| 預約時段 | 文字 |
-| 狀態 | 選項（已確認、已取消） |
-| 取消原因 | 文字（rich_text） |
-| 取消者 | 選項（客人、業主） |
-| 取消時間 | 日期 |
-
-#### 店面設定
-
-| 欄位 | 類型 |
-|------|------|
-| 設定名稱 | Title |
-| 品牌名稱 | 文字 |
-| 主色 | 文字 |
-| 公告文字 | 文字 |
-| 取消規則 | 文字 |
-| 是否收訂金 | Checkbox（可選；關閉則客人不顯示） |
-| 訂金金額 | 數字 |
-| 銀行名稱／銀行代碼／帳號／戶名 | 文字（僅顯示用，**非金流**） |
-| 轉帳提醒文字 | 文字 |
-
-> 訂金功能只顯示轉帳資訊，**不**串銀行、LINE Pay、也不追蹤付款狀態。帳號由 settings API 回傳，勿寫進前端 config。
-
-#### 客人資料（建議）
-
-環境變數：`NOTION_DATABASE_CUSTOMERS`（勿把真實 ID 寫進前端）
-
-| 欄位 | 類型 |
-|------|------|
-| 客人名稱 | Title |
-| LINE userId | 文字 |
-| 電話 | 文字 |
-| 生日 | 日期（選填） |
-| LINE 暱稱 | 文字 |
-| 備註 | 文字 |
-
-> 建立預約時會依 `LINE userId` 建立或更新客人資料；即使尚未設定此資料庫，預約仍會寫入 bookings 的姓名與電話。
-
-每個資料庫需連接您的 Integration（Connections）。
-
-### 2. 後端設定
+## 本機驗證
 
 ```bash
 cd backend
-cp .dev.vars.example .dev.vars
-# 編輯 .dev.vars 填入 Notion Token、Database ID、OWNER_LINE_USER_IDS
-# 建議再填 NOTION_DATABASE_CUSTOMERS（客人資料）
-
-npm install
-npm run dev        # 本機開發
-npm run deploy     # 部署到 Cloudflare
+npm test
 ```
 
-正式環境上傳 secrets：
+Wrangler 必須固定使用 `/Users/imac/project/beauty-studio-booking/backend/node_modules/.bin/wrangler` 3.114.17。部署與遠端 D1 寫入需逐次授權；v2-test 部署前必須先備份 D1。
 
-```bash
-npx wrangler secret bulk .dev.vars
-npx wrangler deploy
-```
+## 商品化與安裝
 
-### 3. LINE LIFF 設定
+- 平台端開通業主：`product-docs/OWNER-SUBSCRIPTION-ONBOARDING-SOP.md`
+- 安裝包總覽：`product-docs/INSTALLATION-PACKAGE-SOP.md`
+- 交付流程：`product-docs/CLIENT-DELIVERY-SOP.md`
+- 目錄與有效性：`product-docs/CURRENT-AND-INVALID-FILES-2026-08-20.md`
 
-1. 在 [LINE Developers](https://developers.line.biz/) 建立 Messaging API Channel
-2. 建立 LIFF App（Size: Full）
-3. Endpoint URL 設為 GitHub Pages 網址：
-   - 客人端：`https://<username>.github.io/beauty-studio-booking/`
-   - 業主端：`https://<username>.github.io/beauty-studio-booking/owner/`
-4. 將 LIFF ID 填入 `customer-ui/js/config.js` 與 `owner-admin/js/config.js`
-5. 將 Workers API 網址填入 `API_BASE_URL`
-
-### 4. 前端部署
-
-```bash
-# 修改前端後，更新 HTML 中的 ?v= 版本號
-./scripts/sync-github-pages.sh
-git add customer-ui owner-admin docs
-git commit -m "更新前端"
-git push
-```
-
-GitHub Pages 設定：Branch `main`，資料夾 `/docs`。
-
-### 5. 取得業主 LINE userId
-
-讓業主從 LINE 開啟任一 LIFF 頁面，在瀏覽器開發者工具查看 `beautyUser.userId`，填入 `OWNER_LINE_USER_IDS`。
-
-## 安全機制
-
-- Notion Token 僅存於 Cloudflare Workers secrets，不暴露於前端
-- 業主 API 由後端驗證 `OWNER_LINE_USER_IDS`
-- 防止同一客人同一天重複預約
-- **時間區間重疊防呆**（基礎款）：依「開始時間 + 該服務時長」占用區間；與現有已確認預約重疊的開始時間不可顯示、亦不可建立；首尾相接（例：10:00–11:00 與 11:00–12:00）可預約
-- 所有 API 錯誤回傳 `{ ok: false, message: "..." }`
-
-## 授權
-
-MIT
+不得把 `.dev.vars`、tokens、secrets、LINE user ID 或客戶個資放入文件、前端或安裝包。

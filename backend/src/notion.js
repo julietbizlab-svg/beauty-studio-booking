@@ -416,15 +416,14 @@ export async function updateSettings(env, patch) {
     properties["轉帳提醒文字"] = richTextProperty(patch.depositNote);
   }
 
-  // 開啟訂金時：帳號、戶名必填；金額須 > 0（僅驗證有送出的欄位）
+  // 開啟訂金時：帳號必填；戶名可留空保護業主個資；金額須 > 0。
   if (patch.depositEnabled === true) {
     var account = patch.bankAccount != null ? String(patch.bankAccount).trim() : "";
-    var accountName = patch.bankAccountName != null ? String(patch.bankAccountName).trim() : "";
     var depositAmount = patch.depositAmount != null && patch.depositAmount !== ""
       ? Number(patch.depositAmount)
       : NaN;
-    if (!account || !accountName) {
-      throw makeError("開啟訂金時請填寫帳號與戶名", 400);
+    if (!account) {
+      throw makeError("開啟訂金時請填寫轉帳帳號", 400);
     }
     if (!(depositAmount > 0)) {
       throw makeError("開啟訂金時訂金金額須大於 0", 400);

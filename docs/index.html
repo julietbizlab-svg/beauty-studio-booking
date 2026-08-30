@@ -1,15 +1,48 @@
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="zh-Hant" data-app-role="customer">
 <head>
   <meta charset="UTF-8">
+  <title>Juliet Studio OS | Booking</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-  <title>線上預約</title>
-  <link rel="stylesheet" href="css/style.css?v=20260722001">
+  <base id="app-base" href="/">
+  <script>
+    if (window.location.protocol === "file:") {
+      document.getElementById("app-base").setAttribute("href", "./");
+    }
+  </script>
+  <link rel="preconnect" href="https://static.line-scdn.net">
+  <link rel="dns-prefetch" href="//static.line-scdn.net">
+  <link rel="preload" as="script" href="https://static.line-scdn.net/liff/edge/2/sdk.js">
+  <style>.brand.is-loading{visibility:hidden}</style>
+  <style>
+    html,body{min-height:100%;background:#fffaf7}
+    .route-transition{position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;background:#fffaf7;color:#49383b;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-align:center}
+    .route-transition[hidden]{display:none}
+    .route-transition strong{display:block;font-size:22px;letter-spacing:.04em}
+    .route-transition span{display:block;margin-top:10px;font-size:15px;color:#8f7479}
+    html.is-route-transitioning::before{content:"Juliet Studio OS\A正在安全開啟…";white-space:pre;position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;background:#fffaf7;color:#49383b;font:700 22px/2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-align:center}
+  </style>
+  <script>window.BEAUTY_APP_ROLE = "customer";</script>
+  <script src="js/config.js?v=20260823002"></script>
+  <script>
+    (function () {
+      var state = new URLSearchParams(window.location.search).get("liff.state") || "";
+      if (/^\/owner(?:\/|$)/.test(state)) {
+        document.title = "Juliet Studio OS | Owner Portal";
+        document.documentElement.classList.add("is-route-transitioning");
+        window.location.replace(window.BEAUTY_CONFIG.OWNER_LIFF_URL);
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="css/style.css?v=20260825002">
 </head>
 <body>
+  <div class="route-transition" id="route-transition" role="status" aria-live="polite" hidden>
+    <div><strong>Juliet Studio OS</strong><span>正在安全開啟…</span></div>
+  </div>
   <div class="app">
     <header class="header">
-      <h1 class="brand" id="brand">美業工作室</h1>
+      <h1 class="brand is-loading" id="brand" aria-busy="true">工作室名稱</h1>
       <p class="subtitle">線上預約</p>
     </header>
 
@@ -28,10 +61,52 @@
     <div id="status" class="status" style="display:none"></div>
 
     <section class="panel active" data-panel="book">
-      <p class="step-hint">步驟 1：選擇服務項目</p>
-      <div id="service-list"></div>
+      <p class="step-hint">步驟 1：填寫基本資料</p>
+      <div class="customer-profile-form" id="customer-profile-form">
+        <p class="profile-locked-hint" id="profile-locked-hint" hidden>
+          姓名、電話與生日已建檔，如需修改請聯絡店家
+        </p>
+        <div class="form-group">
+          <label for="customer-name">姓名（必填）</label>
+          <input type="text" id="customer-name" name="customer-name" autocomplete="name" placeholder="請填真實姓名" maxlength="40">
+        </div>
+        <div class="form-group">
+          <label for="customer-phone">電話（必填）</label>
+          <input type="tel" id="customer-phone" name="customer-phone" autocomplete="tel" inputmode="tel" placeholder="例：0912345678" maxlength="20">
+        </div>
+        <div class="form-group">
+          <label for="customer-birthday">生日（必填）</label>
+          <input type="date" id="customer-birthday" name="customer-birthday" required>
+        </div>
+        <button type="button" class="btn btn-primary" id="profile-save">儲存資料</button>
+        <p id="profile-status" class="panel-hint" role="status" aria-live="polite"></p>
+      </div>
 
-      <p class="step-hint">步驟 2：選擇日期</p>
+      <div id="service-selection" hidden>
+        <p class="step-hint">步驟 2：選擇服務項目</p>
+        <div id="service-list"></div>
+      </div>
+
+      <div class="assessment-panel" id="assessment-panel" hidden>
+        <p class="step-hint" id="assessment-step-title">步驟 3：填寫新客評估</p>
+        <p class="panel-hint">完成問卷與照片並經老師人工審核後，才會開放服務及預約時間。</p>
+        <div class="assessment-service-actions" id="assessment-service-actions">
+          <button type="button" class="btn btn-secondary" id="assessment-start" hidden>開始問卷評估</button>
+        </div>
+        <div id="assessment-intro" class="panel-hint" hidden></div>
+        <div id="assessment-summary" class="assessment-summary" hidden></div>
+        <form id="assessment-form" hidden>
+          <h4 id="assessment-prompt"></h4>
+          <div id="assessment-options" class="assessment-options"></div>
+          <input type="date" id="assessment-date" hidden>
+          <input type="file" id="assessment-photo" accept="image/jpeg,image/png,image/webp" hidden>
+          <button type="submit" class="btn btn-primary" id="assessment-submit">送出答案</button>
+        </form>
+        <p id="assessment-status" class="panel-hint" role="status" aria-live="polite"></p>
+      </div>
+
+      <div id="booking-flow" hidden>
+      <p class="step-hint">步驟 4：選擇日期</p>
       <div id="calendar-section" class="calendar-section" hidden>
         <div class="calendar-toolbar">
           <button type="button" class="btn btn-small" id="calendar-prev" aria-label="上個月">◀</button>
@@ -48,31 +123,45 @@
       </div>
       <div id="calendar-placeholder" class="empty">請先選擇服務</div>
 
-      <p class="step-hint">步驟 3：選擇時段</p>
+      <p class="step-hint">步驟 5：選擇時段</p>
       <div class="slot-grid" id="slot-grid">
         <div class="empty">請先選擇服務與日期</div>
       </div>
 
-      <p class="step-hint">步驟 4：填寫聯絡資料</p>
-      <div class="customer-profile-form" id="customer-profile-form">
-        <p class="profile-locked-hint" id="profile-locked-hint" hidden>
-          姓名、電話與生日已建檔，如需修改請聯絡店家
-        </p>
-        <div class="form-group">
-          <label for="customer-name">姓名（必填）</label>
-          <input type="text" id="customer-name" name="customer-name" autocomplete="name" placeholder="請填真實姓名" maxlength="40">
-        </div>
-        <div class="form-group">
-          <label for="customer-phone">電話（必填）</label>
-          <input type="tel" id="customer-phone" name="customer-phone" autocomplete="tel" inputmode="tel" placeholder="例：0912345678" maxlength="20">
-        </div>
-        <div class="form-group">
-          <label for="customer-birthday">生日（選填）</label>
-          <input type="date" id="customer-birthday" name="customer-birthday">
-        </div>
+      <button type="button" class="btn btn-primary" id="book-btn" disabled>確認預約</button>
       </div>
 
-      <button type="button" class="btn btn-primary" id="book-btn" disabled>確認預約</button>
+      <div class="ai-assistant" id="ai-assistant" hidden>
+        <h2>AI 預約小幫手</h2>
+        <p>告訴我想做的服務或需求，我會依工作室設定協助您找到適合的服務與預約入口。</p>
+        <textarea id="ai-message" maxlength="300" rows="3"></textarea>
+        <button type="button" class="btn btn-secondary" id="ai-ask-btn">送出問題</button>
+        <div class="ai-answer" id="ai-answer" hidden aria-live="polite"></div>
+        <div class="ai-history" id="brow-photo-upload" hidden>
+          <h3>補充霧眉評估照片</h3>
+          <p id="brow-photo-request-note" class="panel-hint"></p>
+          <p class="panel-hint">請上傳未畫眉、無濾鏡且光線清楚的照片，每張最多 5 MB。</p>
+          <div class="form-group"><label for="brow-photo-front">正面照</label><input type="file" id="brow-photo-front" accept="image/jpeg,image/png,image/webp"></div>
+          <div class="form-group"><label for="brow-photo-left">客人本人左眉照（以客人方向為準）</label><input type="file" id="brow-photo-left" accept="image/jpeg,image/png,image/webp"></div>
+          <div class="form-group"><label for="brow-photo-right">客人本人右眉照（以客人方向為準）</label><input type="file" id="brow-photo-right" accept="image/jpeg,image/png,image/webp"></div>
+          <button type="button" class="btn btn-primary" id="brow-photo-submit">上傳照片</button>
+          <p id="brow-photo-status" class="panel-hint" role="status" aria-live="polite"></p>
+        </div>
+        <p class="ai-disclaimer">
+          AI 只使用工作室核准的服務資料；涉及專業判斷時會轉交工作室。預約送出前仍會由您親自確認。
+          洽詢內容最多保留 90 天。
+        </p>
+        <div class="ai-history">
+          <div class="ai-history-heading">
+            <h3>我的諮詢紀錄</h3>
+            <button type="button" class="btn btn-small" id="ai-history-refresh">重新整理</button>
+          </div>
+          <p class="panel-hint">只有您本人可以查看自己的問題與工作室回覆。</p>
+          <div id="ai-history-list" class="ai-history-list">
+            <div class="empty">正在載入諮詢紀錄…</div>
+          </div>
+        </div>
+      </div>
     </section>
 
     <section class="panel" data-panel="bookings">
@@ -103,8 +192,8 @@
           <path d="M18 33.5 L27.5 43 L46 22" fill="none" stroke="#5C9E6E" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"></path>
         </svg>
       </div>
-      <h2 id="booking-success-title">預約成功</h2>
-      <p class="booking-success-lead">您的預約已完成，請確認以下資訊。</p>
+      <h2 id="booking-success-title">預約申請已送出</h2>
+      <p class="booking-success-lead" id="booking-success-lead">工作室確認後才會正式成立，請確認以下資訊。</p>
       <dl class="booking-success-details">
         <div>
           <dt>客人姓名</dt>
@@ -154,9 +243,96 @@
     </div>
   </div>
 
-  <script src="js/config.js?v=20260722001"></script>
-  <script src="js/liff-init.js?v=20260722001"></script>
-  <script src="js/api.js?v=20260722001"></script>
-  <script src="js/app.js?v=20260722001"></script>
+  <div id="customer-reschedule-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="customer-reschedule-title">
+    <div class="modal-card">
+      <h2 id="customer-reschedule-title">選擇希望變更的時間</h2>
+      <p>此預約已確認訂金，原預約不會直接取消。送出後工作室會收到通知並與您確認改期。</p>
+      <div class="customer-reschedule-calendar">
+        <div class="calendar-toolbar">
+          <button type="button" class="btn btn-small" id="customer-reschedule-prev" aria-label="上個月">◀</button>
+          <span class="calendar-month-label" id="customer-reschedule-month-label"></span>
+          <button type="button" class="btn btn-small" id="customer-reschedule-next" aria-label="下個月">▶</button>
+        </div>
+        <div class="calendar-weekdays" aria-hidden="true">
+          <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
+        </div>
+        <div class="calendar-grid" id="customer-reschedule-calendar-grid"></div>
+        <p class="selected-date-summary" id="customer-reschedule-date-summary"></p>
+      </div>
+      <div class="form-group">
+        <label>業主開放的可預約時段</label>
+        <div class="slot-grid" id="customer-reschedule-slot-grid"><div class="empty">請先選擇日期</div></div>
+      </div>
+      <p id="customer-reschedule-status" class="panel-hint" role="status"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-primary" id="customer-reschedule-submit" disabled>通知工作室</button>
+        <button type="button" class="btn btn-secondary" id="customer-reschedule-close">返回</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="additional-booking-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="additional-booking-title">
+    <div class="modal-card additional-booking-card">
+      <div class="additional-booking-icon" aria-hidden="true">i</div>
+      <h2 id="additional-booking-title">您已有其他預約</h2>
+      <p class="additional-booking-lead">目前帳號還有以下預約。新的申請會另外新增，不會取代原本預約。</p>
+      <ul id="additional-booking-list" class="additional-booking-list"></ul>
+      <p id="additional-booking-more" class="additional-booking-more" hidden></p>
+      <p class="additional-booking-question">仍要送出新的預約申請嗎？</p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-primary" id="additional-booking-continue">仍要追加申請</button>
+        <button type="button" class="btn btn-secondary" id="additional-booking-cancel">返回查看</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="review-intake-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="review-intake-title">
+    <div class="modal-card">
+      <h2 id="review-intake-title">補充服務評估資料</h2>
+      <p id="review-photo-request" class="panel-hint" hidden></p>
+      <fieldset class="form-group review-choice-fieldset" hidden>
+        <legend>過去是否有手術史？</legend>
+        <div class="review-choice-grid">
+          <label class="review-choice">
+            <input type="radio" id="review-surgery-none" name="review-surgery-answer" value="none">
+            <span>無</span>
+          </label>
+          <label class="review-choice">
+            <input type="radio" id="review-surgery-yes" name="review-surgery-answer" value="yes">
+            <span>有</span>
+          </label>
+        </div>
+        <div id="review-surgery-detail-wrap" hidden>
+          <label for="review-surgery-history">如方便，請簡單說明手術項目與大約時間</label>
+          <textarea id="review-surgery-history" rows="2" maxlength="2000"></textarea>
+        </div>
+      </fieldset>
+      <div class="form-group">
+        <label for="review-disease-history">是否有需要服務人員留意的<span class="review-sensitive-term">疤痕</span>、<span class="review-sensitive-term">過敏</span>、<span class="review-sensitive-term">健康狀況</span>、用藥或其他事項？（選填）</label>
+        <textarea id="review-disease-history" rows="2" maxlength="2000"></textarea>
+      </div>
+      <div class="form-group">
+        <label for="review-last-treatment">最近一次相關美容或醫療施作時間（不確定可留空）</label>
+        <input type="date" id="review-last-treatment">
+      </div>
+      <div class="form-group">
+        <label for="review-customer-note">其他服務需求或偏好（選填）</label>
+        <textarea id="review-customer-note" rows="2" maxlength="2000"></textarea>
+      </div>
+      <div class="form-group">
+        <label for="review-photo-files">補充服務部位照片（選填；JPEG／PNG／WebP，最多 3 張、每張 5 MB）</label>
+        <input type="file" id="review-photo-files" accept="image/jpeg,image/png,image/webp" multiple>
+      </div>
+      <p id="review-intake-status" class="panel-hint" role="status"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-secondary" id="review-intake-dismiss">關閉</button>
+        <button type="button" class="btn btn-primary" id="review-intake-save">送出評估資料</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/liff-init.js?v=20260824001"></script>
+  <script src="js/api.js?v=20260823001"></script>
+  <script src="js/app.js?v=20260825003"></script>
 </body>
 </html>

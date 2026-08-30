@@ -1,30 +1,130 @@
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="zh-Hant" data-app-role="owner">
 <head>
   <meta charset="UTF-8">
+  <title>Juliet Studio OS | Owner Portal</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-  <title>工作室管理</title>
-  <link rel="stylesheet" href="css/style.css?v=20260722003">
+  <script>
+    // 直接從 Finder／Cursor 以 file:// 開啟時，以目前檔案所在資料夾為資產根目錄。
+    // 必須放在正式 <base> 前面；瀏覽器只採用第一個 base。
+    if (window.location.protocol === "file:") {
+      var localBase = document.createElement("base");
+      localBase.href = new URL("./", window.location.href).href;
+      document.head.appendChild(localBase);
+    }
+  </script>
+  <base href="/owner/">
+  <style>body.auth-pending .app>:not(.header):not(#status):not(#owner-onboarding):not(#owner-tenant-selector){visibility:hidden}</style>
+  <style>
+    html,body{min-height:100%;background:#fffaf7}
+    .route-transition{position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;background:#fffaf7;color:#49383b;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-align:center}
+    .route-transition[hidden]{display:none}
+    .route-transition strong{display:block;font-size:22px;letter-spacing:.04em}
+    .route-transition span{display:block;margin-top:10px;font-size:15px;color:#8f7479}
+  </style>
+  <link rel="icon" type="image/png" sizes="32x32"
+        href="assets/brand/favicon-32.png?v=20260727001">
+  <link rel="apple-touch-icon" sizes="180x180"
+        href="assets/brand/apple-touch-icon.png?v=20260727001">
+  <script>window.BEAUTY_APP_ROLE = "owner";</script>
+  <script src="js/config.js?v=20260824002"></script>
+  <!--
+    Pages 經 /owner/ 提供資產；Cursor 專案預覽可能直接開 /owner-admin/；
+    docs 靜態預覽則可能從 /docs/owner/ 開啟。三者並列作為樣式載入備援，
+    找不到的路徑由瀏覽器忽略，任一存在即可避免退回原始 HTML。
+  -->
+  <link rel="stylesheet" href="css/style.css?v=20260825002">
+  <link rel="stylesheet" href="/owner/css/style.css?v=20260825002">
+  <link rel="stylesheet" href="/owner-admin/css/style.css?v=20260825002">
+  <link rel="stylesheet" href="/docs/owner/css/style.css?v=20260825002">
 </head>
-<body>
+<body class="auth-pending">
+  <div class="route-transition" id="route-transition" role="status" aria-live="polite" hidden>
+    <div><strong>Juliet Studio OS</strong><span>正在安全開啟…</span></div>
+  </div>
   <div class="app">
     <header class="header">
-      <h1 class="brand" id="brand">工作室管理</h1>
+      <div class="system-brand" aria-label="Juliet Studio OS">
+        <img class="system-brand-logo"
+             src="assets/brand/juliet-studio-os-logo.png?v=20260727001"
+             alt="Juliet Studio OS">
+      </div>
+      <h1 class="brand visually-hidden" id="brand">Juliet Studio OS</h1>
     </header>
 
     <div id="status" class="status hidden"></div>
+    <aside id="owner-trial-banner" class="owner-trial-banner hidden" aria-live="polite"></aside>
 
-    <div class="tabs">
-      <button type="button" class="tab active" data-tab="today">預約查詢</button>
-      <button type="button" class="tab" data-tab="customers">客戶資料</button>
-      <button type="button" class="tab" data-tab="services">服務項目</button>
-      <button type="button" class="tab" data-tab="slots">營業時段</button>
-      <button type="button" class="tab" data-tab="settings">店面設定</button>
+    <div class="modal-overlay" id="owner-onboarding" hidden>
+      <section class="modal-card owner-onboarding-card" role="dialog" aria-modal="true"
+        aria-labelledby="owner-onboarding-title">
+        <h2 id="owner-onboarding-title">設定你的業主資料</h2>
+        <p class="panel-hint">只能在首次開通時填寫一次。送出後如需更正，必須聯絡平台負責人。</p>
+        <div class="form-group">
+          <label for="owner-onboarding-studio-name">工作室名稱</label>
+          <input type="text" id="owner-onboarding-studio-name" maxlength="100" autocomplete="organization">
+        </div>
+        <div class="form-group">
+          <label for="owner-onboarding-owner-name">業主顯示名稱</label>
+          <input type="text" id="owner-onboarding-owner-name" maxlength="80" autocomplete="name">
+        </div>
+        <label class="platform-approval-confirm" for="owner-onboarding-account-confirm">
+          <input type="checkbox" id="owner-onboarding-account-confirm">
+          <span>我確認名稱資料正確，並同意將業主權限綁定目前的 LINE；送出後不得自行轉讓、改綁或新增其他管理者。</span>
+        </label>
+        <label class="platform-approval-confirm" for="owner-onboarding-terms-confirm">
+          <input type="checkbox" id="owner-onboarding-terms-confirm">
+          <span>我已閱讀並同意<a href="terms.html" target="_blank" rel="noopener">使用規範</a>與<a href="privacy.html" target="_blank" rel="noopener">隱私權說明</a>，並了解名稱鎖定後如需更正，須由平台處理且屬付費服務。</span>
+        </label>
+        <p id="owner-onboarding-status" class="field-hint" role="status"></p>
+        <button type="button" class="btn btn-primary" id="owner-onboarding-submit">確認並開通我的業主端</button>
+      </section>
+    </div>
+
+    <div class="modal-overlay" id="owner-tenant-selector" hidden>
+      <section class="modal-card owner-tenant-selector-card"
+        role="dialog" aria-modal="true" aria-labelledby="owner-tenant-selector-title">
+        <h2 id="owner-tenant-selector-title">我的工作室</h2>
+        <p class="panel-hint">請選擇要管理的工作室。平台管理主帳號與驗收資料不會列在這裡。</p>
+        <div id="owner-tenant-options" class="owner-tenant-options"></div>
+      </section>
+    </div>
+
+    <div class="plan-navigation">
+      <div class="plan-block plan-block-standard">
+        <div class="plan-block-heading">
+          <strong>日常店務</strong>
+          <span>預約、客戶與工作室設定</span>
+        </div>
+        <div class="tabs">
+          <button type="button" class="tab active" data-tab="today">預約查詢</button>
+          <button type="button" class="tab" data-tab="customers">客戶資料</button>
+          <button type="button" class="tab" data-tab="services">服務項目</button>
+          <button type="button" class="tab" data-tab="slots">營業時段</button>
+          <button type="button" class="tab" data-tab="settings">店面設定</button>
+        </div>
+      </div>
+      <div class="plan-block plan-block-ai hidden" id="owner-ai-plan-block" hidden>
+        <div class="plan-block-heading">
+          <strong>AI 店務秘書</strong>
+          <span>洽詢回報、摘要與訊息草稿</span>
+        </div>
+        <div class="tabs tabs-ai">
+          <button type="button" class="tab tab-ai" data-tab="ai">
+            AI 助理 <span class="ai-unread-badge hidden" id="ai-unread-badge" hidden>0</span>
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- 預約查詢（月曆） -->
     <section class="panel active" data-panel="today">
-      <p class="panel-hint">點選日期查看當日預約；有已確認預約的日期會顯示標記。</p>
+      <p class="panel-hint">點選日期查看當日預約；有申請或正式預約的日期會直接顯示筆數。</p>
+      <div class="calendar-booking-legend" aria-label="月曆預約標記說明">
+        <span><i class="legend-dot legend-dot--review"></i>待審核</span>
+        <span><i class="legend-dot legend-dot--deposit"></i>待訂金</span>
+        <span><i class="legend-dot legend-dot--confirmed"></i>已確認</span>
+      </div>
       <div class="calendar-toolbar">
         <button type="button" class="btn btn-small" id="calendar-prev" aria-label="上個月">◀</button>
         <span class="calendar-month-label" id="calendar-month-label"></span>
@@ -38,6 +138,77 @@
       <p class="booking-date-summary" id="booking-date-summary"></p>
       <button type="button" class="btn btn-small" id="refresh-today" style="margin-bottom:12px">重新整理</button>
 
+      <div id="today-list"></div>
+    </section>
+
+    <!-- AI 店務秘書 -->
+    <section class="panel panel-ai" data-panel="ai">
+      <div class="ai-plan-intro">
+        <h2>AI 店務秘書</h2>
+        <p>協助業主先整理重點、排出待辦並準備訊息；所有對外內容仍由業主確認。</p>
+      </div>
+      <div class="ai-secretary-workspace">
+        <div class="card ai-secretary-card ai-work-queue-card">
+          <div class="ai-secretary-card-heading">
+            <h3 class="ai-card-title">優先待辦工作台</h3>
+            <span class="ai-feature-state">集中處理</span>
+          </div>
+          <p class="panel-hint">集中顯示待評估、待審核、待補答、待補照片、待訂金與即將逾時項目。</p>
+          <div class="ai-work-queue-counts" id="ai-work-queue-counts"></div>
+          <div class="ai-inquiry-toolbar">
+            <strong id="ai-work-queue-summary">正在整理待辦</strong>
+            <button type="button" class="btn btn-small" id="ai-work-queue-refresh">重新整理</button>
+          </div>
+          <p class="ai-status" id="ai-work-queue-status" role="status" aria-live="polite"></p>
+          <div class="ai-work-queue-list" id="ai-work-queue-list"></div>
+        </div>
+        <div class="card ai-secretary-card ai-conversation-card">
+          <div class="ai-secretary-card-heading">
+            <h3 class="ai-card-title">新客評估案件</h3>
+            <span class="ai-feature-state">人工審核</span>
+          </div>
+          <p class="panel-hint">查看平台為本工作室指定的新客評估、照片缺漏、案件標籤與摘要；只有你人工核准後才開放預約。</p>
+          <div class="ai-inquiry-toolbar">
+            <strong id="brow-intake-count">正在載入評估案件</strong>
+            <button type="button" class="btn btn-small" id="brow-intake-refresh">重新整理</button>
+          </div>
+          <p class="ai-status" id="brow-intake-status" role="status" aria-live="polite"></p>
+          <div class="ai-inquiry-list" id="brow-intake-list"></div>
+        </div>
+        <div class="card ai-secretary-card ai-conversation-card">
+          <div class="ai-secretary-card-heading">
+            <h3 class="ai-card-title">客戶問題與 AI 內部判讀</h3>
+            <span class="ai-feature-state">已可使用</span>
+          </div>
+          <p class="panel-hint">
+            客人在 AI 預約助手提出的問題會整理到這裡，並標示是否需要業主跟進。
+          </p>
+          <div class="ai-inquiry-toolbar">
+            <strong id="ai-inquiry-count">尚無未讀洽詢</strong>
+            <button type="button" class="btn btn-small" id="ai-inquiry-refresh">重新整理</button>
+          </div>
+          <p class="ai-status" id="ai-inquiry-status" role="status" aria-live="polite"></p>
+          <div class="ai-inquiry-list" id="ai-inquiry-list">
+            <div class="ai-empty-workspace">
+              <strong>正在載入客戶洽詢</strong>
+            </div>
+          </div>
+        </div>
+        <div class="card ai-secretary-card">
+          <div class="ai-secretary-card-heading">
+            <h3 class="ai-card-title">AI 今日工作整理</h3>
+            <span class="ai-feature-state">已可使用</span>
+          </div>
+          <p class="panel-hint">依當日預約整理工作順序與時段重點，協助業主快速掌握今天。</p>
+        </div>
+        <div class="card ai-secretary-card">
+          <div class="ai-secretary-card-heading">
+            <h3 class="ai-card-title">客戶訊息草稿</h3>
+            <span class="ai-feature-state">已可使用</span>
+          </div>
+          <p class="panel-hint">協助準備預約提醒與服務後關懷草稿；由業主審核，不會自行傳送。</p>
+        </div>
+      </div>
       <div class="card ai-summary-card hidden" id="ai-summary-card" hidden>
         <h3 class="ai-card-title">AI 當日預約摘要</h3>
         <p class="panel-hint ai-disclaimer">
@@ -53,26 +224,57 @@
         <textarea id="ai-summary-result" class="ai-result" rows="6" readonly placeholder="產生後會顯示於此"></textarea>
         <button type="button" class="btn btn-small" id="ai-summary-copy" disabled>複製摘要</button>
       </div>
-
-      <div id="today-list"></div>
+      <div class="card ai-feature-guide">
+        <h3 class="ai-card-title">AI 客戶訊息草稿</h3>
+        <p class="panel-hint">
+          在「日常店務 → 預約查詢」選擇一筆預約，即可使用 AI 產生提醒與服務後關懷草稿。
+          AI 不會自動傳送，仍須由業主審核。
+        </p>
+        <button type="button" class="btn btn-small" id="ai-go-bookings">前往預約查詢</button>
+      </div>
     </section>
 
     <!-- 客戶資料 -->
     <section class="panel" data-panel="customers">
       <div id="customer-list-view">
         <p class="panel-hint">客戶名單包含預約與 CSV 匯入的客戶，可用姓名、電話或編號搜尋。</p>
+        <div class="card customer-import-upgrade hidden" id="customer-import-upgrade" hidden>
+          <strong>既有客戶名單批次匯入</strong>
+          <p class="panel-hint">如需批次匯入原有客戶資料，可洽平台加購「客戶資料匯入」功能。</p>
+        </div>
         <div class="customer-search-row">
           <input type="search" id="customer-search" placeholder="搜尋姓名、電話或編號" enterkeyhint="search">
           <button type="button" class="btn btn-small" id="customer-search-btn">搜尋</button>
         </div>
         <div id="customer-list"></div>
 
-        <div class="card import-card">
+        <div class="card import-card" id="customer-import-card">
           <h3 class="import-title">CSV 匯入客戶</h3>
-          <p class="panel-hint">選擇 CSV 檔案並設定欄位對應，先產生預覽再確認匯入。每批正式匯入最多 100 列（以伺服器驗證為準）。</p>
+          <p class="panel-hint">第一次使用請先下載範本，依照範例填寫後再上傳。</p>
+          <div class="import-guide" aria-labelledby="import-guide-title">
+            <div class="import-guide-head">
+              <div>
+                <h4 class="import-subtitle" id="import-guide-title">CSV 格式與操作說明</h4>
+                <p class="import-guide-summary">姓名必填；其他欄位可留空。請勿更改第一列欄位名稱。</p>
+              </div>
+              <a class="btn btn-small import-template-link"
+                id="customer-import-template-download"
+                href="customer-import-template-v2.csv?v=20260822002"
+                download="客戶匯入範本.csv">下載 CSV 範本</a>
+            </div>
+            <ol class="import-guide-steps">
+              <li>下載範本，用 Excel、Numbers 或 Google 試算表填寫。</li>
+              <li>生日請填西元格式，例如 <code>1990-05-20</code>；一位客戶一列。</li>
+              <li>另存為 CSV 檔後在下方選取，先看預覽，確認無錯誤再匯入。</li>
+            </ol>
+            <p class="import-guide-fields">
+              欄位：姓名（必填）、電話、生日、備註、客戶編號、曾做過的服務項目、服務日期（其餘選填）。每批最多 100 位客戶。
+            </p>
+          </div>
           <div class="form-group">
-            <label for="import-file">CSV 檔案</label>
-            <input type="file" id="import-file" accept=".csv">
+            <label for="import-file">選擇填寫完成的 CSV 檔案</label>
+            <input type="file" id="import-file"
+              accept=".csv,text/csv,text/plain,application/vnd.ms-excel,application/octet-stream">
           </div>
           <div id="import-mapping" class="import-mapping hidden">
             <h4 class="import-subtitle">欄位對應</h4>
@@ -96,6 +298,14 @@
               <label for="import-map-customer_no">會員／客戶編號（選填）</label>
               <select id="import-map-customer_no"></select>
             </div>
+            <div class="form-group import-map-row">
+              <label for="import-map-previous_service">曾做過的服務項目（選填）</label>
+              <select id="import-map-previous_service"></select>
+            </div>
+            <div class="form-group import-map-row">
+              <label for="import-map-previous_service_date">服務日期（選填）</label>
+              <select id="import-map-previous_service_date"></select>
+            </div>
           </div>
           <div class="import-actions">
             <button type="button" class="btn btn-primary" id="import-preview-btn" disabled>產生預覽</button>
@@ -104,6 +314,9 @@
           <div id="import-summary" class="import-summary hidden" aria-live="polite"></div>
           <div id="import-preview-list" class="import-preview-list"></div>
           <div id="import-result" class="import-result hidden" role="status" aria-live="polite"></div>
+          <button type="button" class="btn btn-primary hidden" id="import-close-btn" hidden>
+            匯入完成，關閉視窗
+          </button>
         </div>
       </div>
       <div id="customer-detail-view" class="hidden">
@@ -155,7 +368,10 @@
           </div>
         </div>
         <div class="card photo-sets-card" id="photo-sets-card">
-          <h3 class="photo-sets-title">前後對比照片</h3>
+          <h3 class="photo-sets-title">客戶相簿</h3>
+          <p class="panel-hint">此客戶所有照片依時間由新到舊排列，包含評估、預約補充及施作前後照片。</p>
+          <div id="customer-album-list" class="customer-album-list" aria-live="polite"></div>
+          <h4 class="photo-sets-title">新增施作前後照片</h4>
           <p class="panel-hint">
             照片僅供業主查看，不會提供公開網址。
             上傳前會在您的裝置上重新處理，自動移除位置（GPS）等隱私資訊；
@@ -200,6 +416,24 @@
           <textarea id="svc-desc" placeholder="服務內容簡述"></textarea>
         </div>
         <div class="form-group">
+          <label for="svc-follow-up-days">完成服務後幾天提醒再次預約</label>
+          <input type="number" id="svc-follow-up-days" value="21" min="0" max="365" step="1" inputmode="numeric">
+          <p class="field-hint">依此服務的正常回訪週期設定；填 0 表示不發送。客戶已再次預約相同服務時，系統會自動停止提醒。</p>
+        </div>
+        <div class="form-group" id="svc-assessment-group">
+          <label for="svc-assessment-type">新客評估類型</label>
+          <select id="svc-assessment-type">
+            <option value="none">不需要評估</option>
+            <option value="brow_new_client">霧眉新客評估</option>
+            <option value="lip_blush_new_client">霧唇新客評估</option>
+            <option value="eyeliner_new_client">眼線／美瞳線新客評估</option>
+            <option value="under_eye_new_client">光影臥蠶新客評估</option>
+            <option value="brow_lightening_new_client">舊眉輕色管理｜新客評估</option>
+            <option value="lip_lightening_new_client">舊唇輕色管理｜新客評估</option>
+          </select>
+          <p class="field-hint">每個服務獨立指定題庫；健康與安全題由系統鎖定，最終均由老師人工審核。</p>
+        </div>
+        <div class="form-group">
           <label for="svc-sort">排序（越小越前面）</label>
           <input type="number" id="svc-sort" value="0">
         </div>
@@ -216,13 +450,28 @@
       </p>
       <div id="slot-editor"></div>
       <button type="button" class="btn btn-primary" id="save-slots" style="margin-top:12px">儲存營業時段</button>
+      <div class="settings-section date-closure-settings" style="margin-top:20px">
+        <h3 class="settings-section-title">指定日期整日不開放</h3>
+        <p class="panel-hint">例如選擇 9/17 設為休假，客戶當天就無法預約。既有預約不會自動取消，請先確認當日預約並自行聯絡客人。</p>
+        <div class="form-group">
+          <label for="closed-date-input">休假日期</label>
+          <input type="date" id="closed-date-input">
+        </div>
+        <button type="button" class="btn btn-secondary" id="add-closed-date">設為整日不開放</button>
+        <div class="form-group" style="margin-top:16px">
+          <label for="closed-date-month">查看月份</label>
+          <input type="month" id="closed-date-month">
+        </div>
+        <div id="closed-date-list" class="panel-hint">尚未設定休假日期</div>
+      </div>
     </section>
 
     <!-- 店面設定 -->
     <section class="panel" data-panel="settings">
       <div class="form-group">
-        <label for="brand-name">品牌名稱</label>
-        <input type="text" id="brand-name" placeholder="例：花漾美甲工作室">
+        <label for="brand-name">工作室名稱（已鎖定）</label>
+        <input type="text" id="brand-name" readonly aria-readonly="true">
+        <p class="field-hint">名稱在首次開通後鎖定；需要更正請聯絡平台負責人。</p>
       </div>
       <div class="form-group">
         <label for="primary-color">主色（HEX）</label>
@@ -236,6 +485,11 @@
         <label for="cancel-policy">取消規則說明（顯示給客人）</label>
         <textarea id="cancel-policy" placeholder="例：預約日前 24 小時可免費取消"></textarea>
       </div>
+      <div class="form-group">
+        <label for="customer-booking-url">客戶預約入口網址</label>
+        <input type="url" id="customer-booking-url" inputmode="url" placeholder="https://liff.line.me/…">
+        <p class="field-hint">請貼上此工作室客戶端的 LIFF 網址。回訪訊息會用它產生「再次預約相同服務」連結；未設定時只發送文字提醒。</p>
+      </div>
 
       <div class="settings-section notice-settings">
         <h3 class="settings-section-title">預約與取消時間限制</h3>
@@ -246,9 +500,34 @@
           <p class="field-hint">0 代表可預約尚未開始的當日時段；1 代表至少提前 1 天（24 小時）。</p>
         </div>
         <div class="form-group">
+          <label for="next-month-booking-open-day">每月幾號開放下個月預約</label>
+          <input type="number" id="next-month-booking-open-day" min="1" max="28" step="1" inputmode="numeric" placeholder="15">
+          <p class="field-hint">設定日前只開放本月；到達設定日後才開放下個月。最多只開放到下個月，不會無限往後開放。</p>
+        </div>
+        <div class="form-group">
           <label for="cancellation-min-notice-days">客戶最晚取消時間（天前）</label>
           <input type="number" id="cancellation-min-notice-days" min="0" max="30" step="1" inputmode="numeric" placeholder="1">
           <p class="field-hint">修改後只套用新建立的預約，不影響既有預約的取消期限。</p>
+        </div>
+        <div class="form-group">
+          <label for="arrival-reminder-minutes">服務前建議抵達時間（分鐘前）</label>
+          <input type="number" id="arrival-reminder-minutes" min="0" max="60" step="1" inputmode="numeric" placeholder="5">
+          <p class="field-hint">AI「服務前叮嚀」會使用此分鐘數；0 代表依預約時間抵達。</p>
+        </div>
+      </div>
+
+      <div class="settings-section notice-settings">
+        <h3 class="settings-section-title">明日預約 LINE 提醒</h3>
+        <p class="panel-hint">服務項目、預約日期與時間會依每筆預約自動帶入，不需要填寫。</p>
+        <div class="form-group">
+          <label for="tomorrow-reminder-time">通知時間（台北時間）</label>
+          <input type="time" id="tomorrow-reminder-time" step="300">
+          <p class="field-hint" id="tomorrow-reminder-time-default-note">可依工作室需求調整；留白即沿用平台預設 12:20。</p>
+        </div>
+        <div class="form-group">
+          <label for="tomorrow-reminder-message">通知內容</label>
+          <textarea id="tomorrow-reminder-message" maxlength="500" rows="4" placeholder="明天見！請在約定時間前 5 分鐘到場，讓我們可以從容為您準備。"></textarea>
+          <p class="field-hint" id="tomorrow-reminder-message-default-note">可依工作室需求調整；留白即沿用平台提供的親切提醒內容。</p>
         </div>
       </div>
 
@@ -279,8 +558,9 @@
             <input type="text" id="bank-account" placeholder="匯款帳號" inputmode="numeric">
           </div>
           <div class="form-group">
-            <label for="bank-account-name">戶名</label>
-            <input type="text" id="bank-account-name" placeholder="帳戶戶名">
+            <label for="bank-account-name">戶名（選填）</label>
+            <input type="text" id="bank-account-name" placeholder="留空則不向客戶顯示">
+            <p class="panel-hint">使用個人帳戶且不希望公開姓名時可留空；請提醒客戶以銀行 App 顯示的收款人名稱核對。</p>
           </div>
           <div class="form-group">
             <label for="deposit-note">轉帳提醒文字</label>
@@ -289,8 +569,154 @@
         </div>
       </div>
 
+      <div class="settings-section" id="customer-ai-settings">
+        <h3 class="settings-section-title">AI 秘書設定</h3>
+        <p class="panel-hint">AI 只依本工作室的服務項目與你設定的專業知識回答；無法確認時必須轉由業主處理。</p>
+        <div class="form-group form-group--switch">
+          <label class="switch-label" for="customer-ai-enabled">
+            <input type="checkbox" id="customer-ai-enabled">
+            <span>啟用客戶 AI 預約助手</span>
+          </label>
+        </div>
+        <div id="customer-ai-fields">
+          <div class="form-group">
+            <label for="customer-ai-business-type">你的專業類型</label>
+            <select id="customer-ai-business-type">
+              <option value="">請選擇專業類型</option>
+              <option value="霧眉師">霧眉師</option>
+              <option value="霧唇師">霧唇師</option>
+              <option value="全方位紋繡師">全方位紋繡師</option>
+            </select>
+            <button type="button" class="btn btn-small" id="apply-brow-ai-preset">套用霧眉新客評估規範</button>
+            <button type="button" class="btn btn-small" id="apply-lip-ai-preset">套用霧唇新客評估規範</button>
+            <button type="button" class="btn btn-small" id="apply-all-round-ai-preset">套用全方位紋繡新客評估規範</button>
+            <p class="field-hint">套用後仍需按下最下方「儲存設定」。系統會強制人工審核、健康資料同意及審核前禁止預約。</p>
+          </div>
+          <div class="form-group">
+            <label for="customer-ai-tone">回覆語氣</label>
+            <select id="customer-ai-tone">
+              <option value="friendly">親切自然</option>
+              <option value="professional">專業穩重</option>
+              <option value="concise">簡潔直接</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="customer-ai-studio-intro">工作室介紹</label>
+            <textarea id="customer-ai-studio-intro" maxlength="500" placeholder="例：本工作室採預約制，專營自然系霧眉與眉型設計。"></textarea>
+          </div>
+          <div class="form-group">
+            <label for="customer-ai-knowledge">專業知識與回答規則</label>
+            <textarea id="customer-ai-knowledge" maxlength="3000" rows="8" placeholder="例：首次霧眉前一週避免酸類保養；孕期不承接。客人詢問是否適合時不可替業主判斷，應轉由業主確認。"></textarea>
+            <p class="field-hint">可填寫術前／術後須知、常見問題、材料特色與不可承接情況。價格、時間仍以「服務項目」為準。</p>
+          </div>
+          <div class="form-group">
+            <label for="customer-ai-answer-scope">可回答範圍</label>
+            <textarea id="customer-ai-answer-scope" maxlength="800" placeholder="例：可說明服務內容、價格、所需時間與可預約時段。"></textarea>
+          </div>
+          <div class="form-group">
+            <label for="customer-ai-handoff-rule">轉人工規則</label>
+            <textarea id="customer-ai-handoff-rule" maxlength="500" placeholder="例：特殊膚況、健康問題、客製需求或無法確認時，請告知將由本工作室回覆。"></textarea>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section" id="assessment-template-settings" hidden>
+        <div class="ai-secretary-card-heading">
+          <h3 class="settings-section-title">客戶實際填寫的服務評估題庫</h3>
+          <button type="button" class="btn btn-small" id="assessment-template-refresh" aria-expanded="false" aria-controls="assessment-template-list">查看／管理題庫</button>
+        </div>
+        <p class="panel-hint">此處是客戶預約前實際填寫的題目，與上方「AI 回答範本」不同。可修改服務需求等非安全題；健康、安全、療程與照片規格由系統鎖定，不能刪除或改寫。</p>
+        <p id="assessment-template-status" class="field-hint" role="status" aria-live="polite"></p>
+        <div id="assessment-template-list" hidden></div>
+      </div>
+
       <button type="button" class="btn btn-primary" id="save-settings">儲存設定</button>
     </section>
+
+    <section class="owner-subscription-card" id="owner-subscription-card" aria-label="租用狀態">
+      <div>
+        <span class="owner-subscription-label">租用狀態</span>
+        <strong id="owner-subscription-status">載入中</strong>
+      </div>
+      <dl>
+        <div><dt>試用到期日</dt><dd id="owner-trial-end-date">—</dd></div>
+        <div><dt>訂閱到期日</dt><dd id="owner-subscription-end-date">—</dd></div>
+      </dl>
+    </section>
+  </div>
+
+  <div id="owner-confirm-modal" class="modal-overlay hidden" role="dialog"
+    aria-modal="true" aria-labelledby="owner-confirm-title" aria-describedby="owner-confirm-message">
+    <div class="modal-card owner-confirm-card">
+      <div class="owner-confirm-mark" aria-hidden="true">!</div>
+      <p class="owner-confirm-eyebrow">操作確認</p>
+      <h3 id="owner-confirm-title">請確認這項操作</h3>
+      <p class="modal-booking-summary owner-confirm-message" id="owner-confirm-message"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-small" id="owner-confirm-cancel">返回</button>
+        <button type="button" class="btn btn-primary btn-small" id="owner-confirm-submit">確認</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="pigment-reminder-modal" class="modal-overlay hidden" role="dialog"
+    aria-modal="true" aria-labelledby="pigment-reminder-title">
+    <div class="modal-card">
+      <h3 id="pigment-reminder-title">設定補色提醒日期</h3>
+      <p class="modal-booking-summary">請確認兩個提醒日期；滿年前維持補色保養會標示為另外計費。</p>
+      <div class="form-group">
+        <label for="pigment-touchup-date">滿月補色提醒日期</label>
+        <input type="date" id="pigment-touchup-date" required>
+      </div>
+      <div class="form-group">
+        <label for="pigment-maintenance-date">滿年前維持補色保養提醒日期</label>
+        <input type="date" id="pigment-maintenance-date" required>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-small" id="pigment-reminder-cancel">返回</button>
+        <button type="button" class="btn btn-primary btn-small" id="pigment-reminder-submit">儲存日期</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="subscription-reminder-modal" class="modal-overlay hidden" role="dialog"
+    aria-modal="true" aria-labelledby="subscription-reminder-title">
+    <div class="modal-card subscription-reminder-card">
+      <h3 id="subscription-reminder-title">租用期限提醒</h3>
+      <p id="subscription-reminder-message"></p>
+      <p class="panel-hint">如需續用，請提前聯絡服務窗口，以免影響業主端使用。</p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-primary" id="subscription-reminder-close">我知道了</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="import-confirm-modal" class="modal-overlay hidden" role="dialog"
+    aria-modal="true" aria-labelledby="import-confirm-title">
+    <div class="modal-card import-confirm-card">
+      <div class="import-confirm-icon" aria-hidden="true">✓</div>
+      <p class="import-confirm-eyebrow">最後確認</p>
+      <h3 id="import-confirm-title">確認匯入客戶資料</h3>
+      <p class="import-confirm-description">系統只會建立預覽中標示為「可建立」的客戶。</p>
+      <div class="import-confirm-stats" aria-label="本次匯入摘要">
+        <div class="import-confirm-stat import-confirm-stat-primary">
+          <strong id="import-confirm-create-count">0</strong>
+          <span>位將建立</span>
+        </div>
+        <div class="import-confirm-stat">
+          <strong id="import-confirm-excluded-count">0</strong>
+          <span>列不會建立</span>
+        </div>
+      </div>
+      <div class="import-confirm-notice">
+        <strong>送出前請再次確認</strong>
+        <span>匯入完成後，無法在此畫面一鍵復原。</span>
+      </div>
+      <div class="modal-actions import-confirm-actions">
+        <button type="button" class="btn btn-small" id="import-confirm-dismiss">返回檢查</button>
+        <button type="button" class="btn btn-primary btn-small" id="import-confirm-submit">確認匯入</button>
+      </div>
+    </div>
   </div>
 
   <div id="owner-cancel-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="owner-cancel-title">
@@ -370,9 +796,61 @@
     </div>
   </div>
 
+  <div id="brow-review-confirm-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="brow-review-confirm-title">
+    <div class="modal-card">
+      <h3 id="brow-review-confirm-title">確認評估處理</h3>
+      <p class="modal-booking-summary" id="brow-review-confirm-summary"></p>
+      <div class="form-group hidden" id="brow-review-message-wrap" hidden>
+        <label for="brow-review-message">請告訴客戶需要補充什麼資料</label>
+        <textarea id="brow-review-message" rows="4" maxlength="1000" placeholder="例如：請補充最近一次療程日期，並提供眉部清楚照片。"></textarea>
+      </div>
+      <p class="ai-status" id="brow-review-confirm-status" role="status" aria-live="polite"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-small" id="brow-review-confirm-cancel">取消</button>
+        <button type="button" class="btn btn-primary btn-small" id="brow-review-confirm-submit">確認送出</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="owner-review-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="owner-review-title">
+    <div class="modal-card">
+      <h3 id="owner-review-title">客戶審核資料</h3>
+      <div id="owner-review-content" class="booking-review-content"></div>
+      <fieldset class="form-group">
+        <legend>要求客人補答問題</legend>
+        <label hidden><input type="checkbox" id="owner-review-request-surgery"> 手術史</label>
+        <label><input type="checkbox" id="owner-review-request-disease"> 疤痕、過敏、健康狀況、用藥或其他事項</label>
+        <label><input type="checkbox" id="owner-review-request-last-treatment"> 上次相關施作時間</label>
+        <textarea id="owner-review-question-note" rows="2" maxlength="500" placeholder="可補充說明為什麼需要這些資料"></textarea>
+        <button type="button" class="btn btn-primary btn-small" id="owner-review-request-answers">通知客人補答</button>
+      </fieldset>
+      <div class="form-group">
+        <label for="owner-review-photo-note">需要客人補充的照片</label>
+        <textarea id="owner-review-photo-note" rows="3" maxlength="500" placeholder="例：請補正面與左右側、自然光且不要套濾鏡"></textarea>
+      </div>
+      <div id="owner-review-photos" class="booking-review-photos"></div>
+      <div id="owner-review-ai" hidden>
+        <button type="button" class="btn btn-small" id="owner-review-ai-generate">AI 整理審核重點</button>
+        <p class="panel-hint">AI 僅整理資料，不作診斷或承接決定。</p>
+        <textarea id="owner-review-ai-result" rows="7" readonly placeholder="產生後顯示於此"></textarea>
+      </div>
+      <p id="owner-review-status" class="panel-hint" role="status"></p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-small" id="owner-review-dismiss">關閉</button>
+        <button type="button" class="btn btn-small" id="owner-review-clear-photo">取消照片需求</button>
+        <button type="button" class="btn btn-primary btn-small" id="owner-review-request-photo">要求補照片</button>
+      </div>
+    </div>
+  </div>
+
   <div id="photo-lightbox" class="photo-lightbox hidden" role="dialog" aria-modal="true" aria-labelledby="photo-lightbox-title">
     <button type="button" class="photo-lightbox-close" id="photo-lightbox-close" aria-label="關閉照片檢視">×</button>
     <p id="photo-lightbox-title" class="photo-lightbox-title"></p>
+    <div class="photo-lightbox-controls" aria-label="照片縮放控制">
+      <button type="button" id="photo-lightbox-zoom-out" aria-label="縮小照片">−</button>
+      <button type="button" id="photo-lightbox-zoom-reset" aria-label="還原照片大小">100%</button>
+      <button type="button" id="photo-lightbox-zoom-in" aria-label="放大照片">＋</button>
+    </div>
     <div class="photo-lightbox-body" id="photo-lightbox-body">
       <p class="photo-lightbox-status" id="photo-lightbox-status">照片載入中…</p>
       <img class="photo-lightbox-img" id="photo-lightbox-img" alt="" hidden>
@@ -381,10 +859,9 @@
 
   <!-- 本機 QR 產生器：qrcode-generator 1.4.4（MIT, Kazuhiko Arase），
        本機託管，不使用 CDN 或第三方 QR 服務 -->
-  <script src="js/vendor/qrcode.js?v=20260722003"></script>
-  <script src="js/config.js?v=20260722003"></script>
-  <script src="js/liff-init.js?v=20260722003"></script>
-  <script src="js/api.js?v=20260722003"></script>
-  <script src="js/app.js?v=20260722003"></script>
+  <script src="js/vendor/qrcode.js?v=20260723010"></script>
+  <script src="js/liff-init.js?v=20260808002"></script>
+  <script src="js/api.js?v=20260822001"></script>
+  <script src="js/app.js?v=20260825005"></script>
 </body>
 </html>

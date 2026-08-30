@@ -79,6 +79,8 @@ export var LEGACY_SLOT_BLOCKING_STATUSES = Object.freeze([
 /** 空檔查詢／重疊檢查 SQL 使用的全部阻擋狀態 */
 export var SLOT_BLOCKING_STATUSES = Object.freeze([
   S.PENDING,
+  S.PENDING_REVIEW,
+  S.PENDING_CUSTOMER_CONFIRMATION,
   S.CONFIRMED,
   S.CHECKED_IN
 ]);
@@ -90,8 +92,7 @@ export var SLOT_HOLD_STATUSES = Object.freeze([S.HELD]);
 
 /** legacy：舊版 cancel／notice 仍視為可取消的 active 狀態 */
 export var LEGACY_CUSTOMER_CANCELLABLE_STATUSES = Object.freeze([
-  S.PENDING,
-  S.CHECKED_IN
+  S.PENDING
 ]);
 
 var CANCELLATION_STATUSES = Object.freeze([
@@ -114,15 +115,15 @@ export var CANCELLATION_REASON_BY_STATUS = Object.freeze({
 var STATUS_LABELS_ZH = Object.freeze({
   draft: "填寫中",
   held: "時段暫留",
-  pending_review: "待人工審核",
-  pending_customer_confirmation: "待客人確認",
+  pending_review: "待本工作室確認",
+  pending_customer_confirmation: "待確認訂金",
   confirmed: "已確認",
   completed: "已完成",
   cancelled_by_customer: "已取消",
   cancelled_by_store: "已取消",
   expired: "已逾時",
   pending: "已確認",
-  checked_in: "已確認",
+  checked_in: "已報到",
   rescheduled: "已改期",
   no_show: "未到"
 });
@@ -168,10 +169,11 @@ var TRANSITIONS = Object.freeze({
   },
   pending_review: {
     pending_customer_confirmation: ["staff"],
+    cancelled_by_customer: ["customer"],
     cancelled_by_store: ["staff"]
   },
   pending_customer_confirmation: {
-    confirmed: ["customer", "system"],
+    confirmed: ["staff"],
     expired: ["system"],
     cancelled_by_customer: ["customer"],
     cancelled_by_store: ["staff"]
@@ -202,11 +204,7 @@ var TRANSITIONS = Object.freeze({
     expired: ["system"]
   },
   checked_in: {
-    completed: ["staff"],
-    cancelled_by_customer: ["customer"],
-    cancelled_by_store: ["staff"],
-    rescheduled: ["staff"],
-    no_show: ["staff"]
+    completed: ["staff"]
   }
 });
 
@@ -439,6 +437,8 @@ export var OWNER_RESCHEDULED_REASON_CODE = "owner_rescheduled";
 var OWNER_GENERAL_STATUS_ROUTE_TARGETS = Object.freeze({
   confirmed: Object.freeze([S.CHECKED_IN, S.NO_SHOW]),
   checked_in: Object.freeze([S.COMPLETED]),
+  pending_review: Object.freeze([S.PENDING_CUSTOMER_CONFIRMATION]),
+  pending_customer_confirmation: Object.freeze([S.CONFIRMED]),
   pending: Object.freeze([S.CONFIRMED, S.CHECKED_IN])
 });
 

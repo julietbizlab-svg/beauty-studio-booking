@@ -619,9 +619,26 @@ test("commit：customer_no 未提供時自動產生 CUS- 開頭；有提供則�
   );
 
   var insert = findBatchStatements(db, /INSERT INTO customers/)[0];
-  // 每列 9 個 bind：id, tenant, customer_no, name, phone, birthday, note, created, updated
+  // 每列 10 個 bind：id, tenant, customer_no, name, phone, birthday, note,
+  // preferences_json, created, updated
   assert.match(String(insert.binds[2]), /^CUS-/, "未提供 customer_no 應自動產生");
-  assert.equal(insert.binds[9 + 2], "A009", "提供 customer_no 應沿用");
+  assert.equal(insert.binds[10 + 2], "A009", "提供 customer_no 應沿用");
+});
+
+test("commit：曾做過的服務與日期寫入結構化客戶偏好，空白也可匯入", async function () {
+  var csvText = "姓名,曾做過的服務項目,服務日期\n王小美,韓系霧眉,2025-08-08\n陳小姐,,\n";
+  var db = makeFakeDb(importHandler());
+  var response = await worker.fetch(jsonRequest("POST", COMMIT_PATH, {
+    csvText: csvText, canonicalHash: await hashOf(csvText)
+  }, OWNER_TOKEN), makeD1Env(db));
+  assert.equal(response.status, 200);
+  var insert = findBatchStatements(db, /INSERT INTO customers/)[0];
+  var history = JSON.parse(insert.binds[7]);
+  assert.equal(history.importedPreviousService, "韓系霧眉");
+  assert.equal(history.importedPreviousServiceDate, "2025-08-08");
+  var emptyHistory = JSON.parse(insert.binds[17]);
+  assert.equal(emptyHistory.importedPreviousService, "");
+  assert.equal(emptyHistory.importedPreviousServiceDate, "");
 });
 
 test("commit：mobile／birthday 空白寫 NULL；source='import'、status='active'", async function () {

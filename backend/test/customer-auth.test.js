@@ -143,12 +143,18 @@ function jsonRequest(method, path, body, token) {
   });
 }
 
+function allowedBookingDate() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Taipei", year: "numeric", month: "2-digit", day: "2-digit"
+  }).format(new Date(Date.now() + 2 * 24 * 60 * 60 * 1000));
+}
+
 function bookingBody(overrides) {
   return Object.assign({
     customerName: "測試客",
     phone: "0912345678",
     serviceId: "svc-1",
-    date: "2026-07-25",
+    date: allowedBookingDate(),
     time: "10:00"
   }, overrides || {});
 }
@@ -218,7 +224,9 @@ test("GET /api/bookings/me：query 偽造 userId 被忽略，查詢綁 token sub
   assert.equal(response.status, 200);
   var call = db.calls[0];
   assert.match(call.sql, /la\.line_user_id = \?2/);
-  assert.deepEqual(call.binds, [TENANT, "U-token-user"]);
+  assert.deepEqual(call.binds.slice(0, 2), [TENANT, "U-token-user"]);
+  assert.match(call.binds[2], /^\d{4}-\d{2}-\d{2}T/);
+  assert.match(call.binds[3], /^\d{4}-\d{2}-\d{2}T/);
 });
 
 test("POST /api/bookings/cancel：body 偽造 userId 被忽略，所有權檢查用 token sub", async function () {
@@ -353,6 +361,7 @@ test("新客戶建立預約時 line_accounts 顯示名稱同樣採用驗證後�
 
 test("GET /api/customer/me 只用 token sub 查詢，忽略任意 userId query", async function () {
   var db = makeFakeDb(function (sql, binds, method) {
+    if (/FROM bookings b/.test(sql)) return null;
     if (method === "first" && binds[1] === "U-token-user") {
       return { display_name: "王小美", mobile: "0987654321", birthday: "1995-05-05" };
     }
@@ -372,7 +381,8 @@ test("GET /api/customer/me 只用 token sub 查詢，忽略任意 userId query",
       customerName: "王小美",
       phone: "0987654321",
       birthday: "1995-05-05"
-    }
+    },
+    requiresAssessment: false
   });
   assert.deepEqual(db.calls[0].binds, [TENANT, "U-token-user"]);
 });
@@ -386,7 +396,7 @@ test("GET /api/customer/me 尚未建檔回 exists:false、customer:null", async 
 
   assert.equal(response.status, 200);
   var body = await response.json();
-  assert.deepEqual(body, { ok: true, exists: false, customer: null });
+  assert.deepEqual(body, { ok: true, exists: false, customer: null, requiresAssessment: false });
 });
 
 test("GET /api/customer/me 不洩漏業主備註（note／notes）", async function () {
