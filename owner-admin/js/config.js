@@ -54,8 +54,8 @@ window.BEAUTY_CONFIG = (function () {
 
   var matrix = {
     "v2-production": {
-      customerLiffId: "2010530394-orSKMGcU",
-      ownerLiffId: "2010530394-zDbXbhXT",
+      customerLiffId: "2011217307-krdMabXG",
+      ownerLiffId: "2011217307-pdNvwLwJ",
       apiBaseUrl: "https://beauty-studio-api-v2-production.gosu-chill-book.workers.dev",
       claimEnabled: true
     },
