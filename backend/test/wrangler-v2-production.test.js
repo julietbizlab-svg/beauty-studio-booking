@@ -35,9 +35,13 @@ test("v2-production 綁定既有 D1／R2 與非秘密 vars（同 v2-test）", fu
 
   assert.ok(/STUDIO_NAME\s*=\s*"美業工作室 v2"/.test(prod));
   assert.ok(/TENANT_ID\s*=\s*"tenant_beauty_studio_default"/.test(prod));
+  assert.ok(/DEFAULT_LINE_TENANT_ID\s*=\s*"tenant_beauty_studio_default"/.test(prod));
   assert.ok(/LOCATION_ID\s*=\s*"location_main"/.test(prod));
   assert.ok(/STAFF_ID\s*=\s*"staff_owner"/.test(prod));
   assert.ok(/DATA_BACKEND\s*=\s*"d1"/.test(prod));
+  assert.ok(/BOOKING_REQUIRES_OWNER_CONFIRMATION\s*=\s*"true"/.test(prod));
+  assert.ok(/OWNER_LIFF_CLIENT_ID\s*=\s*"2011217307"/.test(prod));
+  assert.ok(/LINE_PROVIDER_ID\s*=\s*"2005466146"/.test(prod));
 
   assert.ok(/\[\[env\.v2-production\.d1_databases\]\]/.test(wranglerToml));
   assert.ok(/database_name\s*=\s*"beauty-studio-booking-v2"/.test(prod));
