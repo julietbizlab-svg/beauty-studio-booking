@@ -27,8 +27,8 @@ var V2_PRODUCTION_API =
   "https://beauty-studio-api-v2-production.gosu-chill-book.workers.dev";
 var V2_TEST_API =
   "https://beauty-studio-api-v2-test.gosu-chill-book.workers.dev";
-var V2_PRODUCTION_LIFF_ID = "2011217307-krdMabXG";
-var V2_PRODUCTION_OWNER_LIFF_ID = "2011217307-pdNvwLwJ";
+var V2_PRODUCTION_LIFF_ID = "2010530394-orSKMGcU";
+var V2_PRODUCTION_OWNER_LIFF_ID = "2010530394-zDbXbhXT";
 var V2_TEST_LIFF_ID = "2010530394-QcklvIHd";
 var V2_TEST_OWNER_LIFF_ID = "2010530394-TTtQkgne";
 var V2_TEST_OWNER_HUB_LIFF_ID = "2010868233-3ziIABwR";
