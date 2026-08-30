@@ -49,3 +49,23 @@ Chrome 已登入 GitHub，但接管既有分頁曾逾時。安全恢復方式是
 ## 12. AI 是否聰明應以預約完成度驗收
 
 不能只測模型有回答。旗艦版 AI 應以「理解需求、只補必要資訊、不重複詢問、提供一個明確下一步、接回服務／日期／時段、必要時轉真人」作為驗收標準；最終衡量是客戶能否以最少來回完成有效預約。
+
+## 13. LINE OA、LINE Login、LIFF 與 Provider 不可只憑名稱推斷
+
+「業主管理中心」可能是 LINE Login Channel，不等於可發訊息的 Messaging API OA；顯示名稱相似也不代表屬於同一 Provider。任何切換前必須先列出 OA、Login Channel、LIFF ID、Endpoint、Provider、用途與目前實機入口，逐項由使用者確認。
+
+## 14. 不可把『修通知』擴張成重接入口
+
+通知發送帳號、客戶登入 LIFF、業主登入 LIFF、OA 圖文選單連結是不同設定。使用者要求修通知，不代表授權替換既有 LIFF 或 Endpoint。若需要改動登入身分才能送通知，必須先說明衝突並取得針對該入口變更的明確確認。
+
+## 15. 一般業主入口與平台管理入口必須以實際權限流程驗收
+
+一般業主第一次進入通常需要一次性邀請或既有 LINE 綁定。只給沒有邀請的 Owner Hub 基底網址，會得到「無業主管理權限」，不能據此判定頁面接錯或要求使用者申請新帳號。先查 `staff_line_accounts` 與 `owner_access_invites`，再提供正確入口。
+
+## 16. 回復外部 LINE 設定要同時回復程式與後台
+
+Git revert 只能回復 repository，無法自動還原 LINE Developers 裡已改過的 Endpoint 或 Worker secret。回復清單必須分成：程式碼、Pages、Worker vars／secrets、LIFF Endpoint、OA 圖文選單及 D1；每項分別驗證。
+
+## 17. CI 與本機結果不一致時要記錄且不得假裝全綠
+
+PR #9 本機 986／986 通過，但 GitHub Actions 兩次皆為 973／986。即使失敗看似與變更無關，也必須保留失敗數、範圍、重跑結果及使用者風險授權，不得只回報本機全綠。
