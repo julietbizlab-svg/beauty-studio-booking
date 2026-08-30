@@ -605,7 +605,8 @@ test("只有服務指定評估題庫時才在送出預約前填問卷，none 與
     /els\.bookBtn\.addEventListener\("click"[\s\S]*openNewBookingReview\(\)/
   );
   assert.match(app, /"填寫預約評估資料"/);
-  assert.match(app, /"送出評估資料"/);
+  assert.match(app, /"確認送出"/);
+  assert.doesNotMatch(app, /送出評估資料|重新送出評估資料/);
   assert.doesNotMatch(app, /審核資料/);
   assert.match(html, /review-choice-fieldset" hidden/);
   assert.match(html, /需要服務人員留意的<span class="review-sensitive-term">疤痕/);

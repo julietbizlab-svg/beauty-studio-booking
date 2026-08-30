@@ -868,7 +868,7 @@
     els.reviewPhotoRequest.hidden = true;
     els.reviewIntakeStatus.textContent =
       "請先填寫資料，工作室會在受理前進行確認。";
-    els.reviewIntakeSave.textContent = "送出評估資料";
+    els.reviewIntakeSave.textContent = "確認送出";
     els.reviewIntakeDismiss.textContent = "返回";
     els.reviewIntakeModal.classList.remove("hidden");
   }
@@ -930,7 +930,7 @@
     reviewBookingId = bookingId || "";
     if (!reviewBookingId) return;
     els.reviewIntakeTitle.textContent = "補充服務評估資料";
-    els.reviewIntakeSave.textContent = "送出評估資料";
+    els.reviewIntakeSave.textContent = "確認送出";
     els.reviewIntakeDismiss.textContent = "關閉";
     els.reviewIntakeModal.classList.remove("hidden");
     els.reviewIntakeStatus.textContent = "載入中…";
@@ -1605,7 +1605,7 @@
         reviewMode = "existing";
         reviewBookingId = createdBookingId;
         els.reviewIntakeTitle.textContent = "補充服務評估資料";
-        els.reviewIntakeSave.textContent = "重新送出評估資料";
+        els.reviewIntakeSave.textContent = "確認送出";
         els.reviewIntakeDismiss.textContent = "稍後再填";
         els.reviewIntakeStatus.textContent =
           "預約申請已建立，但評估資料尚未完整送出，請再按一次送出。";
